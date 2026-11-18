@@ -17,6 +17,7 @@ type menuBarVideoState struct {
 	proxy            *mvProxy
 	picture          *image.RGBA
 	key              string
+	track            *music.Track // a new load of the same track also refreshes its media
 	gen              int
 	loading          bool
 	lastSeek         time.Time
@@ -63,7 +64,7 @@ func (a *app) syncMenuBarVideo() {
 	}
 	track := a.pl.Current()
 	key := track.Source + "\x00" + track.ID
-	if key != m.key {
+	if key != m.key || track != m.track {
 		a.loadMenuBarVideo(key)
 	}
 	if m.video == nil {
@@ -115,6 +116,7 @@ func (a *app) loadMenuBarVideo(key string) {
 	m := &a.trayVideo
 	m.release()
 	m.key = key
+	m.track = a.pl.Current()
 	track := *a.pl.Current()
 	source := a.sourceByID(track.Source).(music.VideoSource)
 	quality, gen := a.settings.Quality, m.gen

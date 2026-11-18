@@ -500,6 +500,7 @@ func (p *Player) Seek(t time.Duration) {
 	}
 	if p.out == nil {
 		p.pending = t
+		p.sync()
 		return
 	}
 	out := p.out
@@ -672,9 +673,9 @@ func (p *Player) record() {
 	go src.Played(t)
 }
 
-// loadSkipping loads the track at order[at], to play or not, from from,
-// skipping those that cannot play the way dir goes: skipped of them so far.
-func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duration) {
+// prepare selects the track and its metadata without opening audio. Restored
+// sessions can stay paused without holding a network stream open until Play.
+func (p *Player) prepare(at int, play bool, from time.Duration) (music.Track, music.Source) {
 	t := p.queue[p.order[at]]
 	src := p.sourceOf(&t)
 	if was := p.remote; was != nil && was.started && p.playing && (src == nil || src.Info().ID != was.src.Info().ID) {
@@ -686,7 +687,7 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 	gen := p.gen
 	p.at = at
 	p.track = &t
-	p.loading, p.playing, p.err = true, play, ""
+	p.loading, p.playing, p.err = false, play, ""
 	p.awaiting = false
 	p.lyrics, p.lyricsLoaded = nil, false
 	p.pending = from
@@ -696,6 +697,15 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 
 	p.loadCover(gen, &t)
 	p.loadLyrics(gen, src, t)
+	return t, src
+}
+
+// loadSkipping loads the track at order[at], to play or not, from from,
+// skipping those that cannot play the way dir goes: skipped of them so far.
+func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duration) {
+	t, src := p.prepare(at, play, from)
+	gen := p.gen
+	p.loading = true
 	if src != nil && src.Info().Playback == music.PlaybackRemote {
 		p.loadRemote(gen, src, at, skipped, dir, play, from)
 		return
@@ -723,8 +733,23 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 			p.gain = normGain(info)
 			p.normalizer = newNormalizer(s)
 			p.normalizer.setMode(p.normalizationMode())
-			p.watch = &watched{stream: p.normalizer, now: p.now, ended: func() { p.post(func() {}) }}
-			p.out = audio.NewPlayer(p.watch)
+			p.watch = &watched{
+				stream: p.normalizer, now: p.now,
+				ended: func() { p.post(func() {}) },
+				failed: func(err error) {
+					p.post(func() {
+						if gen != p.gen || p.out == nil {
+							return
+						}
+						p.pending = p.Position()
+						p.stop()
+						p.playing, p.err = false, errorText(err)
+						p.sync()
+					})
+				},
+			}
+			out := audio.NewPlayer(p.watch)
+			p.out = out
 			// From its middle, as a session picked up again, it fades in.
 			level := 1.0
 			if p.pending > 0 {
@@ -734,7 +759,7 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 			p.applyGain()
 			p.out.OnEnd(func() {
 				p.post(func() {
-					if gen == p.gen {
+					if gen == p.gen && p.out == out && p.playing {
 						p.ended()
 					}
 				})
@@ -932,8 +957,8 @@ func (p *Player) Session() (Session, bool) {
 	}, true
 }
 
-// Restore picks up a session where it was left, paused, and loads its
-// track to play at once when asked.
+// Restore picks up a session where it was left, paused, with its cover and
+// lyrics. Audio is opened once Play is asked, so network streams stay fresh.
 func (p *Player) Restore(s Session) {
 	n := len(s.Queue)
 	if n == 0 || len(s.Order) != n || s.At < 0 || s.At >= n {
@@ -948,7 +973,8 @@ func (p *Player) Restore(s Session) {
 	}
 	p.queue, p.order = s.Queue, s.Order
 	p.shuffle, p.repeat = s.Shuffle, s.Repeat%3
-	p.loadSkipping(s.At, 0, stay, false, time.Duration(s.Position)*time.Millisecond)
+	p.prepare(s.At, false, time.Duration(s.Position)*time.Millisecond)
+	p.sync()
 }
 
 // Audio is the current track's sound, opened apart from what plays by OpenAudio:

@@ -2,15 +2,83 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/audio"
+	"github.com/egoist/mygo/ui"
 
 	"mygo-music/internal/music"
 	"mygo-music/internal/player"
 )
+
+// Startup lyrics use the saved source and playhead. If startup metadata fails,
+// the player bar's Play reloads it with fresh audio without selecting a song.
+func TestRestoreSessionLyricsResume(t *testing.T) {
+	for _, failFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "loaded", true: "retry"}[failFirst], func(t *testing.T) {
+			a := newTestApp()
+			ch := posts(a)
+			a.pl = player.New(a.post)
+			a.pl.Source = a.sourceByID
+			a.pl.SetVolume(0)
+			media, err := filepath.Abs("../player/testdata/seek.mp3")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var streams, lyricCalls atomic.Int32
+			fake(a).stream = func(id, _ string) (*music.Stream, error) {
+				streams.Add(1)
+				if id != "saved" {
+					return nil, errors.New("wrong track")
+				}
+				return &music.Stream{URL: music.FileURL(media), Type: "mp3"}, nil
+			}
+			fake(a).lyrics = func(id string) (*music.Lyrics, error) {
+				call := lyricCalls.Add(1)
+				if id != "saved" {
+					return nil, errors.New("wrong track")
+				}
+				if failFirst && call == 1 {
+					return nil, errors.New("startup connection failed")
+				}
+				return &music.Lyrics{Lines: []music.LyricLine{
+					{Start: 0, End: 1000, Text: "开头"},
+					{Start: 1000, End: 4000, Text: "恢复位置的字幕"},
+				}}, nil
+			}
+			track := music.Track{ID: "saved", Source: "fake", Name: "Saved Track", Duration: 5000}
+			keptSession(t, player.Session{Queue: []music.Track{track}, Order: []int{0}, At: 0, Position: 2000})
+			a.restoreSession()
+			until(t, ch, func() bool { _, loaded := a.pl.Lyrics(); return loaded })
+			want := "恢复位置的字幕"
+			if failFirst {
+				want = track.Name
+			}
+			if got := a.menuBarContent(); got.text != want || a.pl.Playing() || streams.Load() != 0 {
+				t.Fatalf("startup: text=%q playing=%v streams=%d", got.text, a.pl.Playing(), streams.Load())
+			}
+			tt := ui.NewTester(a.view, 1180, 780)
+			settled(tt)
+			if dir := os.Getenv("MM_FRAMES"); dir != "" && !failFirst {
+				saveFrame(t, dir, "restored-paused.png", tt.Image())
+			}
+			if err := tt.Click("Play/Pause"); err != nil {
+				t.Fatal(err)
+			}
+			until(t, ch, func() bool { _, loaded := a.pl.Lyrics(); return loaded && a.pl.Ready() })
+			tt.Frame()
+			if got := a.menuBarContent(); got.text != "恢复位置的字幕" || !a.pl.Playing() || a.pl.Position() < 2*time.Second || streams.Load() != 1 {
+				t.Fatalf("resume: text=%q position=%v playing=%v streams=%d", got.text, a.pl.Position(), a.pl.Playing(), streams.Load())
+			}
+			a.pl.TogglePlay()
+		})
+	}
+}
 
 // The session is kept a while after playback changes and every while as
 // it plays, and paused nothing more is due. It was kept by a ticker that

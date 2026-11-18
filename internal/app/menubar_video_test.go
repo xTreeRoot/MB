@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"image"
 	"io"
 	"net/http"
@@ -17,7 +18,45 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/video"
 	"mygo-music/internal/music"
+	"mygo-music/internal/player"
 )
+
+// A failed startup preview can retry when Play reloads the same track's media.
+func TestMenuBarVideoRetriesSameTrack(t *testing.T) {
+	a := newTestApp()
+	a.tray = new(mygo.Tray)
+	ch := posts(a)
+	requests := make(chan string, 4)
+	src := &mvSource{fakeSource: fake(a), video: func(id, _ string) (*music.VideoStream, error) {
+		requests <- id
+		return nil, errors.New("connection failed")
+	}}
+	src.caps["video"] = true
+	a.library.src = src
+	a.pl = player.New(a.post)
+	a.pl.Source = a.sourceByID
+	s := player.Session{Queue: []music.Track{videoSong("1", "Saved")}, Order: []int{0}, At: 0, Position: 2000}
+	a.pl.Restore(s)
+	a.syncMenuBarVideo()
+	if id := wait(t, requests, "startup video"); id != "1" {
+		t.Fatalf("asked for %q", id)
+	}
+	until(t, ch, func() bool { return !a.trayVideo.loading })
+	a.syncMenuBarVideo()
+	select {
+	case <-requests:
+		t.Fatal("failed preview retried continuously")
+	default:
+	}
+	a.pl.TogglePlay()
+	a.syncMenuBarVideo()
+	if id := wait(t, requests, "same-track retry"); id != "1" {
+		t.Fatalf("asked for %q", id)
+	}
+	until(t, ch, func() bool { return !a.trayVideo.loading })
+	a.quitting = true
+	a.trayVideo.release()
+}
 
 // A slow platform answer cannot recreate a disabled preview or attach to a skipped track.
 func TestMenuBarVideoRejectsStaleLoad(t *testing.T) {
@@ -88,6 +127,7 @@ func TestMenuBarNativeVideo(t *testing.T) {
 	a.library.src.(*mvSource).caps["video"] = true
 	a.pl.Cue([]music.Track{videoSong("1", "First")})
 	a.trayVideo.video, a.trayVideo.proxy, a.trayVideo.key = p, proxy, "fake\x001"
+	a.trayVideo.track = a.pl.Current()
 	defer func() { a.quitting = true; a.trayVideo.release() }()
 	out := audio.NewPlayer(&silence{})
 	out.SetVolume(0)
