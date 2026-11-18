@@ -2,6 +2,8 @@
 
 使用 Go 与 [MyGo](https://github.com/egoist/mygo) 构建的原生桌面音乐播放器，基于 [egoist/mygo-music](https://github.com/egoist/mygo-music) 提交 `298c88a03407844ac1c4eb76e3590edfe4577121` 开发，遵循 AGPL-3.0 许可证。
 
+iPhone / iPad 客户端位于 `ios` 分支的 [ios/](https://github.com/xTreeRoot/MB/tree/ios/ios)，使用 SwiftUI；构建、个人签名安装和页面截图见该目录说明。
+
 ## 当前能力
 
 - 哔哩哔哩 App 扫码登录、扫码状态更新、二维码过期刷新和取消登录。
