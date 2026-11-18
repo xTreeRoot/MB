@@ -21,6 +21,7 @@ func (a *app) view(c *ui.Context) {
 	c.SetTheme(&t)
 
 	a.shortcuts(c)
+	a.syncPlaybackMode()
 	a.syncInlineMV()
 
 	// Back to the front, after the listener may have changed their
@@ -373,6 +374,9 @@ func (a *app) pageTop(c *ui.Context) {
 			}
 		})
 	}
+	ui.Row(c.Key("playback-mode-bar")).Absolute().Top(0).Right(max(24, c.TitleBar().Right+12)).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
+		a.playbackModeSwitch(c)
+	})
 }
 
 func (a *app) content(c *ui.Context) {
@@ -384,6 +388,8 @@ func (a *app) content(c *ui.Context) {
 	// Pages mark where their content is, as they scroll.
 	a.underTop, a.underBottom = false, false
 	switch a.route.page {
+	case pageVideo:
+		a.videoPage(c)
 	case pageHome:
 		a.homePage(c)
 	case pagePlaylist:

@@ -2,10 +2,18 @@ package i18n
 
 // zhCN is the app's text in Simplified Chinese, by its English.
 var zhCN = map[string]string{
-	"Refresh":                "刷新",
-	"Network":                "网络",
-	"System Proxy Allowlist": "系统代理白名单",
-	"Proxy Domains":          "代理域名",
+	"Music Mode":     "听歌模式",
+	"Video Mode":     "视频模式",
+	"Video Playback": "视频播放",
+	"Choose a track to watch from Home or your library.": "从首页或收藏夹选择要播放的视频。",
+	"This source does not provide video playback.":       "当前音源暂不支持视频播放。",
+	"The video is playing in the mini player.":           "视频正在小窗中播放。",
+	"Couldn't load the video. Try again.":                "视频加载失败，请重试。",
+	"Play Video Here":                                    "在主窗口播放",
+	"Refresh":                                            "刷新",
+	"Network":                                            "网络",
+	"System Proxy Allowlist":                             "系统代理白名单",
+	"Proxy Domains":                                      "代理域名",
 	"Only these domains use the system proxy. All other requests connect directly. One domain per line; *.example.com includes subdomains.": "仅白名单内的域名使用系统代理，其余请求直连。每行一个域名，*.example.com 匹配子域名。",
 	"Enter domains such as music.youtube.com or *.youtube.com; URLs and a global wildcard are not allowed.":                                 "请输入 music.youtube.com 或 *.youtube.com 这样的域名，不支持网址或全局通配符。",
 	"Video":                      "视频",

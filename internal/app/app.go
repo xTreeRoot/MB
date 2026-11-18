@@ -37,6 +37,7 @@ const (
 	pageSavedAlbums
 	pageBrowse
 	pageSection
+	pageVideo
 )
 
 type route struct {
@@ -63,6 +64,7 @@ type app struct {
 	pl         *player.Player
 	pal        palette
 	mv         mvState
+	modeTrack  *music.Track // last selection observed by the playback mode
 	extrasTick bool
 	trayLyrics menuBarRenderer
 	trayVideo  menuBarVideoState

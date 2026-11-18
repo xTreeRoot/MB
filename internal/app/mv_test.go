@@ -143,6 +143,9 @@ func TestMVSync(t *testing.T) {
 		{-100 * time.Millisecond, true, false, false, 0.97}, {2 * time.Second, true, false, true, 1},
 		{2 * time.Second, true, true, false, 1}, {0, false, false, false, 1},
 		{2 * time.Second, false, false, true, 1},
+		{250 * time.Millisecond, false, false, true, 1},
+		{-250 * time.Millisecond, false, false, true, 1},
+		{250 * time.Millisecond, false, true, false, 1},
 	} {
 		seek, rate := mvSync(5*time.Second+tc.delta, 5*time.Second, tc.playing, tc.buffering)
 		if seek != tc.seek || rate != tc.rate {

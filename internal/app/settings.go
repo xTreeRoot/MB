@@ -24,6 +24,8 @@ type settings struct {
 	PlaylistOrders map[string][]string `json:"playlistOrders,omitempty"`
 	// NowPlayingMedia remembers whether the large player shows its cover or video.
 	NowPlayingMedia string `json:"nowPlayingMedia,omitempty"`
+	// PlaybackMode chooses browsing with audio or opening each selection as video.
+	PlaybackMode playbackMode `json:"playbackMode,omitempty"`
 	// Captions writes down episodes as they play, for their captions, on this
 	// device, once the listener has the model.
 	Captions bool `json:"captions"`

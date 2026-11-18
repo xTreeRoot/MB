@@ -10,10 +10,11 @@ const (
 	nowPlayingVideo = "video"
 )
 
-// syncInlineMV owns the video only while the expanded player's video view is visible.
-// The stored choice belongs to the listener, so changing tracks never resets it.
+// syncInlineMV shares one decoder between the main video page and the expanded
+// player, including its closing animation. The mini player owns it separately.
 func (a *app) syncInlineMV() {
-	inline := a.mv.win == nil && a.nowPlaying && a.settings.NowPlayingMedia != nowPlayingCover && a.canMV() && a.npPane != paneStage && a.npPane != paneWall
+	expanded := (a.nowPlaying || a.npT > 0) && a.settings.NowPlayingMedia != nowPlayingCover && a.npPane != paneStage && a.npPane != paneWall
+	inline := a.mv.win == nil && a.canMV() && (a.videoPageVisible() || expanded)
 	if inline == a.mv.inline {
 		return
 	}

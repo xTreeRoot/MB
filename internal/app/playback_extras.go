@@ -33,6 +33,8 @@ func (a *app) syncPlaybackExtras() {
 	if a.quitting || a.pl == nil {
 		return
 	}
+	a.syncPlaybackMode()
+	a.syncInlineMV()
 	a.updateTrayLyric()
 	a.syncMV()
 	needed := runtime.GOOS == "darwin" && a.tray != nil && a.settings.MenuBarLyrics && (a.pl.Playing() || a.trayVideo.needsFrames())

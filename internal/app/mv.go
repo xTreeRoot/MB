@@ -126,7 +126,12 @@ func (a *app) loadMV(key string) {
 // the video is buffering or a seek is still completing.
 func mvSync(audioPos, videoPos time.Duration, playing, buffering bool) (seek bool, rate float64) {
 	drift := audioPos - videoPos
-	if drift > 600*time.Millisecond || drift < -600*time.Millisecond {
+	tolerance := 600 * time.Millisecond
+	if !playing {
+		// A paused picture cannot converge by changing its playback rate.
+		tolerance = 80 * time.Millisecond
+	}
+	if drift > tolerance || drift < -tolerance {
 		return !buffering, 1
 	}
 	if playing && !buffering {
@@ -152,9 +157,11 @@ func (a *app) syncMV() {
 	if key != m.key {
 		a.loadMV(key)
 	}
+	resync := false
 	if m.video != nil && m.video.Ready() {
 		playing := a.pl.Playing() && !a.pl.Loading()
 		seek, rate := mvSync(a.pl.Position(), m.video.Position(), playing, m.video.Buffering())
+		resync = seek
 		if seek && time.Since(m.lastSeek) >= time.Second {
 			m.video.Seek(a.pl.Position())
 			m.lastSeek = time.Now()
@@ -176,7 +183,7 @@ func (a *app) syncMV() {
 	if m.inline && a.win != nil {
 		a.win.Invalidate()
 	}
-	if !m.ticking && (m.loading || m.video != nil && m.video.Err() == nil && (a.pl.Playing() || !m.video.Ready() || m.video.Buffering())) {
+	if !m.ticking && (m.loading || m.video != nil && m.video.Err() == nil && (a.pl.Playing() || resync || !m.video.Ready() || m.video.Buffering())) {
 		m.ticking = true
 		time.AfterFunc(200*time.Millisecond, func() {
 			mygo.RunOnMain(func() {
