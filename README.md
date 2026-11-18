@@ -1,0 +1,47 @@
+# MB
+
+使用 Go 与 [MyGo](https://github.com/egoist/mygo) 构建的原生桌面音乐播放器，基于 [egoist/mygo-music](https://github.com/egoist/mygo-music) 提交 `298c88a03407844ac1c4eb76e3590edfe4577121` 开发，遵循 AGPL-3.0 许可证。
+
+## 当前能力
+
+- 哔哩哔哩 App 扫码登录、扫码状态更新、二维码过期刷新和取消登录。
+- 视频搜索、推荐、视频音频播放、评论读取与发送、视频点赞。
+- 个人中心、收藏夹、观看历史、关注列表和 UP 主投稿分页。
+- 带每句开始与结束时间的字幕，转换为播放器毫秒时间轴并随播放滚动。
+- 播放队列、进度跳转、随机和循环播放、本地音频、缓存与音频下载。
+- 中文和英文界面、macOS 托盘与刘海播放器。
+
+登录 Cookie 当前仅保存在应用内存中，退出或重启后需要重新扫码。字幕能否获取取决于视频提供的字幕和账号权限；缺少字幕时会返回明确状态。
+
+## 开发与验证
+
+需要 Go 1.27.3 或更新版本、Node.js 22.6 或更新版本。桌面应用无需安装网站依赖；MyGo 会使用本机 Node.js 或 Bun 读取配置。
+
+```bash
+go tool mygo dev
+CGO_ENABLED=0 go test ./...
+go tool mygo vet .
+npm run test:bilibili
+```
+
+macOS 本地打包：
+
+```bash
+go tool mygo build -sign - -skip-notarize
+```
+
+产物位于 `build/darwin-arm64/MB.app`。默认使用本地临时签名；正式公证发布需要维护者自行配置 Apple 签名和公证凭据。
+
+## 平台策略
+
+通用播放器只依赖 `internal/music.Source`。内置平台分别放在 `internal/app/builtin/<platform>`，每个平台有自己的清单、网络权限、会话和 API 实现，通过 `loadBundledPlugins` 注册。当前仅接入哔哩哔哩。
+
+新增平台时新增独立目录、声明其已实现能力，并将运行文件加入 `builtin_plugin.go` 的嵌入清单。通用页面、播放器和登录弹窗不根据平台名称调用私有 API。用户安装的 MyGo 音源插件也可通过同一契约接入，插件示例保留在 `examples/demo-plugin`。
+
+哔哩哔哩能力通过平台策略适配已有 MyGo 能力入口。扫码登录使用官方 `qrcode/generate`、`qrcode/poll`，优先读取 `Set-Cookie`，兼容官方 `passport.biligame.com/crossDomain` 回调。字幕接口返回的秒数转换为毫秒后交给原生歌词组件。
+
+## 来源与许可证
+
+保留 MyGo Music 的 Go 模块路径、上游许可证和历史变更记录，便于核对来源与后续维护。`website/` 是保留的上游网站源码，不参与 MB 桌面打包；本次未发布网站。源项目的歌词舞台动画参考 [folia-major](https://github.com/chthollyphile/folia-major)。
+
+源码仓库：[xTreeRoot/MB](https://github.com/xTreeRoot/MB)。许可证见 [LICENSE](LICENSE)。

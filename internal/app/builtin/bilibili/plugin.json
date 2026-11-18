@@ -1,0 +1,25 @@
+{
+  "id": "bilibili",
+  "name": "Bilibili",
+  "version": "1.0.0",
+  "minAppVersion": "0.1.0",
+  "main": "index.js",
+  "playback": "stream",
+  "permissions": {
+    "network": [
+      "api.bilibili.com",
+      "passport.bilibili.com",
+      "www.bilibili.com",
+      "*.hdslb.com",
+      "*.bilivideo.com",
+      "*.bilivideo.cn"
+    ]
+  },
+  "navigation": [
+    { "builtin": "home" },
+    { "builtin": "liked" },
+    { "title": "Favorites", "page": "favorites", "icon": "playlist" },
+    { "title": "Watch History", "page": "history", "icon": "calendar" },
+    { "title": "Following", "page": "following", "icon": "artist" }
+  ]
+}
