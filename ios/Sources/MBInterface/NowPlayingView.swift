@@ -6,18 +6,25 @@ struct NowPlayingView: View {
     let video: VideoModel
     let demo: Bool
     var interactionSource: (any InteractionSource)? = nil
+    var librarySource: (any LibrarySource)? = nil
     var accountRevision = 0
     var downloads: DownloadModel? = nil
     var preferences: PreferencesModel? = nil
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.offlineLibrary) private var localLibrary
     @State private var hotComments: [TrackComment] = []
     @State private var hotTrackID: String?
     @State private var showingQueue = false
     @State private var showingCaptions = false
     @State private var previewMilliseconds = 0.0
     @State private var scrubbing = false
+    @State private var scrubbingSelection: Int?
     @State private var showingComments = false
+    @State private var creatorDestination: CreatorDestination?
+
+    private struct CreatorDestination: Identifiable {
+        let id: String
+        let source: any LibrarySource
+    }
 
     var body: some View {
         NavigationStack {
@@ -46,45 +53,42 @@ struct NowPlayingView: View {
                                 ArtworkView(track: track, size: 260).shadow(color: .black.opacity(0.18), radius: 24, y: 14)
                             }
                         }
-                        VStack(spacing: 8) {
-                            Text(track.title).font(.title2.bold()).multilineTextAlignment(.center)
-                            Text(track.artist).font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        progress(track: track)
-                        controls
-                        PlaybackOrderControls(playback: playback)
                         if let station = playback.station {
                             HStack { Label(station.title, systemImage: "radio"); Spacer(); Button("退出电台") { playback.endStation() } }.font(.caption)
                         }
-                        if let message = playback.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.red) }
                         if let message = playback.persistenceMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
-                        HStack {
-                            Button { showingCaptions.toggle() } label: {
-                                Label("字幕", systemImage: "quote.bubble")
-                            }
-                            .tint(showingCaptions ? MBTheme.accent : .secondary)
-                            Spacer()
-                            Button { showingQueue = true } label: {
-                                Label("队列", systemImage: "list.bullet")
-                            }
-                        }
-                        .font(.subheadline)
-                        if interactionSource != nil, track.localFileID == nil {
-                            Button("评论与点赞", systemImage: "bubble.left.and.bubble.right") { showingComments = true }
-                        }
-                        if let localLibrary, localLibrary.contains(track) {
-                            Button(LocalizedStringKey(localLibrary.snapshot.favorites.contains(track.id) ? "取消喜欢" : "喜欢"), systemImage: localLibrary.snapshot.favorites.contains(track.id) ? "heart.fill" : "heart") {
-                                Task { await localLibrary.toggleFavorite(track) }
-                            }
-                        }
-                        if let downloads, track.localFileID == nil {
-                            Button(LocalizedStringKey(downloads.downloading[track.id] == nil ? "下载音频" : "正在下载"), systemImage: "arrow.down.circle") { downloads.download(track) }
-                                .disabled(downloads.downloading[track.id] != nil)
-                        }
                     }
                     .padding(28)
                     .frame(maxWidth: 520)
                     .frame(maxWidth: .infinity)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let track = playback.queue.current {
+                    VStack(spacing: 14) {
+                        VStack(spacing: 5) {
+                            Text(track.title).font(.title3.bold()).lineLimit(2).multilineTextAlignment(.center)
+                            Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            if let message = playback.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.red).lineLimit(2) }
+                        }
+                        progress(track: track)
+                        controls
+                        HStack {
+                            Button { showingCaptions.toggle() } label: { Label("字幕", systemImage: "quote.bubble") }
+                                .tint(showingCaptions ? MBTheme.accent : .secondary).frame(maxWidth: .infinity, minHeight: 44)
+                            if interactionSource != nil, track.localFileID == nil {
+                                Button { showingComments = true } label: { Label("评论", systemImage: "bubble.left.and.bubble.right") }
+                                    .accessibilityLabel("评论与点赞").frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                            Button { showingQueue = true } label: { Label("队列", systemImage: "list.bullet") }
+                                .accessibilityValue("\(playback.queue.tracks.count)").frame(maxWidth: .infinity, minHeight: 44)
+                        }.font(.subheadline)
+                    }
+                    .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 8)
+                    .frame(maxWidth: 560).frame(maxWidth: .infinity)
+                    .background(.regularMaterial)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("player-controls")
                 }
             }
             .background {
@@ -110,6 +114,16 @@ struct NowPlayingView: View {
                         } label: { Label("播放界面样式", systemImage: "paintbrush") }
                     }
                 }
+                if let track = playback.queue.current, let downloads {
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            TrackContextMenu(track: track, playback: playback, downloads: downloads,
+                                openCreator: librarySource.map { source in
+                                    { id in creatorDestination = CreatorDestination(id: id, source: source) }
+                                })
+                        } label: { Label("更多操作", systemImage: "ellipsis") }
+                    }
+                }
             }
         }
         .tint(MBTheme.accent)
@@ -117,7 +131,16 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showingComments) {
             if let interactionSource, let track = playback.queue.current { CommentsView(source: interactionSource, track: track).id("\(track.id):\(accountRevision)") }
         }
-        .task(id: (playback.queue.current?.id ?? "") + ":" + String(preferences?.values.hotComments ?? false)) {
+        .sheet(item: $creatorDestination) { destination in
+            NavigationStack {
+                LibraryPageView(source: destination.source, route: .creator(destination.id), select: { tracks, index in
+                    creatorDestination = nil
+                    playback.select(tracks, index: index, autoplay: !demo)
+                })
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { creatorDestination = nil } } }
+            }.id(destination.id)
+        }
+        .task(id: (playback.queue.current?.id ?? "") + ":" + String(preferences?.values.hotComments ?? false) + ":" + String(interactionSource != nil) + ":" + String(accountRevision)) {
             hotComments = []; hotTrackID = nil
             guard preferences?.values.hotComments == true, let track = playback.queue.current, let interactionSource else { return }
             do {
@@ -126,11 +149,18 @@ struct NowPlayingView: View {
                 hotComments = page.comments; hotTrackID = track.id
             } catch { /* 热评失败不打断歌词或播放。 */ }
         }
-        .onChange(of: playback.queue.current?.id) { _, _ in previewMilliseconds = 0 }
+        .onChange(of: playback.selectionRevision) { _, _ in
+            scrubbing = false; scrubbingSelection = nil
+            previewMilliseconds = demo ? 0 : Double(playback.positionMilliseconds)
+        }
         .onChange(of: playback.positionMilliseconds) { _, value in
             if !scrubbing && !demo { previewMilliseconds = Double(value) }
         }
         .onAppear { showingCaptions = preferences?.values.lyricsStage == true; if !demo { previewMilliseconds = Double(playback.positionMilliseconds) } }
+        #if os(iOS)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        #endif
     }
 
     private var quietComment: TrackComment? {
@@ -141,9 +171,13 @@ struct NowPlayingView: View {
 
     private func progress(track: Track) -> some View {
         VStack(spacing: 8) {
-            Slider(value: $previewMilliseconds, in: 0...Double(max(1, playback.durationMilliseconds))) { editing in
+            Slider(value: Binding(get: { min(max(0, previewMilliseconds), Double(max(1, playback.durationMilliseconds))) }, set: { previewMilliseconds = $0 }), in: 0...Double(max(1, playback.durationMilliseconds))) { editing in
                 scrubbing = editing
-                if !editing && !demo { playback.seek(to: Int64(previewMilliseconds)) }
+                if editing { scrubbingSelection = playback.selectionRevision }
+                else {
+                    if !demo, scrubbingSelection == playback.selectionRevision { playback.seek(to: Int64(previewMilliseconds)) }
+                    scrubbingSelection = nil
+                }
             }
                 .overlay {
                     if preferences?.values.smoke == true { ProgressSmoke(progress: previewMilliseconds / Double(max(1, playback.durationMilliseconds)), position: Int64(previewMilliseconds), playing: playback.state == .playing) }
@@ -161,9 +195,15 @@ struct NowPlayingView: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 42) {
+            HStack {
+                Button("随机播放", systemImage: "shuffle") { playback.toggleShuffle() }
+                    .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                    .tint(playback.queue.shuffled ? MBTheme.accent : .secondary)
+                    .accessibilityValue(Text(playback.queue.shuffled ? "开启" : "关闭"))
+                Spacer(minLength: 4)
                 Button("上一首", systemImage: "backward.end.fill") { playback.previous() }
                     .labelStyle(.iconOnly).font(.title2).frame(minWidth: 44, minHeight: 44)
+                Spacer(minLength: 4)
                 Button { playback.toggle() } label: {
                     Group {
                         if playback.state == .loading { ProgressView().tint(.white) }
@@ -172,15 +212,20 @@ struct NowPlayingView: View {
                 }
                 .buttonStyle(.borderedProminent).clipShape(Circle()).disabled(demo)
                 .accessibilityLabel(Text(playback.state == .playing ? "暂停" : "播放"))
+                Spacer(minLength: 4)
                 Button("下一首", systemImage: "forward.end.fill") { playback.next() }
                     .labelStyle(.iconOnly).font(.title2).frame(minWidth: 44, minHeight: 44)
+                Spacer(minLength: 4)
+                Button(LocalizedStringKey(playback.queue.repeatMode.title), systemImage: playback.queue.repeatMode == .one ? "repeat.1" : "repeat") { playback.cycleRepeat() }
+                    .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                    .tint(playback.queue.repeatMode == .off ? .secondary : MBTheme.accent)
             }
             if playback.state == .loading { Text("正在准备音频").font(.caption).foregroundStyle(.secondary) }
         }
     }
 }
 
-private struct QueueView: View {
+struct QueueView: View {
     let playback: PlaybackModel
     @Environment(\.dismiss) private var dismiss
 
@@ -188,12 +233,15 @@ private struct QueueView: View {
         NavigationStack {
             List {
                 ForEach(Array(playback.queue.tracks.enumerated()), id: \.offset) { index, track in
-                    Button { playback.jump(to: index); dismiss() } label: {
+                    Button { playback.jump(to: index, intent: .transport); dismiss() } label: {
                         TrackRow(track: track, selected: index == playback.queue.index)
                     }.buttonStyle(.plain).accessibilityLabel("队列选择 \(track.title)")
                 }
                 .onDelete { playback.removeQueue($0) }
                 .onMove { playback.moveQueue($0, to: $1) }
+            }
+            .overlay {
+                if playback.queue.tracks.isEmpty { ContentUnavailableView("播放队列为空", systemImage: "music.note.list") }
             }
             .navigationTitle("播放队列 · \(playback.queue.tracks.count)")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }

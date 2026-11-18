@@ -284,3 +284,7 @@
 "启用内置音源" = "Enable Built-in Source";
 "请在设置启用音源" = "Enable a source in Settings";
 "可更新至 %@" = "Update available: %@";
+"播放队列为空" = "Your queue is empty";
+"评论" = "Comments";
+"更多操作" = "More Actions";
+"播放队列" = "Play Queue";

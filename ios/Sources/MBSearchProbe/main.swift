@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreVideo
 import Foundation
+import ImageIO
 import MBBilibili
 import MBFoundation
 
@@ -12,6 +13,22 @@ import MBFoundation
         let query = args.isEmpty ? "纯音乐" : args.joined(separator: " ")
         let source = BilibiliSource()
         do {
+            if mode == "--artwork" {
+                for section in try await source.home() where !section.tracks.isEmpty {
+                    var loaded = 0
+                    for track in section.tracks {
+                        guard let url = track.artworkURL, url.scheme == "https" else { throw ProbeFailure.artwork }
+                        var request = URLRequest(url: url); request.allHTTPHeaderFields = track.artworkHeaders
+                        let (data, response) = try await NetworkClient.shared.data(for: request)
+                        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
+                              let image = CGImageSourceCreateWithData(data as CFData, nil),
+                              CGImageSourceCreateImageAtIndex(image, 0, nil) != nil else { throw ProbeFailure.artwork }
+                        loaded += 1
+                    }
+                    print("\(section.category.title)：\(loaded)/\(section.tracks.count) 张 HTTPS 封面下载和原生解码成功")
+                }
+                return
+            }
             if mode == "--home" {
                 for section in try await source.home() {
                     print("\(section.category.title)：\(section.tracks.count) 条；失败：\(section.errorMessage != nil)")
@@ -79,6 +96,12 @@ import MBFoundation
     }
 }
 private enum ProbeFailure: LocalizedError {
-    case noShortTrack, decode
-    var errorDescription: String? { self == .noShortTrack ? "未找到十分钟内的验证曲目" : "原生解码未得到有效帧" }
+    case noShortTrack, decode, artwork
+    var errorDescription: String? {
+        switch self {
+        case .noShortTrack: "未找到十分钟内的验证曲目"
+        case .decode: "原生解码未得到有效帧"
+        case .artwork: "封面地址、下载或原生图像解码失败"
+        }
+    }
 }

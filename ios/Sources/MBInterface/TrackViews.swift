@@ -16,24 +16,31 @@ struct ArtworkView: View {
 /// 封面和 API/音频共用代理策略，图片上下文由音源随曲目提供。
 struct RemoteArtwork: View {
     let track: Track
-    @State private var data: Data?
+    @State private var image: Image?
+    private struct Request: Hashable {
+        let url: URL?
+        let headers: [String: String]
+    }
     var body: some View {
         ZStack {
             MBTheme.artworkGradient
         }
         .overlay {
             GeometryReader { geometry in
-                if let image { image.resizable().scaledToFill().frame(width: geometry.size.width, height: geometry.size.height).clipped() }
+                if let image {
+                    image.resizable().scaledToFill().frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        .accessibilityIdentifier("artwork-loaded-" + track.id)
+                }
                 else { Image(systemName: "music.note").foregroundStyle(.white.opacity(0.75)).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         }
-        .task(id: track.artworkURL) {
-            data = nil
+        .task(id: Request(url: track.artworkURL, headers: track.artworkHeaders)) {
+            image = nil
             guard let url = track.artworkURL else { return }
             if url.isFileURL {
                 let result = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
                 guard !Task.isCancelled else { return }
-                data = result; return
+                image = result.flatMap(decodedImage); return
             }
             var request = URLRequest(url: url)
             request.allHTTPHeaderFields = track.artworkHeaders
@@ -41,13 +48,13 @@ struct RemoteArtwork: View {
                 let (value, response) = try await NetworkClient.shared.data(for: request)
                 guard !Task.isCancelled, let response = response as? HTTPURLResponse,
                       (200..<300).contains(response.statusCode) else { return }
-                data = value
+                image = decodedImage(value)
             } catch { /* 无封面时保留渐变占位。 */ }
         }
     }
 
-    private var image: Image? {
-        guard let data else { return nil }
+    // 每次资源加载只解码一次，播放时钟更新不反复解码同一张封面。
+    private func decodedImage(_ data: Data) -> Image? {
         #if os(iOS)
         guard let image = UIImage(data: data) else { return nil }
         return Image(uiImage: image)
@@ -78,6 +85,7 @@ struct TrackRow: View {
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

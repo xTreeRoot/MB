@@ -86,8 +86,8 @@ private struct VideoQueueView: View {
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
             Text("播放队列 · \(playback.queue.tracks.count)").font(.headline)
-            ForEach(Array(playback.queue.tracks.enumerated()), id: \.element.id) { index, track in
-                Button { playback.jump(to: index) } label: {
+            ForEach(Array(playback.queue.tracks.enumerated()), id: \.offset) { index, track in
+                Button { playback.jump(to: index, intent: .transport) } label: {
                     TrackRow(track: track, selected: playback.queue.index == index)
                 }.buttonStyle(.plain).accessibilityLabel("队列选择 \(track.title)")
             }

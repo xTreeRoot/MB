@@ -1,8 +1,16 @@
 # 页面核对与验证
 
-产品版本 0.1.0，当前 build 5；桌面功能对照 main `27d4337`。本轮底栏与歌词设置截图见 [build 5 图库](Build5/index.html) 和 [编号索引](Build5/SCREENSHOTS.md)。[原有完整图库](index.html) 与 [原有索引](SCREENSHOTS.md) 保留 build 4 的历史验证。
+产品版本 0.1.0，当前 build 6；桌面功能对照 main `27d4337`。本轮播放器与资源验证见 [build 6 说明](Build6/README.md)、[图库](Build6/index.html) 和 [编号索引](Build6/SCREENSHOTS.md)。底栏与歌词设置的 [build 5 图库](Build5/index.html)、[原有完整图库](index.html) 保留历史验证。
 
 截图来自 XCTest 在 iPhone 18 Pro / iPad Pro 13-inch (M5) 模拟器上的实际操作。账号、歌曲、评论、插件均为隔离演示数据，系统分享页使用演示静音 WAV。它们用于检查页面、导航、弹窗与状态，不代表真实账号互动、真机媒体播放或第三方平台验收。每张图的测试名称、设备、采集时间与 SHA-256 记录在 [manifest.json](manifest.json)。
+
+## Build 6（2026-11-18）
+
+123 项 Swift 行为/合同回归通过（Foundation 96、B 站 27），新增 HTTP/HTTPS/协议相对封面的三输入回归；公共 SwiftUI 宿主编译和通用 iPhone/iPad arm64 Release 构建通过。真实游客首页四区共 24 张封面下载、原生解码成功，手机首页实际显示；搜索“夜曲”得到 17 条并解码真实音频 4096 PCM 帧。
+
+手机 3 项、平板 3 项 UI 回归通过；固定作者页面音源后，手机交互额外重跑 1 项通过。覆盖四个 Tab 的迷你播放器、音乐队列切歌不受未来视频偏好影响、固定控制/歌词/评论入口、作者其他投稿、封面/黑胶/磁带/三种歌词样式和 iPad 横竖屏。46 张演示截图记录在 [build 6 manifest](Build6/manifest.json)，真实游客首页封面另附并明确区分。
+
+本地结果包：`.build/Build6Phone.xcresult`、`.build/Build6PhoneFinal.xcresult`、`.build/Build6Tablet.xcresult`。Release build 6 的 IPA 结构、ZIP、可执行权限和设备族检查通过，114 个生产源码/工程/脚本摘要与打包工作区一致。真实账号发布操作、真机后台/锁屏/CarPlay 和功耗仍待实测。
 
 ## Build 5（2026-11-18）
 

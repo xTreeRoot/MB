@@ -108,8 +108,11 @@ struct VideoDTO: Decodable {
     static func coverURL(_ value: String?) -> URL? {
         guard let value, !value.isEmpty else { return nil }
         let normalized = value.hasPrefix("//") ? "https:\(value)" : value
-        guard let url = URL(string: normalized), url.scheme == "https" else { return nil }
-        return url
+        guard var url = URLComponents(string: normalized), url.host != nil,
+              url.scheme == "https" || url.scheme == "http" else { return nil }
+        // 平台仍返回 HTTP 封面；CDN 支持 HTTPS，统一升级后才能通过 iOS 的传输安全检查。
+        url.scheme = "https"
+        return url.url
     }
 }
 

@@ -64,7 +64,7 @@ enum DemoCatalog {
         Track(sourceID: "demo", sourceTrackID: "night", title: "晚风里的片刻", artist: "MB 界面示例", durationMilliseconds: 180_000),
         Track(sourceID: "demo", sourceTrackID: "city", title: "城市慢下来", artist: "MB 界面示例", durationMilliseconds: 210_000),
         Track(sourceID: "demo", sourceTrackID: "rain", title: "雨落在窗沿", artist: "MB 界面示例", durationMilliseconds: 160_000),
-    ]
+    ].map { original in var track = original; track.artistID = "preview"; return track }
     static let timeline = CaptionTimeline(lines: [
         CaptionLine(startMilliseconds: 0, endMilliseconds: 4_000, text: "让晚风经过耳边"),
         CaptionLine(startMilliseconds: 5_000, endMilliseconds: 9_000, text: "把今天的喧闹放远"),

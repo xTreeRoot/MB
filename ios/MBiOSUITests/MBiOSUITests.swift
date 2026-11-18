@@ -2,6 +2,64 @@ import XCTest
 import UIKit
 
 final class MBiOSUITests: XCTestCase {
+    @MainActor func testPlayerControlsAndMiniQueueStayUsableAcrossTrackChanges() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-account", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+            app.buttons["为你推荐"].firstMatch.tap()
+        } else {
+            XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+            app.buttons["查看更多为你推荐"].tap()
+        }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["播放队列"].waitForExistence(timeout: 5))
+        chooseMode("视频模式", app: app)
+        app.buttons["播放队列"].tap()
+        XCTAssertTrue(app.navigationBars["播放队列 · 3"].waitForExistence(timeout: 5))
+        capture("迷你播放器-直接打开队列-演示数据", app: app)
+        app.buttons["队列选择 城市慢下来"].tap()
+        XCTAssertTrue(app.buttons["打开播放页，城市慢下来"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["全屏播放"].exists, "队列切歌不应被下次播放的视频偏好带离音乐界面")
+        app.buttons["打开播放页，城市慢下来"].tap()
+        for label in ["上一首", "下一首", "字幕", "队列", "评论与点赞"] {
+            XCTAssertTrue(app.buttons[label].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons[label].isHittable, "\(label) 应无需滚动即可点击")
+        }
+        let dock = app.otherElements["player-controls"]
+        XCTAssertTrue(dock.exists)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(dock.frame))
+        capture("播放器-固定控制与评论入口-演示数据", app: app)
+        app.buttons["更多操作"].tap()
+        app.buttons["查看 UP 主投稿"].tap()
+        XCTAssertTrue(app.navigationBars["UP 主投稿"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["播放 雨落在窗沿"].waitForExistence(timeout: 5))
+        capture("播放器-查看作者其他内容-演示数据", app: app)
+        app.buttons["完成"].tap()
+        app.buttons["下一首"].tap()
+        XCTAssertTrue(app.staticTexts["雨落在窗沿"].waitForExistence(timeout: 5))
+        app.buttons["上一首"].tap()
+        XCTAssertTrue(app.staticTexts["城市慢下来"].waitForExistence(timeout: 5))
+        app.buttons["评论与点赞"].tap()
+        XCTAssertTrue(app.staticTexts["慢下来，听见晚风里的片刻。"].waitForExistence(timeout: 5))
+        capture("播放器-评论阅读-演示数据", app: app)
+        app.buttons["完成"].tap()
+        app.buttons["字幕"].tap()
+        XCTAssertTrue(app.buttons["跳转到 让晚风经过耳边"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["下一首"].isHittable)
+        XCTAssertTrue(app.buttons["队列"].isHittable)
+        capture("播放器-歌词与固定控制-演示数据", app: app)
+        app.buttons["队列"].tap()
+        app.buttons["队列选择 晚风里的片刻"].tap()
+        XCTAssertTrue(app.staticTexts["晚风里的片刻"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["评论与点赞"].isHittable)
+        app.buttons["收起"].tap()
+        XCTAssertTrue(app.buttons["打开播放页，晚风里的片刻"].waitForExistence(timeout: 5))
+    }
+
     @MainActor func testMiniPlayerDoesNotOverlapTabsAcrossPagesAndRotation() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -570,7 +628,7 @@ final class MBiOSUITests: XCTestCase {
             let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch
             XCTAssertTrue(card.waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["首页"].isHittable)
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.name = orientation == .portrait ? "iPad-竖屏" : "iPad-横屏"
             screenshot.lifetime = .keepAlways
             add(screenshot)

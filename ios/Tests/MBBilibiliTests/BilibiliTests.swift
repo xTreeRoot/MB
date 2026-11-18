@@ -39,6 +39,14 @@ func durationVariantsAreHandled(value: String) throws {
     #expect(dto.track()?.durationMilliseconds == (value == "61.125" ? 61_125 : 0))
 }
 
+@Test(arguments: ["http://i1.hdslb.com/cover.jpg", "https://i1.hdslb.com/cover.jpg", "//i1.hdslb.com/cover.jpg"])
+func platformCoversUseHTTPSForAppTransportSecurity(_ address: String) throws {
+    let body = try JSONSerialization.data(withJSONObject: ["bvid": "BV123", "pic": address])
+    let track = try #require(JSONDecoder().decode(VideoDTO.self, from: body).track())
+    #expect(track.artworkURL?.absoluteString == "https://i1.hdslb.com/cover.jpg")
+    #expect(track.artworkHeaders["Referer"] == "https://www.bilibili.com/")
+}
+
 private actor HTTPFixture {
     private var requests: [URLRequest] = []
     let searchCode: Int

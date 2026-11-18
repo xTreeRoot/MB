@@ -5,6 +5,7 @@ struct MiniPlayerView: View {
     let playback: PlaybackModel
     var transitionEnabled = false
     let transitionNamespace: Namespace.ID
+    let openQueue: () -> Void
     let open: () -> Void
 
     var body: some View {
@@ -28,6 +29,9 @@ struct MiniPlayerView: View {
                     }
                 }
                 .accessibilityLabel(Text(playback.state == .playing ? "暂停" : "播放"))
+                Button("播放队列", systemImage: "list.bullet") { openQueue() }
+                    .labelStyle(.iconOnly).frame(width: 44, height: 44)
+                    .accessibilityValue("\(playback.queue.tracks.count)")
             }
         }
         .padding(12)

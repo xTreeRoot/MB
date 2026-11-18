@@ -1,6 +1,6 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `5`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `6`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
 
 ## 在另一台 Mac 编译
 
@@ -27,6 +27,8 @@ Xcode 选择 `MBiOS` scheme；模拟器可直接运行。装到自己的 iPhone 
 - 音质、应用音量、中英文、外观、缓存容量、搜索记录、系统代理域名白名单；首页/搜索/播放按能力使用音源，切换浏览源不改变旧队列来源。
 - 外部 JavaScript 插件：ZIP/目录/GitHub/安装链接、权限预览、安装/更新/卸载、设置、启停、GitHub release 每日检查。QuickJS ES 模块解释器支持 timer/fetch/Abort、Headers/URL、隔离存储与 MD5/AES；不启用 JIT，不运行外部进程。
 - 插件首页/自定义页/导航、歌曲与专辑/作者/歌单/播客/电台、搜索分类、个人内容、收藏/关注/订阅、平台歌单增删与搜索选歌、可选评论互动、播放回报；网页登录在独立临时 WKWebView 中完成，`host.openURL` 使用 App 内网页。
+
+build 6 修复平台 HTTP 封面被丢弃的问题，统一使用 HTTPS，并避免播放进度刷新时重复解码图片。迷你播放器可直接打开队列；展开播放器后进度、上下曲、歌词、评论和队列固定在底部。更多菜单复用下载、喜欢、歌单和分享操作，并可查看当前曲目作者的其他投稿。队列切歌保持当前音乐/视频界面，拖动进度期间切歌会取消旧拖动，作者页面固定使用打开时的音源。
 
 ## CarPlay 系统正在播放与逐句歌词
 
@@ -65,17 +67,17 @@ xcodebuild -project MBiOS.xcodeproj -scheme MBiOS -configuration Debug \
 bash scripts/package-ipa.sh
 ```
 
-`package-ipa.sh` 输出 `.build/artifacts/MB-iOS-0.1.0-5-unsigned.ipa` 及源码 SHA-256 清单。未签名 IPA 需要自己的签名，不能点击直接安装；Xcode 直接运行是首次安装最省事的方式。
+`package-ipa.sh` 输出 `.build/artifacts/MB-iOS-0.1.0-6-unsigned.ipa` 及源码 SHA-256 清单。未签名 IPA 需要自己的签名，不能点击直接安装；Xcode 直接运行是首次安装最省事的方式。
 
 UI 回归使用后台启动的 Simulator 设备和 XCTest，不需要打开 Simulator.app 或控制 Xcode 窗口。可先用 `xcrun simctl list devices available` 找设备，再按 [Review/README.md](Review/README.md) 的命令运行和导出截图。Release 忽略 `--demo`；Debug 演示资料、插件、静音音频与实际沙盒数据隔离。
 
-2026-11-18 build 5：122 项 Swift Testing 回归通过（Foundation 96、B 站 26，参数化测试另含多个输入），公共 SwiftUI 宿主编译和 iPhone/iPad 通用模拟器测试编译通过。build 4 已验证真实游客首页四区各 6 条，更多页分别 30/20/100/40 条；搜索“夜曲”17 条、真实音频解码 4096 PCM 帧、HTTP 206 Range 与原生视频画面输出成功。最终界面及 Release 结果见 [PARITY.md](PARITY.md) 和截图索引。
+2026-11-18 build 6：123 项 Swift Testing 回归通过（Foundation 96、B 站 27，参数化测试另含多个输入）。本轮真实游客首页四区共 24 张封面 HTTPS 下载及原生解码成功，手机首页实际显示图片；搜索“夜曲”17 条、真实音频解码 4096 PCM 帧。build 4 已验证更多页分别 30/20/100/40 条、HTTP 206 Range 与原生视频画面输出。最终手机/平板界面与 Release 结果见 [PARITY.md](PARITY.md) 和 [截图说明](Review/README.md)。
 
 ## 宿主差异与未验收项
 
 桌面托盘、刘海、窗口和本机进程能力对应 iOS 导航、锁屏及控制中心；iOS 插件不提供外部进程、远程播放器和桌面端口监听回调 `waitForRedirect`。依赖完整浏览器 Web API 的插件可能需要适配；已验证原版 B 站 JS 可在解释器执行签名搜索合同，但不能据此宣称所有桌面插件通用。网页登录使用 WKWebView 自己的网络栈，域名代理白名单只控制 URLSession 的 API/图片/媒体请求。
 
-build 3 曾完成免费 Personal Team 真机签名与安装。当前 build 5 的真实扫码、线上点赞/发评论、真机锁屏/后台长播、蓝牙切换、CarPlay 显示与控制和特效功耗尚未实测，不能用演示截图替代。平台风控错误保留已有内容并允许重试，不绕过风控。系统支持的本地格式以 AVFoundation 实际可解码能力为准。
+build 3 曾完成免费 Personal Team 真机签名与安装。当前 build 6 的真实扫码、线上点赞/发评论、真机锁屏/后台长播、蓝牙切换、CarPlay 显示与控制和特效功耗尚未实测，不能用演示截图替代。平台风控错误保留已有内容并允许重试，不绕过风控。系统支持的本地格式以 AVFoundation 实际可解码能力为准。
 
 ## 来源与许可证
 

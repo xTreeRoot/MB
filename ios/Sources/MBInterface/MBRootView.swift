@@ -19,6 +19,7 @@ public struct MBRootView: View {
     @State private var request = SearchRequest()
     @State private var path: [MBPage] = []
     @State private var showingPlayer = false
+    @State private var showingQueue = false
     @State private var showingSettings = false
     @State private var showingPlugins = false
     @State private var account: AccountModel
@@ -36,6 +37,7 @@ public struct MBRootView: View {
     @State private var selectedSourceID: String
     @State private var plugins: PluginModel
     @State private var currentInteractions: (any InteractionSource)?
+    @State private var currentLibrarySource: (any LibrarySource)?
     private let router: SourceRouter
     private let initialSource: any MusicSource
     private let initialSourceID: String
@@ -63,21 +65,22 @@ public struct MBRootView: View {
 
     public var body: some View {
         TabView(selection: $selectedTab) {
-            adaptiveNavigation.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+            adaptiveNavigation.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .discover) }
                 .tabItem { Label("发现", systemImage: "safari") }.tag(MBTab.discover)
             AccountLibraryView(account: account, plugin: source as? PluginSource, source: source as? any LibrarySource, playback: playback, downloads: downloads, select: select)
-                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .account) }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(MBTab.account)
             DownloadsView(model: downloads, library: localLibrary, playback: playback)
-                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .library) }
                 .tabItem { Label("资料库", systemImage: "music.note.list") }.tag(MBTab.library)
             SettingsView(preferences: preferences, network: networkSettings, plugins: plugins)
-                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .settings) }
                 .tabItem { Label("设置", systemImage: "gearshape") }.tag(MBTab.settings)
         }
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
             .tint(MBTheme.accent)
-            .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, video: video, demo: demo, interactionSource: currentInteractions, accountRevision: account.revision, downloads: downloads, preferences: preferences).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
+            .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, video: video, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
+            .sheet(isPresented: $showingQueue) { QueueView(playback: playback) }
             .sheet(item: $commentTrack) { track in
                 if let interactions = currentInteractions { CommentsView(source: interactions, track: track).id(account.revision) }
             }
@@ -116,10 +119,18 @@ public struct MBRootView: View {
             }
             .task(id: selectedSourceID + ":" + String(plugins.revision)) { await activateSource() }
             .task(id: (playback.queue.current?.id ?? "") + ":" + String(plugins.revision)) {
+                currentInteractions = nil
+                currentLibrarySource = nil
+                let track = playback.queue.current
                 await registerPlugins()
-                if let track = playback.queue.current, let interactions = await router.source(for: track) as? any InteractionSource {
-                    currentInteractions = (await interactions.capabilities()).available ? interactions : nil
-                } else { currentInteractions = nil }
+                guard let track, let provider = await router.source(for: track), !Task.isCancelled,
+                      playback.queue.current?.id == track.id else { return }
+                currentLibrarySource = provider as? any LibrarySource
+                if let interactions = provider as? any InteractionSource {
+                    let available = await interactions.capabilities().available
+                    guard !Task.isCancelled, playback.queue.current?.id == track.id else { return }
+                    currentInteractions = available ? interactions : nil
+                }
             }
             .onChange(of: selectedSourceID) { _, id in preferences.values.selectedSourceID = id }
             .onChange(of: preferences.values.builtInEnabled) { _, enabled in
@@ -186,10 +197,10 @@ public struct MBRootView: View {
             .environment(\.locale, Locale(identifier: preferences.values.language.languageCode))
     }
 
-    // 放进各个 Tab 的安全区域，避免覆盖 TabView 自己管理的浮动导航栏。
-    @ViewBuilder private var miniPlayer: some View {
-        if playback.queue.current != nil {
-            MiniPlayerView(playback: playback, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition) {
+    // 只在当前 Tab 的安全区域挂载，保留唯一的封面转场来源。
+    @ViewBuilder private func miniPlayer(for tab: MBTab) -> some View {
+        if playback.queue.current != nil, selectedTab == tab {
+            MiniPlayerView(playback: playback, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition, openQueue: { showingQueue = true }) {
                 if video.presentationMode == .video { video.open() }
                 else { showingPlayer = true }
             }
