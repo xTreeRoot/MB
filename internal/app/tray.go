@@ -93,10 +93,12 @@ func (a *app) applyTray() {
 		}
 		// Windows' left click, where the right one opens the menu.
 		t.OnClick(a.showMain)
+		t.OnAppearanceChange(a.updateTrayLyric)
 		a.tray = t
-		a.trayLyric, a.trayTip = "", ""
+		a.trayLyrics, a.trayTip = menuBarRenderer{}, ""
 		a.syncPlaybackExtras()
 	case !show && a.tray != nil:
+		a.trayVideo.release()
 		a.tray.Destroy()
 		a.tray = nil
 	}

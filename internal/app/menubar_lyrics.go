@@ -1,6 +1,7 @@
 package app
 
 import (
+	"math"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -8,52 +9,64 @@ import (
 )
 
 const (
-	menuBarCharacters = 18
-	menuBarScrollHold = time.Second
-	menuBarScrollStep = 250 * time.Millisecond
-	menuBarScrollGap  = "　　"
+	menuBarDefaultWidth  = 240
+	menuBarMinWidth      = 80
+	menuBarMaxWidth      = 600
+	menuBarHeightPoints  = 18
+	menuBarIconPoints    = 18
+	menuBarIconGap       = 6
+	menuBarVideoPoints   = 32
+	menuBarFontSize      = 13
+	menuBarScale         = 2
+	menuBarScrollHold    = time.Second
+	menuBarScrollSpeed   = 26.0 // Logical points per second, independent of glyph widths.
+	menuBarScrollGap     = 32
+	menuBarFrameInterval = 50 * time.Millisecond
 )
 
-// menuBarLine scrolls a bounded window of the complete line using audio time.
-// Seeking is deterministic and pausing freezes the display without another clock.
-func menuBarLine(text string, elapsed time.Duration) string {
-	runes := []rune(text)
-	if len(runes) <= menuBarCharacters {
-		return text
-	}
-	runes = append(runes, []rune(menuBarScrollGap)...)
-	cycle := menuBarScrollHold + time.Duration(len(runes))*menuBarScrollStep
-	phase := max(elapsed, 0) % cycle
-	offset := 0
-	if phase > menuBarScrollHold {
-		offset = int((phase - menuBarScrollHold) / menuBarScrollStep)
-	}
-	visible := make([]rune, menuBarCharacters)
-	for i := range visible {
-		visible[i] = runes[(offset+i)%len(runes)]
-	}
-	return string(visible)
+type menuBarContent struct {
+	text    string
+	elapsed time.Duration
+	tip     string
 }
 
-// menuBarText is independent of visible windows and uses each subtitle's own
-// start time, so identical consecutive lines still begin at their first word.
-func (a *app) menuBarText() (text, tip string) {
-	tip = mygo.App.Name()
+func menuBarWidth(width float64) int {
+	if width <= 0 || math.IsNaN(width) {
+		return menuBarDefaultWidth
+	}
+	return int(math.Round(max(menuBarMinWidth, min(menuBarMaxWidth, width))))
+}
+
+// menuBarOffset moves pixels rather than characters, so punctuation and mixed
+// scripts keep one speed. It only depends on audio time, including paused seeks.
+func menuBarOffset(textWidth, viewport int, elapsed time.Duration) int {
+	if textWidth <= viewport || elapsed <= menuBarScrollHold {
+		return 0
+	}
+	distance := textWidth + menuBarScrollGap*menuBarScale
+	return int((elapsed-menuBarScrollHold).Seconds()*menuBarScrollSpeed*menuBarScale) % distance
+}
+
+// menuBarContent follows each subtitle's start, even for consecutive repeated
+// lines. Keeping the full text lets the renderer preserve its exact dimensions.
+func (a *app) menuBarContent() menuBarContent {
+	content := menuBarContent{tip: mygo.App.Name()}
 	if !a.settings.MenuBarLyrics || a.pl == nil {
-		return
+		return content
 	}
 	track := a.pl.Current()
 	if track == nil {
-		return
+		return content
 	}
 	position := a.pl.Position()
 	lines, _ := a.pl.Lyrics()
-	full := currentLyric(lines, position)
-	elapsed := position
-	if full == "" {
-		full = track.Name
+	content.text = currentLyric(lines, position)
+	content.elapsed = position
+	if content.text == "" {
+		content.text = track.Name
 	} else {
-		elapsed -= lines[lyrics.Index(lines, position)].At
+		content.elapsed -= lines[lyrics.Index(lines, position)].At
 	}
-	return menuBarLine(full, elapsed), full + "\n" + track.Name + " · " + track.ArtistNames()
+	content.tip = content.text + "\n" + track.Name + " · " + track.ArtistNames()
+	return content
 }

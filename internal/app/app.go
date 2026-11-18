@@ -61,7 +61,8 @@ type app struct {
 	pal        palette
 	mv         mvState
 	extrasTick bool
-	trayLyric  string
+	trayLyrics menuBarRenderer
+	trayVideo  menuBarVideoState
 	trayTip    string
 
 	// libs are the sources, the built-in one first, and what the app has of
@@ -439,6 +440,7 @@ func Run() error {
 	// the pointer passes over it.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		a.mv.release()
+		a.trayVideo.release()
 		if a.tray != nil {
 			a.tray.Destroy()
 		}

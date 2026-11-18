@@ -372,11 +372,24 @@ func (a *app) settingsSections(c *ui.Context, p palette) []settingsSection {
 		// Only on macOS: elsewhere the icon is always in the notification
 		// area.
 		if runtime.GOOS == "darwin" {
-			row(T("Menu Bar Lyrics"), T("Show the current lyric in the menu bar. Long lines scroll with playback; hover to read the full line."), func() {
+			row(T("Menu Bar Lyrics"), "", func() {
 				if ui.Switch(c.Key("menu-bar-lyrics"), &s.MenuBarLyrics).Label(T("Menu Bar Lyrics")).Changed() {
 					a.changed()
 					a.changeAppIcon()
 					a.syncPlaybackExtras()
+				}
+			})
+			row(T("Menu Bar Video"), "", func() {
+				if ui.Switch(c.Key("menu-bar-video"), &s.MenuBarVideo).Label(T("Menu Bar Video")).Disabled(!s.MenuBarLyrics).Changed() {
+					a.changed()
+					a.syncPlaybackExtras()
+				}
+			})
+			row(T("Menu Bar Lyrics Width (pt)"), "", func() {
+				if ui.NumberInput(c.Key("menu-bar-lyrics-width"), &s.MenuBarLyricsWidth, menuBarMinWidth, menuBarMaxWidth, 10).
+					Width(164).Label(T("Menu Bar Lyrics Width (pt)")).Disabled(!s.MenuBarLyrics).Changed() {
+					a.changed()
+					a.updateTrayLyric()
 				}
 			})
 			row(T("App Icon"), T("Shown in the menu bar, it opens the window again after you close it"), func() {

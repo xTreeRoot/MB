@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"mygo-music/internal/lyrics"
 )
@@ -28,18 +26,6 @@ func TestCurrentLyricFollowsSeek(t *testing.T) {
 		if got := currentLyric(lines, tc.at); got != tc.want {
 			t.Errorf("at %v: %q, want %q", tc.at, got, tc.want)
 		}
-	}
-}
-
-// The first marquee frame stays bounded without splitting a UTF-8 character.
-func TestMenuBarLineIsBounded(t *testing.T) {
-	text := strings.Repeat("中文🎵", 20)
-	got := menuBarLine(text, 0)
-	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != 18 {
-		t.Fatalf("invalid marquee lyric: %q", got)
-	}
-	if menuBarLine("short line", time.Hour) != "short line" {
-		t.Fatal("short lyric was changed")
 	}
 }
 

@@ -4,46 +4,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/audio"
 
 	"mygo-music/internal/lyrics"
 	"mygo-music/internal/music"
 )
-
-// Long lines advance through their tail and wrap, preserving a bounded UTF-8 title.
-func TestMenuBarMarquee(t *testing.T) {
-	full := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	for _, tc := range []struct {
-		at   time.Duration
-		want string
-	}{
-		{-time.Second, full[:18]},
-		{0, full[:18]},
-		{menuBarScrollHold, full[:18]},
-		{menuBarScrollHold + menuBarScrollStep, full[1:19]},
-		{menuBarScrollHold + 18*menuBarScrollStep, full[18:36]},
-		{menuBarScrollHold + 36*menuBarScrollStep, menuBarScrollGap + full[:16]},
-		{menuBarScrollHold + 38*menuBarScrollStep, full[:18]},
-	} {
-		if got := menuBarLine(full, tc.at); got != tc.want {
-			t.Errorf("at %v: %q, want %q", tc.at, got, tc.want)
-		}
-	}
-	chinese := strings.Repeat("歌词滚动🎵", 10)
-	seen := make(map[string]bool)
-	for step := range 100 {
-		got := menuBarLine(chinese, time.Duration(step)*menuBarScrollStep)
-		if !utf8.ValidString(got) || utf8.RuneCountInString(got) != menuBarCharacters {
-			t.Fatalf("broken or unbounded title: %q", got)
-		}
-		seen[got] = true
-	}
-	if len(seen) < 5 {
-		t.Fatal("long Chinese lyrics stayed truncated instead of scrolling")
-	}
-}
 
 // The menu bar follows subtitles, seeks and tracks with no main window present.
 func TestMenuBarLyricsFollowPlayback(t *testing.T) {
@@ -57,43 +23,43 @@ func TestMenuBarLyricsFollowPlayback(t *testing.T) {
 	}
 	a.pl.SetLyrics(lines)
 	a.pl.Hold(time.Second)
-	first, tip := a.menuBarText()
-	if first != menuBarLine(full, 0) || !strings.Contains(tip, full) {
+	first := a.menuBarContent()
+	if first.text != full || first.elapsed != 0 || !strings.Contains(first.tip, full) {
 		t.Fatal("first subtitle or full tooltip was lost")
 	}
 	a.pl.Hold(3 * time.Second)
-	moved, _ := a.menuBarText()
-	if moved == first {
+	moved := a.menuBarContent()
+	if moved.elapsed != 2*time.Second {
 		t.Fatal("long subtitle did not scroll")
 	}
 	// The same playhead produces the same output when playback is paused.
-	frozen, _ := a.menuBarText()
+	frozen := a.menuBarContent()
 	if frozen != moved {
 		t.Fatal("marquee depends on a wall clock")
 	}
 	a.pl.Hold(time.Second)
-	back, _ := a.menuBarText()
+	back := a.menuBarContent()
 	if back != first {
 		t.Fatal("seek backwards did not restore the corresponding lyric window")
 	}
 	a.pl.Hold(12 * time.Second)
-	next, _ := a.menuBarText()
+	next := a.menuBarContent()
 	if next != first {
 		t.Fatal("identical next subtitle did not start from its beginning")
 	}
 	a.pl.Hold(11 * time.Second)
-	gap, _ := a.menuBarText()
-	if gap != "First Track" {
-		t.Fatalf("subtitle gap retained an expired line: %q", gap)
+	gap := a.menuBarContent()
+	if gap.text != "First Track" {
+		t.Fatalf("subtitle gap retained an expired line: %q", gap.text)
 	}
 	a.pl.Cue([]music.Track{song("2", "Second Track", "Another Artist")})
 	a.pl.SetLyrics(nil)
-	title, tip := a.menuBarText()
-	if title != "Second Track" || strings.Contains(tip, full) {
+	title := a.menuBarContent()
+	if title.text != "Second Track" || strings.Contains(title.tip, full) {
 		t.Fatal("track switch retained stale lyrics")
 	}
 	a.settings.MenuBarLyrics = false
-	if title, _ = a.menuBarText(); title != "" {
+	if title = a.menuBarContent(); title.text != "" {
 		t.Fatal("disabling menu bar lyrics kept its title")
 	}
 }
@@ -112,18 +78,18 @@ func TestMenuBarLyricsPauseAndSeek(t *testing.T) {
 	a.pl.TogglePlay()
 	out.Pause()
 	a.pl.Seek(3 * time.Second)
-	before, _ := a.menuBarText()
-	if a.pl.Playing() || before != menuBarLine(full, 2*time.Second) {
+	before := a.menuBarContent()
+	if a.pl.Playing() || before.elapsed != 2*time.Second {
 		t.Fatal("paused lyrics did not follow the audio position")
 	}
 	time.Sleep(30 * time.Millisecond)
-	after, _ := a.menuBarText()
+	after := a.menuBarContent()
 	if after != before {
 		t.Fatal("paused lyrics kept scrolling")
 	}
 	a.pl.Seek(time.Second)
-	back, _ := a.menuBarText()
-	if back != menuBarLine(full, 0) || back == before {
+	back := a.menuBarContent()
+	if back.elapsed != 0 || back == before {
 		t.Fatal("paused seek did not reset the lyric window")
 	}
 }

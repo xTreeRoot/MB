@@ -87,6 +87,10 @@ type settings struct {
 	AppIcon string `json:"appIcon"`
 	// MenuBarLyrics shows the current lyric beside the macOS menu bar icon.
 	MenuBarLyrics bool `json:"menuBarLyrics"`
+	// MenuBarLyricsWidth reserves this many logical points for the lyric viewport.
+	MenuBarLyricsWidth float64 `json:"menuBarLyricsWidth"`
+	// MenuBarVideo shows a muted preview before the menu bar lyric viewport.
+	MenuBarVideo bool `json:"menuBarVideo"`
 	// CacheMB is how many megabytes the songs kept on disk may take; 0
 	// keeps none.
 	CacheMB int `json:"cacheMB"`
@@ -97,7 +101,7 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, CacheMB: 2048}
+	return settings{Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, MenuBarLyricsWidth: menuBarDefaultWidth, MenuBarVideo: true, CacheMB: 2048}
 }
 
 func settingsPath() (string, error) {
