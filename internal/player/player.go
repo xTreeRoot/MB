@@ -44,6 +44,9 @@ type Player struct {
 	// Changed, if set, hears that what plays, where it is or whether it
 	// plays changed.
 	Changed func()
+	// Picked hears a new queue or an explicitly selected queue item. Restore,
+	// transport controls and automatic advancement do not call it.
+	Picked func()
 
 	queue   []music.Track
 	order   []int // the queue's indices in play order: shuffled or not
@@ -218,6 +221,9 @@ func (p *Player) playQueue(tracks []music.Track, start, dir int) {
 		start = 0
 	}
 	p.loadSkipping(max(start, 0), 0, dir, true, 0)
+	if p.Picked != nil {
+		p.Picked()
+	}
 }
 
 // PlayRadio plays tracks in their order, then goes on with those feed
@@ -436,6 +442,9 @@ func (p *Player) Jump(i int) {
 	for k, v := range p.order {
 		if v == i {
 			p.loadSkipping(k, 0, stay, true, 0)
+			if p.Picked != nil {
+				p.Picked()
+			}
 			return
 		}
 	}

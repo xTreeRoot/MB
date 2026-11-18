@@ -9,15 +9,10 @@ const (
 	playbackVideo playbackMode = "video"
 )
 
-// Playback changes request a window outside the current render. Browsing the
-// main window never navigates away from its page when a new video is selected.
-func (a *app) syncPlaybackMode() {
-	track := a.pl.Current()
-	if track == a.modeTrack {
-		return
-	}
-	a.modeTrack = track
-	if !a.quitting && track != nil && a.settings.PlaybackMode == playbackVideo {
+// playbackPicked responds only to an explicit content/queue selection. Changing
+// the preference, restoring playback or updating transport never opens a view.
+func (a *app) playbackPicked() {
+	if !a.quitting && a.pl.Current() != nil && a.settings.PlaybackMode == playbackVideo {
 		a.requestVideoWindow()
 	}
 }
@@ -27,9 +22,13 @@ func (a *app) requestVideoWindow() {
 		return
 	}
 	a.mv.openPending = true
+	gen := a.mv.openGen
 	a.post(func() {
+		if gen != a.mv.openGen {
+			return
+		}
 		a.mv.openPending = false
-		if !a.quitting && a.settings.PlaybackMode == playbackVideo {
+		if !a.quitting && a.pl.Current() != nil && a.settings.PlaybackMode == playbackVideo {
 			a.openMVWindow(true)
 		}
 	})
@@ -37,17 +36,22 @@ func (a *app) requestVideoWindow() {
 
 func (a *app) choosePlaybackMode(mode playbackMode) {
 	a.settings.PlaybackMode = mode
-	a.modeTrack = a.pl.Current()
-	if mode == playbackVideo {
-		a.requestVideoWindow()
-	} else if a.mv.large && a.mv.win != nil {
-		// Closing a native window during the segmented control's build would
-		// reenter native drawing. Update queues the close after that frame.
-		a.post(func() {
-			if a.settings.PlaybackMode != playbackVideo && a.mv.large && a.mv.win != nil {
-				a.mv.win.Close()
-			}
-		})
+	// Invalidate already queued opens, including video -> music -> video
+	// before the next event-loop turn. A fresh selection is required.
+	a.mv.openGen++
+	a.mv.openPending = false
+	if mode == playbackMusic {
+		a.settings.NowPlayingMedia = nowPlayingCover
+		if win := a.mv.win; win != nil {
+			// Native window destruction must happen after the current build.
+			a.post(func() {
+				if a.mv.win == win {
+					win.Close()
+				}
+			})
+		} else {
+			a.syncInlineMV()
+		}
 	}
 	a.changed()
 }

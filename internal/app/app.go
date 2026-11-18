@@ -63,7 +63,6 @@ type app struct {
 	pl         *player.Player
 	pal        palette
 	mv         mvState
-	modeTrack  *music.Track // last selection observed by the playback mode
 	extrasTick bool
 	trayLyrics menuBarRenderer
 	trayVideo  menuBarVideoState
@@ -379,6 +378,7 @@ func Run() error {
 		a.pl.Quality = func() string { return a.settings.Quality }
 		a.pl.Normalize = func() player.NormalizationMode { return a.settings.Normalize }
 		a.pl.Cache = newSongCache(a.settings.CacheMB)
+		a.pl.Picked = a.playbackPicked
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()

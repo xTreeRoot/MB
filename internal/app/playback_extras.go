@@ -33,7 +33,6 @@ func (a *app) syncPlaybackExtras() {
 	if a.quitting || a.pl == nil {
 		return
 	}
-	a.syncPlaybackMode()
 	a.syncInlineMV()
 	a.updateTrayLyric()
 	a.syncMV()

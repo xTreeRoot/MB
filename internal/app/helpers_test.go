@@ -375,6 +375,7 @@ func newTestApp() *app {
 	a.art = newArtCache(func(func()) {})
 	a.pl = player.New(func(func()) {})
 	a.pl.Source = a.sourceByID
+	a.pl.Picked = a.playbackPicked
 	a.pl.SetVolume(0.5)
 	return a
 }

@@ -21,6 +21,7 @@ type mvState struct {
 	ticking        bool
 	err            string
 	large          bool
+	openGen        int
 	openPending    bool
 	detailTab      int
 	detailScroll   ui.ScrollState
@@ -104,12 +105,10 @@ func (a *app) closedMV(win *mygo.Window) {
 		return
 	}
 	m.win = nil
+	m.openGen++
+	m.openPending = false
 	m.release()
 	m.key = ""
-	if m.large && a.settings.PlaybackMode == playbackVideo && !a.quitting {
-		a.settings.PlaybackMode = playbackMusic
-		a.settings.save()
-	}
 	m.large = false
 	a.syncInlineMV()
 	a.syncDock()

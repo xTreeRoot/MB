@@ -121,6 +121,15 @@ func exerciseNativeVideoWindows(a *app, gate chan struct{}, requested <-chan str
 	if err := clickMode("Video Mode"); err != nil {
 		return err
 	}
+	if err := check(func() error {
+		if a.mv.win != nil || a.mv.openPending {
+			return fmt.Errorf("mode switch opened playback")
+		}
+		a.pl.PlayTrack([]music.Track{videoSong("native", "Native video window")}, 0)
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := waitFor("video window", func() bool { return a.mv.win != nil && a.mv.video != nil }); err != nil {
 		return err
 	}
@@ -141,7 +150,7 @@ func exerciseNativeVideoWindows(a *app, gate chan struct{}, requested <-chan str
 		}
 		tt.Frame()
 		a.mv.win.Close()
-		if a.mv.win != nil || a.mv.video != nil || a.settings.PlaybackMode != playbackMusic {
+		if a.mv.win != nil || a.mv.video != nil || a.settings.PlaybackMode != playbackVideo {
 			return fmt.Errorf("closing the loading window did not release video")
 		}
 		if !a.pl.Playing() {
@@ -151,7 +160,10 @@ func exerciseNativeVideoWindows(a *app, gate chan struct{}, requested <-chan str
 	}); err != nil {
 		return err
 	}
-	if err := clickMode("Video Mode"); err != nil {
+	if err := check(func() error {
+		a.pl.PlayTrack([]music.Track{videoSong("native", "Native video window")}, 0)
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := waitFor("reopened window", func() bool { return a.mv.win != nil && a.mv.video != nil }); err != nil {
