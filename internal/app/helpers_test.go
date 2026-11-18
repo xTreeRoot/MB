@@ -39,6 +39,11 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	mygo.App.SetPath(mygo.PathUserData, dir)
+	if os.Getenv("MB_NATIVE_VIDEO_TEST") == "1" {
+		code := runNativeVideoWindowTest()
+		os.RemoveAll(dir)
+		os.Exit(code)
+	}
 	result := make(chan int)
 	go func() { result <- m.Run() }()
 	code := 0

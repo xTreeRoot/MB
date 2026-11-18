@@ -10,11 +10,11 @@ const (
 	nowPlayingVideo = "video"
 )
 
-// syncInlineMV shares one decoder between the main video page and the expanded
-// player, including its closing animation. The mini player owns it separately.
+// syncInlineMV keeps the expanded player's decoder through its closing
+// animation. An independent video window always owns the picture while open.
 func (a *app) syncInlineMV() {
 	expanded := (a.nowPlaying || a.npT > 0) && a.settings.NowPlayingMedia != nowPlayingCover && a.npPane != paneStage && a.npPane != paneWall
-	inline := a.mv.win == nil && a.canMV() && (a.videoPageVisible() || expanded)
+	inline := a.mv.win == nil && a.canMV() && expanded
 	if inline == a.mv.inline {
 		return
 	}
@@ -54,7 +54,7 @@ func (a *app) npMedia(c *ui.Context, track *music.Track, art *artwork, size floa
 				ui.Video(c.Key("inline-video"), m.video).Fill().Fit(ui.Contain).Label(T("Music Video"))
 			}
 			if m.loading || m.video != nil && m.video.Err() == nil && (!m.video.Ready() || m.video.Buffering()) {
-				ui.Box(c).Absolute().Fill().Center().Children(func() { ui.Spinner(c) })
+				videoLoading(c, m.video != nil && m.video.Ready())
 			}
 			if m.err != "" || m.video != nil && m.video.Err() != nil {
 				ui.Column(c).Absolute().Fill().Padding(18).Center().Gap(10).Children(func() {

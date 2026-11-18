@@ -37,7 +37,6 @@ const (
 	pageSavedAlbums
 	pageBrowse
 	pageSection
-	pageVideo
 )
 
 type route struct {
@@ -207,6 +206,9 @@ func (a *app) redraw() {
 	}
 	if a.notch != nil && a.notch.win != nil {
 		a.notch.win.Invalidate()
+	}
+	if a.mv.win != nil {
+		a.mv.win.Invalidate()
 	}
 	if a.settingsWin != nil {
 		a.settingsWin.Invalidate()

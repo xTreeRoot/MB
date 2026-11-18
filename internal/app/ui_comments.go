@@ -162,7 +162,14 @@ func count(n int) string { return i18n.Count(n) }
 // commentsPane lists the comments of tr, which load on as they scroll into
 // view, under a place to write one, if the source takes them.
 func (a *app) commentsPane(c *ui.Context, tr *music.Track) {
+	a.commentsPaneScroll(c, tr, nil)
+}
+
+func (a *app) commentsPaneScroll(c *ui.Context, tr *music.Track, position *ui.ScrollState) {
 	cs := a.commentsFor(tr)
+	if position == nil {
+		position = &cs.scroll
+	}
 	if cs.lib.can("postComment") {
 		a.commentBox(c, cs)
 	}
@@ -190,7 +197,7 @@ func (a *app) commentsPane(c *ui.Context, tr *music.Track) {
 		return
 	}
 	now := c.Now()
-	scroll := ui.Scroll(c.Key("comments")).Grow(1).TrackScroll(&cs.scroll).Padding(4, 8, 48, 0)
+	scroll := ui.Scroll(c.Key("comments")).Grow(1).TrackScroll(position).Padding(4, 8, 48, 0)
 	var end ui.Rect
 	scroll.Children(func() {
 		ui.Column(c).Gap(2).Children(func() {

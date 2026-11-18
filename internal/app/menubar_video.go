@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/video"
+	"github.com/egoist/mygo/mbvideo"
 	"mygo-music/internal/music"
 )
 

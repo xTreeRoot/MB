@@ -21,7 +21,6 @@ func (a *app) view(c *ui.Context) {
 	c.SetTheme(&t)
 
 	a.shortcuts(c)
-	a.syncPlaybackMode()
 	a.syncInlineMV()
 
 	// Back to the front, after the listener may have changed their
@@ -388,8 +387,6 @@ func (a *app) content(c *ui.Context) {
 	// Pages mark where their content is, as they scroll.
 	a.underTop, a.underBottom = false, false
 	switch a.route.page {
-	case pageVideo:
-		a.videoPage(c)
 	case pageHome:
 		a.homePage(c)
 	case pagePlaylist:

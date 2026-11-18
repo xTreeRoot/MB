@@ -14,7 +14,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/audio"
 	"github.com/egoist/mygo/ui"
-	"github.com/egoist/mygo/ui/video"
+	"github.com/egoist/mygo/mbvideo"
 	"mygo-music/internal/i18n"
 	"mygo-music/internal/music"
 )
