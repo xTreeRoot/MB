@@ -80,6 +80,16 @@ private actor SystemSource: PlaybackSource {
 }
 
 @Suite(.serialized) struct SystemPlaybackTests {
+    // 系统允许任意队列请求封面；此包装只用于模拟 MediaPlayer 的跨队列调用。
+    private struct ArtworkRequest: @unchecked Sendable { let artwork: MPMediaItemArtwork }
+
+    @Test @MainActor func systemArtworkCanBeRequestedOffMainActor() async throws {
+        let data = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6fJ0AAAAASUVORK5CYII="))
+        let request = ArtworkRequest(artwork: try #require(SystemPlaybackCoordinator.makeArtwork(data: data)))
+        let size = await Task.detached { request.artwork.image(at: CGSize(width: 1, height: 1))?.size }.value
+        #expect(size == CGSize(width: 1, height: 1))
+    }
+
     @Test @MainActor func audioClockUpdatesSameSecondLyricsPauseAndSeekingWithoutAView() async {
         let f = SystemFixture()
         defer { f.coordinator.disconnect() }

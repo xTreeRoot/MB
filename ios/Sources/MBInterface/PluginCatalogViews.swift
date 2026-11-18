@@ -58,7 +58,11 @@ struct PluginCatalogPage: View {
             }
             if let content {
                 if !content.subtitle.isEmpty { Text(content.subtitle).font(.subheadline).foregroundStyle(.secondary) }
-                if !content.description.isEmpty { Text(content.description).font(.callout) }
+                if !content.description.isEmpty { Text(content.description).font(.callout).foregroundStyle(.secondary) }
+                let tracks = content.sections.flatMap(\.tracks)
+                if !tracks.isEmpty, case .entity = request {
+                    Button { play(tracks, index: 0) } label: { MusicActionLabel(title: "播放全部", symbol: "play.fill") }.buttonStyle(.borderedProminent)
+                }
                 ForEach(content.sections) { section in
                     Section {
                         if section.trackLayout == "videos" {
@@ -73,7 +77,7 @@ struct PluginCatalogPage: View {
                         ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
                             HStack {
                                 Button { play(section.tracks, index: index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
-                                Menu { menu(track); playlistTrackActions(track, index: index) } label: { Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 44) }.accessibilityLabel("曲目操作 \(track.title)")
+                                Menu { menu(track); playlistTrackActions(track, index: index) } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                             }.contextMenu { menu(track); playlistTrackActions(track, index: index) }
                         }
                         }
@@ -81,7 +85,8 @@ struct PluginCatalogPage: View {
                             NavigationLink { PluginCatalogPage(source: source, request: .entity(entity), select: select, menu: menu) } label: {
                                 HStack(spacing: 12) {
                                     if let url = entity.value["imageUrl"].string.flatMap(URL.init(string:)) { ArtworkView(track: Track(sourceID: source.manifest.id, sourceTrackID: entity.id, title: entity.title, artist: "", artworkURL: url, durationMilliseconds: 0)) }
-                                    VStack(alignment: .leading, spacing: 5) { Text(entity.title); if !entity.subtitle.isEmpty { Text(entity.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) } }
+                                    else { Image(systemName: entity.kind == .artist ? "person.crop.circle.fill" : entity.kind == .playlist ? "music.note.list" : "square.stack.fill").font(.title2).foregroundStyle(MBTheme.accent).frame(width: 52, height: 52).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10)) }
+                                    VStack(alignment: .leading, spacing: 5) { Text(entity.title).font(.headline); if !entity.subtitle.isEmpty { Text(entity.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) } }
                                 }
                             }
                         }
@@ -112,6 +117,7 @@ struct PluginCatalogPage: View {
             if let error { Text(error).foregroundStyle(.red); Button("重试") { Task { await load() } } }
             if !loading && content?.sections.isEmpty != false && error == nil { ContentUnavailableView("暂无内容", systemImage: "music.note") }
         }
+        .listStyle(.plain)
         .navigationTitle(title)
         .task {
             for method in ["liked", "savedAlbums", "stations", "shows", "search", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "movePlaylistTrack", "savePlaylist", "saveAlbum", "followArtist", "subscribeShow"] where (try? await source.supports(method)) == true { capabilities.insert(method) }
@@ -119,8 +125,8 @@ struct PluginCatalogPage: View {
             await load()
         }
         .refreshable { await load() }
-        .alert("歌单名称", isPresented: $rename) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("保存") { Task { await playlistName(create: false) } } }
-        .alert("新建平台歌单", isPresented: $create) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("创建") { Task { await playlistName(create: true) } } }
+        .alert("歌单名称", isPresented: $rename) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("保存") { Task { await playlistName(create: false) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
+        .alert("新建平台歌单", isPresented: $create) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("创建") { Task { await playlistName(create: true) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
         .sheet(isPresented: $adding) {
             if case .entity(let item) = request {
                 PluginPlaylistAddView(source: source, playlist: item, existing: Set(content?.sections.flatMap(\.tracks).map(\.sourceTrackID) ?? [])) { await load() }
@@ -194,7 +200,7 @@ struct PluginCatalogPage: View {
     }
 }
 
-private struct PluginCatalogSearch: View {
+struct PluginCatalogSearch: View {
     let source: PluginSource
     let select: ([Track], Int) -> Void
     let menu: (Track) -> AnyView

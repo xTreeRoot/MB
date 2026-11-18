@@ -1,8 +1,14 @@
 # 页面核对与验证
 
-产品版本 0.1.0，当前 build 6；桌面功能对照 main `27d4337`。本轮播放器与资源验证见 [build 6 说明](Build6/README.md)、[图库](Build6/index.html) 和 [编号索引](Build6/SCREENSHOTS.md)。底栏与歌词设置的 [build 5 图库](Build5/index.html)、[原有完整图库](index.html) 保留历史验证。
+产品版本 0.1.0，当前 build 7；桌面功能对照 main `27d4337`。本轮页面重构与交互验证见 [build 7 说明](Build7/README.md)、[图库](Build7/index.html) 和 [编号索引](Build7/SCREENSHOTS.md)。[build 6](Build6/README.md) 保留历史验证。底栏与歌词设置的 [build 5 图库](Build5/index.html)、[原有完整图库](index.html) 保留历史验证。
 
 截图来自 XCTest 在 iPhone 18 Pro / iPad Pro 13-inch (M5) 模拟器上的实际操作。账号、歌曲、评论、插件均为隔离演示数据，系统分享页使用演示静音 WAV。它们用于检查页面、导航、弹窗与状态，不代表真实账号互动、真机媒体播放或第三方平台验收。每张图的测试名称、设备、采集时间与 SHA-256 记录在 [manifest.json](manifest.json)。
+
+## Build 7（2026-11-18 至 19 日）
+
+参考 Apple Music、网易云音乐官方手机截图重构发现、搜索、资料库、我的和播放器；修复底栏及列表尾部遮挡，样式选择即时展示，点击封面切实时视频。修复系统后台取封面崩溃及暂停视频的缓冲状态刷新。
+
+127 项 Swift 回归、SwiftUI 宿主编译与通用 Release 构建通过；iPhone 13 项、iPad 4 项 UI 方法分批通过，另覆盖暗色辅助大字体。当前 148 张演示图及逐方法结果见 [Build7](Build7/README.md)。游客联网与真实视频证据、源码摘要和未验收边界均在该目录说明。
 
 ## Build 6（2026-11-18）
 

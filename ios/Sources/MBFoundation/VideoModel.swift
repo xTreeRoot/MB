@@ -16,7 +16,11 @@ public extension VideoEngine {
     func load(resource: MediaResource, at milliseconds: Int64) async throws { try await load(url: resource.url, at: milliseconds) }
 }
 
-/// mode 仅决定下次点击内容的播放方式；presentationMode 记录当前内容的表现，恢复和传输控制不打开页面。
+@MainActor public protocol VideoEngineEvents: AnyObject {
+    var onUpdate: (() -> Void)? { get set }
+}
+
+/// 显式切换立即替换当前画面；音频始终使用原播放会话，恢复和浏览不自动打开视频。
 @MainActor @Observable public final class VideoModel {
     public private(set) var mode: PlaybackMode = .music
     public private(set) var presentationMode: PlaybackMode = .music
@@ -33,6 +37,7 @@ public extension VideoEngine {
     @ObservationIgnored private let engine: any VideoEngine
     @ObservationIgnored private let store: (any PlaybackModeStore)?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var preferenceRevision = 0
     @ObservationIgnored private var position: Int64 = 0
@@ -43,6 +48,9 @@ public extension VideoEngine {
         self.isSupported = source != nil
         self.engine = engine
         self.store = store
+        if let events = engine as? any VideoEngineEvents {
+            events.onUpdate = { [weak self] in self?.refreshEngineStatus() }
+        }
     }
 
     public func restore() async {
@@ -56,14 +64,29 @@ public extension VideoEngine {
 
     public func choose(_ mode: PlaybackMode) async {
         preferenceRevision += 1
+        let revision = preferenceRevision
         self.mode = mode
         if mode == .music {
             presentationMode = .music
             isVisible = false
             release()
+        } else if let track, track.localFileID == nil {
+            presentationMode = .video
+            isVisible = true
+            if !isReady && task == nil { load() }
         }
-        do { try await store?.savePlaybackMode(mode); persistenceMessage = nil }
-        catch { persistenceMessage = "播放模式保存失败" }
+        let previous = saveTask
+        let saving = Task {
+            await previous?.value
+            do {
+                try await store?.savePlaybackMode(mode)
+                if revision == preferenceRevision { persistenceMessage = nil }
+            } catch {
+                if revision == preferenceRevision { persistenceMessage = "播放模式保存失败" }
+            }
+        }
+        saveTask = saving
+        await saving.value
     }
 
     public func updateTrack(_ track: Track?) {
@@ -103,8 +126,15 @@ public extension VideoEngine {
         position = positionMilliseconds
         self.playing = playing
         guard isReady else { return }
-        if let message = engine.errorMessage { release(); errorMessage = message; return }
+        refreshEngineStatus()
+        guard isReady else { return }
         engine.sync(positionMilliseconds: position, playing: playing)
+        isBuffering = engine.isBuffering
+    }
+
+    private func refreshEngineStatus() {
+        guard isReady else { return }
+        if let message = engine.errorMessage { release(); errorMessage = message; return }
         isBuffering = engine.isBuffering
     }
 
@@ -121,7 +151,7 @@ public extension VideoEngine {
                 let supported = await source.supportsVideo(track: track)
                 guard current == generation, !Task.isCancelled else { return }
                 isSupported = supported
-                guard supported else { isLoading = false; return }
+                guard supported else { isLoading = false; task = nil; return }
                 let resource = try await source.video(track: track)
                 try Task.checkCancellation()
                 try await engine.load(resource: resource, at: position)
@@ -152,14 +182,22 @@ public extension VideoEngine {
 }
 
 /// 一个静音 AVPlayer 供主画面和展开播放器轮流使用，不启动第二条音轨。
-@MainActor public final class NativeVideoEngine: VideoEngine {
+@MainActor public final class NativeVideoEngine: VideoEngine, VideoEngineEvents {
     public let player = AVPlayer()
+    public var onUpdate: (() -> Void)?
+    private var playerObservation: NSKeyValueObservation?
+    private var itemObservation: NSKeyValueObservation?
     private var seeking = false
     private var seekGeneration = 0
     private var remote: RemoteMediaAsset?
     public var errorMessage: String? { player.currentItem?.error == nil ? nil : "视频读取失败，点击重试" }
     public var isBuffering: Bool { player.currentItem?.status == .unknown || player.timeControlStatus == .waitingToPlayAtSpecifiedRate }
-    public init() { player.isMuted = true }
+    public init() {
+        player.isMuted = true
+        playerObservation = player.observe(\.timeControlStatus) { @Sendable [weak self] _, _ in
+            Task { @MainActor in self?.onUpdate?() }
+        }
+    }
 
     public func load(url: URL, at milliseconds: Int64) async throws {
         remote?.cancel()
@@ -187,7 +225,11 @@ public extension VideoEngine {
         try Task.checkCancellation()
         seekGeneration += 1
         seeking = false
-        player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+        let item = AVPlayerItem(asset: asset)
+        itemObservation = item.observe(\.status) { @Sendable [weak self] _, _ in
+            Task { @MainActor in self?.onUpdate?() }
+        }
+        player.replaceCurrentItem(with: item)
         player.isMuted = true
         _ = await player.seek(to: CMTime(value: max(0, milliseconds), timescale: 1_000), toleranceBefore: .zero, toleranceAfter: .zero)
         try Task.checkCancellation()
@@ -214,6 +256,7 @@ public extension VideoEngine {
 
     public func stop() {
         seekGeneration += 1
+        itemObservation = nil
         remote?.cancel()
         remote = nil
         player.pause()

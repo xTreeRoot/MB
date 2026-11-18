@@ -6,6 +6,7 @@ import SwiftUI
 struct VideoPageView: View {
     let video: VideoModel
     let playback: PlaybackModel
+    var openMusic: () -> Void = {}
     @State private var fullScreen = false
     @State private var selectedTab = VideoDetailTab.info
 
@@ -18,6 +19,7 @@ struct VideoPageView: View {
                 }.padding(20)
             } else {
                 VStack(spacing: 0) {
+                    PlaybackModePicker(video: video, openMusic: openMusic).padding(.horizontal, 16).padding(.vertical, 8)
                     picture
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
@@ -47,6 +49,7 @@ struct VideoPageView: View {
 
     private var mainContent: some View {
         VStack(alignment: .leading, spacing: 18) {
+            PlaybackModePicker(video: video, openMusic: openMusic)
             picture
             VideoTransport(playback: playback)
             PlaybackOrderControls(playback: playback)
@@ -76,6 +79,24 @@ struct VideoPageView: View {
             if let message = playback.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.red) }
             if let message = video.persistenceMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// 同一会话中切换画面，不重新选择曲目或启动第二条音轨。
+struct PlaybackModePicker: View {
+    let video: VideoModel
+    var openMusic: () -> Void = {}
+    var body: some View {
+        Picker("播放模式", selection: Binding(get: { video.presentationMode }, set: { mode in
+            Task {
+                if mode == .music { openMusic() }
+                await video.choose(mode)
+            }
+        })) {
+            Text("听歌模式").tag(PlaybackMode.music)
+            Text("视频模式").tag(PlaybackMode.video)
+        }.pickerStyle(.segmented).accessibilityIdentifier("current-playback-mode")
+            .disabled(video.track?.localFileID != nil)
     }
 }
 
@@ -129,23 +150,30 @@ private struct VideoFullscreenView: View {
 
 private struct VideoTransport: View {
     let playback: PlaybackModel
+    @State private var preview = 0.0
+    @State private var scrubbing = false
+    @State private var selection: Int?
     var body: some View {
         VStack(spacing: 8) {
-            Slider(value: Binding(get: { Double(playback.positionMilliseconds) }, set: { playback.seek(to: Int64($0)) }),
-                   in: 0...Double(max(1, playback.durationMilliseconds)))
+            Slider(value: Binding(get: { min(max(0, scrubbing ? preview : Double(playback.positionMilliseconds)), Double(max(1, playback.durationMilliseconds))) }, set: { preview = $0 }),
+                   in: 0...Double(max(1, playback.durationMilliseconds))) { editing in
+                scrubbing = editing
+                if editing { selection = playback.selectionRevision; preview = Double(playback.positionMilliseconds) }
+                else { if selection == playback.selectionRevision { playback.seek(to: Int64(preview)) }; selection = nil }
+            }
                 .accessibilityLabel("视频播放进度")
             HStack {
                 Text(TimeLabel.string(milliseconds: playback.positionMilliseconds))
                 Text("/ \(TimeLabel.string(milliseconds: playback.durationMilliseconds))")
                 Spacer()
-                Button("上一首", systemImage: "backward.end.fill") { playback.previous() }
-                Button(LocalizedStringKey(playback.state == .playing ? "暂停" : "播放"), systemImage: playback.state == .playing ? "pause.fill" : "play.fill") { playback.toggle() }
-                Button("下一首", systemImage: "forward.end.fill") { playback.next() }
+                Button("上一首", systemImage: "backward.end.fill") { playback.previous() }.frame(minWidth: 44, minHeight: 44)
+                Button(LocalizedStringKey(playback.state == .playing ? "暂停" : "播放"), systemImage: playback.state == .playing ? "pause.fill" : "play.fill") { playback.toggle() }.frame(minWidth: 44, minHeight: 44)
+                Button("下一首", systemImage: "forward.end.fill") { playback.next() }.frame(minWidth: 44, minHeight: 44)
             }.font(.subheadline.monospacedDigit()).labelStyle(.iconOnly)
             #if os(iOS)
             SystemVolumeView().frame(maxWidth: 240).frame(height: 28).accessibilityLabel("系统音量")
             #endif
-        }
+        }.onChange(of: playback.selectionRevision) { _, _ in scrubbing = false; selection = nil }
     }
 }
 
@@ -188,16 +216,22 @@ private struct SystemVolumeView: UIViewRepresentable {
 private final class PlayerSurface: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    var displayObservation: NSKeyValueObservation?
 }
 private struct NativeVideoSurface: UIViewRepresentable {
     let player: AVPlayer
     func makeUIView(context: Context) -> PlayerSurface {
         let view = PlayerSurface()
         view.playerLayer.videoGravity = .resizeAspect
+        view.isAccessibilityElement = true
+        view.displayObservation = view.playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { @Sendable [weak view] layer, _ in
+            let ready = layer.isReadyForDisplay
+            Task { @MainActor in view?.accessibilityValue = AppLocalization.text(ready ? "视频画面已显示" : "等待视频画面") }
+        }
         return view
     }
     func updateUIView(_ view: PlayerSurface, context: Context) { view.playerLayer.player = player }
-    static func dismantleUIView(_ view: PlayerSurface, coordinator: ()) { view.playerLayer.player = nil }
+    static func dismantleUIView(_ view: PlayerSurface, coordinator: ()) { view.displayObservation = nil; view.playerLayer.player = nil }
 }
 #else
 private struct NativeVideoSurface: NSViewRepresentable {

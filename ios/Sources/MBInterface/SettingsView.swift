@@ -5,6 +5,8 @@ struct SettingsView: View {
     @Bindable var preferences: PreferencesModel
     let network: NetworkSettingsModel
     let plugins: PluginModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var clearingHistory = false
     var body: some View {
         NavigationStack {
             Form {
@@ -56,13 +58,17 @@ struct SettingsView: View {
                 }
                 Section {
                     Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
-                    NavigationLink("插件") { PluginsView(model: plugins) }
+                    NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
                     NavigationLink("网络与系统代理") { NetworkSettingsView(model: network) }
-                    Button("清空搜索记录", role: .destructive) { preferences.values.searchHistory = [] }
+                    Button("清空搜索记录", role: .destructive) { clearingHistory = true }.disabled(preferences.values.searchHistory.isEmpty)
                 }
                 if let error = preferences.errorMessage { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
             }
             .navigationTitle("设置")
-        }.id(preferences.values.language)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.accessibilityIdentifier("dismiss-settings") } }
+            .confirmationDialog("清空搜索记录？", isPresented: $clearingHistory, titleVisibility: .visible) {
+                Button("清空搜索记录", role: .destructive) { preferences.values.searchHistory = [] }
+            }
+        }.id(preferences.values.language).accessibilityIdentifier("settings-sheet")
     }
 }

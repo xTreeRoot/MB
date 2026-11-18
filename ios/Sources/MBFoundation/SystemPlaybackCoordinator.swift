@@ -64,7 +64,7 @@ import AppKit
         center.skipForwardCommand.preferredIntervals = [15]
         center.skipBackwardCommand.preferredIntervals = [15]
         center.changePlaybackPositionCommand.isEnabled = true
-        let token = center.changePlaybackPositionCommand.addTarget { [weak self] event in
+        let token = center.changePlaybackPositionCommand.addTarget { @Sendable [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent, event.positionTime.isFinite,
                   event.positionTime >= 0, event.positionTime * 1_000 < Double(Int64.max) else { return .commandFailed }
             let position = Int64(event.positionTime * 1_000)
@@ -81,7 +81,7 @@ import AppKit
 
     private func bind(_ command: MPRemoteCommand, action: @escaping @MainActor (PlaybackModel) -> Void) {
         command.isEnabled = true
-        let token = command.addTarget { [weak self] _ in
+        let token = command.addTarget { @Sendable [weak self] _ in
             Task { @MainActor in if let playback = self?.playback { action(playback) } }
             return .success
         }
@@ -113,11 +113,7 @@ import AppKit
                             data = bytes
                         }
                         guard !Task.isCancelled, self?.artworkTrack == track.id else { return }
-                        #if os(iOS)
-                        if let image = UIImage(data: data) { self?.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image } }
-                        #else
-                        if let image = NSImage(data: data) { self?.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image } }
-                        #endif
+                        self?.artwork = Self.makeArtwork(data: data)
                         self?.update()
                     } catch { /* 锁屏封面失败不打断音频。 */ }
                 }
@@ -142,6 +138,16 @@ import AppKit
         ]
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
         publish(info, playback.state == .playing ? .playing : .paused)
+    }
+
+    // MediaPlayer 在自己的队列请求图片，回调不能继承播放器的 MainActor 隔离。
+    nonisolated static func makeArtwork(data: Data) -> MPMediaItemArtwork? {
+        #if os(iOS)
+        guard let image = UIImage(data: data) else { return nil }
+        #else
+        guard let image = NSImage(data: data) else { return nil }
+        #endif
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 
     public func disconnect() {

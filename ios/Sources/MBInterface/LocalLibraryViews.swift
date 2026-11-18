@@ -18,7 +18,21 @@ struct LocalLibraryPage: View {
                 if collections.isEmpty { ContentUnavailableView(LocalizedStringKey(page == .albums ? "暂无专辑" : "暂无作者"), systemImage: page == .albums ? "square.stack" : "person", description: Text("导入带标签的音频后会自动整理")) }
             } else {
                 if !tracks.isEmpty {
-                    Section { Button("播放全部", systemImage: "play.fill") { playback.select(filtered, index: 0) }.disabled(filtered.isEmpty) }
+                    Section {
+                        if let track = tracks.first {
+                            HStack(spacing: 16) {
+                                ArtworkView(track: track, size: 88)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(title).font(.title2.bold())
+                                    Text("\(tracks.count) 首").font(.subheadline).foregroundStyle(.secondary)
+                                }
+                            }.padding(.vertical, 12)
+                        }
+                        HStack(spacing: 12) {
+                            Button { playback.select(filtered, index: 0) } label: { MusicActionLabel(title: "播放全部", symbol: "play.fill") }.buttonStyle(.borderedProminent)
+                            Button { playback.select(filtered, index: 0); if !playback.queue.shuffled { playback.toggleShuffle() } } label: { MusicActionLabel(title: "随机播放", symbol: "shuffle") }.buttonStyle(.bordered)
+                        }.disabled(filtered.isEmpty)
+                    }.listRowSeparator(.hidden)
                 }
                 Section {
                     LocalTrackRows(tracks: filtered, playback: playback, downloads: downloads, playlistID: playlistID, library: library)
@@ -41,6 +55,7 @@ struct LocalLibraryPage: View {
             }
             if let error = library.errorMessage { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
         }
+        .listStyle(.plain)
         .navigationTitle(Text(LocalizedStringKey(title)))
         .searchable(text: $query, prompt: "在此页面搜索")
         #if os(iOS)
@@ -84,6 +99,8 @@ struct LocalTrackRows: DynamicViewContent {
     var library: LocalLibraryModel?
     @State private var lyricsTrack: Track?
     @State private var importingLyrics = false
+    @State private var deletion: SavedMedia?
+    @State private var confirmingDeletion = false
     nonisolated var data: [Track] { tracks }
     var body: some View {
         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -91,10 +108,13 @@ struct LocalTrackRows: DynamicViewContent {
                 Button { playback.select(tracks, index: index) } label: { TrackRow(track: track, selected: playback.queue.current?.id == track.id) }
                     .buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
                     .contextMenu { actions(track) }
-                Menu { actions(track) } label: { Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 44) }
+                Menu { actions(track) } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }
                     .accessibilityLabel("曲目操作 \(track.title)")
             }
         }
+        .confirmationDialog("删除音频文件？", isPresented: $confirmingDeletion, titleVisibility: .visible) {
+            Button("删除音频文件", role: .destructive) { if let deletion { Task { await downloads.remove(deletion) } } }
+        } message: { Text("文件将从设备移除，不能撤销。") }
         .fileImporter(isPresented: $importingLyrics, allowedContentTypes: [.item]) { result in
             switch result {
             case .success(let url): if let lyricsTrack { Task { await downloads.attachLyrics(url, to: lyricsTrack) } }
@@ -111,7 +131,7 @@ struct LocalTrackRows: DynamicViewContent {
             Button("从歌单移除", systemImage: "minus.circle", role: .destructive) { Task { await library.remove([track], from: playlistID) } }
         }
         if let item = downloads.items.first(where: { $0.track.id == track.id }) {
-            Button("删除音频文件", systemImage: "trash", role: .destructive) { Task { await downloads.remove(item) } }
+            Button("删除音频文件", systemImage: "trash", role: .destructive) { deletion = item; confirmingDeletion = true }
         }
     }
 }

@@ -17,6 +17,7 @@ struct DownloadsView: View {
     @State private var playlist: LocalPlaylist?
     @State private var name = ""
     @State private var query = ""
+    @State private var clearingCache = false
     var body: some View {
         NavigationStack {
             List {
@@ -28,15 +29,19 @@ struct DownloadsView: View {
                         }
                     }
                 }
-                if query.isEmpty { navigation; playlists }
+                if query.isEmpty { navigation; recentAdditions; playlists }
                 else { results }
                 Section {
                     HStack { Text("播放缓存"); Spacer(); Text(ByteCountFormatter.string(fromByteCount: model.cacheBytes, countStyle: .file)).foregroundStyle(.secondary) }
-                    Button("清空播放缓存", role: .destructive) { Task { await model.clearCache() } }
+                    Button("清空播放缓存", role: .destructive) { clearingCache = true }.disabled(model.cacheBytes == 0)
                 }
                 if let error = model.errorMessage ?? library.errorMessage { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
             }
+            .modifier(MusicGroupedList())
             .navigationTitle("资料库")
+            .confirmationDialog("清空播放缓存？", isPresented: $clearingCache, titleVisibility: .visible) {
+                Button("清空播放缓存", role: .destructive) { Task { await model.clearCache() } }
+            } message: { Text("已下载和导入的音频会保留。") }
             .searchable(text: $query, prompt: "搜索本地歌曲、专辑、作者、歌单")
             .navigationDestination(for: LocalPage.self) { page in LocalLibraryPage(page: page, library: library, downloads: model, playback: playback) }
             .toolbar {
@@ -81,12 +86,40 @@ struct DownloadsView: View {
             link("最近播放", systemImage: "clock", page: .recent, count: library.recent.count)
         }
     }
+    @ViewBuilder private var recentAdditions: some View {
+        if !model.items.isEmpty {
+            Section("最近添加") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ForEach(Array(model.items.prefix(8).enumerated()), id: \.element.id) { index, item in
+                            Button { playback.select(Array(model.items.prefix(8)).map(\.track), index: index) } label: {
+                                VStack(alignment: .leading, spacing: 7) {
+                                    ArtworkView(track: item.track, size: 116)
+                                    Text(item.track.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                                    Text(item.track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }.frame(width: 116, alignment: .leading)
+                            }.buttonStyle(.plain).accessibilityLabel("播放 \(item.track.title)")
+                        }
+                    }.padding(.vertical, 8)
+                }
+            }
+        }
+    }
     private var playlists: some View {
         Section("我的歌单") {
             ForEach(library.snapshot.playlists) { item in
                 HStack {
-                    link(item.name, systemImage: "music.note.list", page: .playlist(item.id), count: library.resolve(item.trackIDs).count)
-                    Menu { playlistActions(item) } label: { Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 44) }.accessibilityLabel("歌单操作 \(item.name)")
+                    NavigationLink(value: LocalPage.playlist(item.id)) {
+                        HStack(spacing: 12) {
+                            if let track = library.resolve(item.trackIDs).first { ArtworkView(track: track) }
+                            else { Image(systemName: "music.note.list").font(.title2).frame(width: 52, height: 52).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8)) }
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(item.name).font(.headline)
+                                Text("\(library.resolve(item.trackIDs).count) 首").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                    Menu { playlistActions(item) } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("歌单操作 \(item.name)")
                 }.contextMenu { playlistActions(item) }
             }
             Button("新建歌单", systemImage: "plus") { name = ""; creating = true }
@@ -113,7 +146,16 @@ struct DownloadsView: View {
             }
             Section("歌单") {
                 ForEach(library.snapshot.playlists.filter { LocalCatalog.matches($0.name, query: query) }) { item in
-                    link(item.name, systemImage: "music.note.list", page: .playlist(item.id), count: library.resolve(item.trackIDs).count)
+                    NavigationLink(value: LocalPage.playlist(item.id)) {
+                        HStack(spacing: 12) {
+                            if let track = library.resolve(item.trackIDs).first { ArtworkView(track: track) }
+                            else { Image(systemName: "music.note.list").font(.title2).frame(width: 52, height: 52).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8)) }
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(item.name).font(.headline)
+                                Text("\(library.resolve(item.trackIDs).count) 首").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 4)
+                    }
                 }
             }
         }

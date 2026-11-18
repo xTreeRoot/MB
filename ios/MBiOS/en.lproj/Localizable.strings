@@ -288,3 +288,22 @@
 "评论" = "Comments";
 "更多操作" = "More Actions";
 "播放队列" = "Play Queue";
+"搜索" = "Search";
+"浏览音乐" = "Browse Music";
+"我的音乐" = "My Music";
+"最近添加" = "Recently Added";
+"%lld 首" = "%lld songs";
+"已启用" = "Enabled";
+"已停用" = "Disabled";
+"已保存" = "Saved";
+"音频输出" = "Audio Output";
+"清空搜索记录？" = "Clear search history?";
+"清空播放缓存？" = "Clear playback cache?";
+"已下载和导入的音频会保留。" = "Downloaded and imported audio will be kept.";
+"删除音频文件？" = "Delete audio file?";
+"文件将从设备移除，不能撤销。" = "The file will be removed from this device. This cannot be undone.";
+"卸载插件？" = "Uninstall plug-in?";
+
+"切换到实时视频" = "Switch to live video";
+"视频画面已显示" = "Video frame displayed";
+"等待视频画面" = "Waiting for video frame";

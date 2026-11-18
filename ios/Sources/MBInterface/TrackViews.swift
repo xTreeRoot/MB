@@ -31,6 +31,7 @@ struct RemoteArtwork: View {
                     image.resizable().scaledToFill().frame(width: geometry.size.width, height: geometry.size.height).clipped()
                         .accessibilityIdentifier("artwork-loaded-" + track.id)
                 }
+                else if track.sourceID == "demo" || track.localMetadata?.folderID == "preview" { PreviewCover(track: track) }
                 else { Image(systemName: "music.note").foregroundStyle(.white.opacity(0.75)).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         }
@@ -89,3 +90,34 @@ struct TrackRow: View {
     }
 }
 
+
+/// 原创演示封面，明确标记 DEMO；不替代真实音源的图片加载。
+private struct PreviewCover: View {
+    let track: Track
+    private var warm: Bool { track.sourceTrackID == "night" }
+    private var rain: Bool { track.sourceTrackID == "rain" }
+    var body: some View {
+        GeometryReader { area in
+            let side = area.size.width
+            ZStack(alignment: .topLeading) {
+                Color(red: warm ? 0.78 : 0.17, green: warm ? 0.39 : rain ? 0.29 : 0.44, blue: warm ? 0.26 : 0.49)
+                Circle().fill(Color(red: 0.96, green: 0.81, blue: 0.51)).frame(width: side * 0.42, height: side * 0.42).offset(x: side * 0.48, y: side * 0.12)
+                Canvas { context, size in
+                    for layer in 0..<5 {
+                        var path = Path()
+                        let y = size.height * (0.5 + Double(layer) * 0.1)
+                        path.move(to: CGPoint(x: 0, y: y))
+                        path.addCurve(to: CGPoint(x: size.width, y: y + 24), control1: CGPoint(x: size.width * 0.3, y: y - size.height * 0.2), control2: CGPoint(x: size.width * 0.6, y: y + size.height * 0.2))
+                        path.addLine(to: CGPoint(x: size.width, y: size.height)); path.addLine(to: CGPoint(x: 0, y: size.height)); path.closeSubpath()
+                        context.fill(path, with: .color(.black.opacity(0.1 + Double(layer) * 0.035)))
+                    }
+                }
+                VStack(alignment: .leading) {
+                    Text("MB / DEMO").font(.system(size: max(5, side * 0.045), weight: .medium, design: .monospaced)).tracking(side * 0.005)
+                    Spacer()
+                    Text(track.title).font(.system(size: max(7, side * 0.09), weight: .bold)).lineLimit(2)
+                }.foregroundStyle(.white).padding(side * 0.09)
+            }.clipped()
+        }.accessibilityHidden(true)
+    }
+}

@@ -43,9 +43,10 @@ struct ProgressSmoke: View {
 struct CoverTransitionSource: ViewModifier {
     let enabled: Bool
     let namespace: Namespace.ID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         #if os(iOS)
-        if #available(iOS 18, *), enabled { content.matchedTransitionSource(id: "player-cover", in: namespace) }
+        if #available(iOS 18, *), enabled && !reduceMotion { content.matchedTransitionSource(id: "player-cover", in: namespace) }
         else { content }
         #else
         content
@@ -55,9 +56,10 @@ struct CoverTransitionSource: ViewModifier {
 struct CoverTransitionDestination: ViewModifier {
     let enabled: Bool
     let namespace: Namespace.ID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         #if os(iOS)
-        if #available(iOS 18, *), enabled { content.navigationTransition(.zoom(sourceID: "player-cover", in: namespace)) }
+        if #available(iOS 18, *), enabled && !reduceMotion { content.navigationTransition(.zoom(sourceID: "player-cover", in: namespace)) }
         else { content }
         #else
         content

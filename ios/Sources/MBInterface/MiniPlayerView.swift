@@ -13,7 +13,7 @@ struct MiniPlayerView: View {
             if let track = playback.queue.current {
                 Button(action: open) {
                     HStack(spacing: 12) {
-                        ArtworkView(track: track, size: 44).modifier(CoverTransitionSource(enabled: transitionEnabled, namespace: transitionNamespace))
+                        ArtworkView(track: track, size: 40).modifier(CoverTransitionSource(enabled: transitionEnabled, namespace: transitionNamespace))
                         VStack(alignment: .leading, spacing: 4) {
                             Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                             Text(playback.errorMessage ?? track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -34,10 +34,16 @@ struct MiniPlayerView: View {
                     .accessibilityValue("\(playback.queue.tracks.count)")
             }
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.primary.opacity(0.06)))
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.06)))
+        .overlay(alignment: .bottomLeading) {
+            GeometryReader { area in
+                Capsule().fill(MBTheme.accent.opacity(0.5)).frame(width: area.size.width * min(1, max(0, Double(playback.positionMilliseconds) / Double(max(1, playback.durationMilliseconds)))), height: 2).offset(y: area.size.height - 2)
+            }.clipped().allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: 680).padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity)
         .buttonStyle(.plain)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")

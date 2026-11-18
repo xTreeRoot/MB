@@ -9,6 +9,8 @@ struct AccountLibraryView: View {
     let playback: PlaybackModel
     let downloads: DownloadModel
     let select: ([Track], Int) -> Void
+    let openSettings: () -> Void
+    let openPlugins: () -> Void
     @State private var showingSignIn = false
     @State private var path: [LibraryRoute] = []
 
@@ -16,28 +18,43 @@ struct AccountLibraryView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    if let user = account.account {
-                        Label(user.name, systemImage: "person.crop.circle.fill").font(.title3.bold())
-                        if source != nil { NavigationLink("我的投稿", value: LibraryRoute.creator(user.id)) }
-                        Button("退出登录", role: .destructive) { Task { await account.signOut() } }
-                    } else if account.available {
+                    HStack(spacing: 16) {
+                        PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL).frame(width: 64, height: 64)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(account.account?.name ?? AppLocalization.text("我的音乐")).font(.title2.bold())
+                            Text(account.displayName).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                    }.padding(.vertical, 18)
+                    if account.account == nil, account.available {
                         Button("登录\(account.displayName)", systemImage: "qrcode.viewfinder") { showingSignIn = true; account.signIn() }
+                            .buttonStyle(.borderedProminent).frame(minHeight: 44)
                     }
+                    if let user = account.account, source != nil { NavigationLink("我的投稿", value: LibraryRoute.creator(user.id)) }
                     if let message = account.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.red) }
-                }
+                }.listRowSeparator(.hidden)
                 if let plugin {
                     Section("我的内容") { PluginPersonalLinks(source: plugin, account: account.account, select: select, menu: { AnyView(TrackContextMenu(track: $0, playback: playback, downloads: downloads)) }) }
                 }
                 if source != nil {
                     Section("我的内容") {
-                        NavigationLink("收藏夹", value: LibraryRoute.favorites)
-                        NavigationLink("点赞的视频", value: LibraryRoute.liked)
-                        NavigationLink("观看历史", value: LibraryRoute.history)
-                        NavigationLink("我的关注", value: LibraryRoute.following)
+                        NavigationLink(value: LibraryRoute.favorites) { Label("收藏夹", systemImage: "folder.fill") }
+                        NavigationLink(value: LibraryRoute.liked) { Label("点赞的视频", systemImage: "heart.fill") }
+                        NavigationLink(value: LibraryRoute.history) { Label("观看历史", systemImage: "clock.fill") }
+                        NavigationLink(value: LibraryRoute.following) { Label("我的关注", systemImage: "person.2.fill") }
                     }
                 }
+                Section {
+                    Button("设置", systemImage: "gearshape") { openSettings() }
+                    Button("插件", systemImage: "puzzlepiece.extension") { openPlugins() }
+                }
+                if account.account != nil { Section { Button("退出登录", role: .destructive) { Task { await account.signOut() } } } }
             }
+            .modifier(MusicGroupedList())
+            // 导航容器外的迷你播放器不计入 List 的滚动内容边距。
+            .contentMargins(.bottom, playback.queue.current == nil ? 0 : 76, for: .scrollContent)
             .navigationTitle("我的")
+            .toolbar { ToolbarItem(placement: .primaryAction) { Button("设置", systemImage: "gearshape") { openSettings() }.labelStyle(.iconOnly).accessibilityIdentifier("open-settings") } }
             .navigationDestination(for: LibraryRoute.self) { route in
                 if let source {
                     LibraryPageView(source: source, route: route, select: select, menu: { track in
@@ -109,10 +126,14 @@ struct LibraryPageView: View {
                     }
                 }
             }
+            if !model.tracks.isEmpty {
+                Button { select(model.tracks, 0) } label: { MusicActionLabel(title: "播放全部", symbol: "play.fill") }.buttonStyle(.borderedProminent)
+            }
             ForEach(Array(model.tracks.enumerated()), id: \.element.id) { index, track in
-                Button { select(model.tracks, index) } label: { TrackRow(track: track) }
-                    .buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
-                    .contextMenu { menu(track) }
+                HStack(spacing: 4) {
+                    Button { select(model.tracks, index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
+                    Menu { menu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
+                }.contextMenu { menu(track) }
             }
             if let error = model.errorMessage {
                 Text(LocalizedStringKey(error)).foregroundStyle(.secondary)
@@ -126,6 +147,7 @@ struct LibraryPageView: View {
                 Button("加载更多") { Task { await model.loadMore() } }.disabled(model.isLoading)
             }
         }
+        .listStyle(.plain)
         .navigationTitle(Text(LocalizedStringKey(model.title)))
         .task { await model.refresh() }
         .refreshable { await model.refresh() }

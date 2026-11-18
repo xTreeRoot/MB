@@ -8,19 +8,25 @@ struct PluginsView: View {
     @State private var folder = false
     @State private var github = false
     @State private var repo = ""
+    @State private var removing: InstalledPlugin?
+    @State private var confirmingRemoval = false
     var body: some View {
         List {
             ForEach(model.installed) { plugin in
                 NavigationLink {
                     PluginSettingsView(model: model, plugin: plugin)
                 } label: {
-                    VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 14) {
+                        Image(systemName: "puzzlepiece.extension.fill").font(.title2).foregroundStyle(MBTheme.accent).frame(width: 48, height: 48).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 5) {
                         Text(plugin.manifest.displayName).font(.headline)
                         Text(plugin.manifest.version ?? "").font(.caption).foregroundStyle(.secondary)
                         if let version = model.updates[plugin.id] { Text("可更新至 \(version)").font(.caption).foregroundStyle(.tint) }
-                    }
+                        Text(LocalizedStringKey(model.disabled.contains(plugin.id) ? "已停用" : "已启用")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.padding(.vertical, 5)
                 }
-                .swipeActions { Button("卸载", role: .destructive) { Task { await model.remove(plugin) } } }
+                .swipeActions { Button("卸载", role: .destructive) { removing = plugin; confirmingRemoval = true } }
             }
             Section {
                 Button("从 ZIP 安装", systemImage: "doc.zipper") { importing = true }
@@ -30,7 +36,11 @@ struct PluginsView: View {
             if model.busy { ProgressView("正在检查插件") }
             if let error = model.errorMessage { Text(error).font(.caption).foregroundStyle(.red) }
         }
+        .modifier(MusicGroupedList())
         .navigationTitle("插件")
+        .confirmationDialog("卸载插件？", isPresented: $confirmingRemoval, titleVisibility: .visible) {
+            Button("卸载", role: .destructive) { if let removing { Task { await model.remove(removing) } } }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.zip]) { result in
             switch result { case .success(let url): Task { await model.prepare(url) }; case .failure(let error): model.reportError(error) }
         }
@@ -72,6 +82,8 @@ private struct PluginSettingsView: View {
     @State private var values: [String: String] = [:]
     @State private var loaded = false
     @State private var error: String?
+    @State private var saving = false
+    @State private var saved = false
     var body: some View {
         Form {
             ForEach(plugin.manifest.settings ?? []) { setting in
@@ -92,7 +104,12 @@ private struct PluginSettingsView: View {
             Toggle("启用音源", isOn: Binding(get: { !model.disabled.contains(plugin.id) }, set: { enabled in Task { await model.setEnabled(plugin, enabled: enabled) } }))
             if plugin.repository != nil { Button("检查更新") { Task { await model.update(plugin) } }.disabled(model.busy) }
             Section("网络权限") { ForEach(plugin.manifest.permissions?.network ?? [], id: \.self) { Text($0).font(.caption.monospaced()) } }
-            Button("保存") { editing = false; Task { await model.saveSettings(values, for: plugin) } }.disabled(!loaded)
+            Button("保存") {
+                editing = false; saving = true; saved = false
+                Task { await model.saveSettings(values, for: plugin); saving = false; saved = model.errorMessage == nil }
+            }.disabled(!loaded || saving)
+            if saving { ProgressView() }
+            if saved { Label("已保存", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
             if let error = error ?? model.errorMessage { Text(error).foregroundStyle(.red) }
         }
         .navigationTitle(plugin.manifest.displayName)

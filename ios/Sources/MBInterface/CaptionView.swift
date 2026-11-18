@@ -18,6 +18,8 @@ struct CaptionView: View {
     let timeline: CaptionTimeline
     let positionMilliseconds: Int64
     let message: String?
+    var viewportHeight: CGFloat = 260
+    @ScaledMetric(relativeTo: .title2) private var wordSize: CGFloat = 25
     var seek: ((Int64) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.lyricVisualStyle) private var style
@@ -53,7 +55,7 @@ struct CaptionView: View {
                         }
                     }.padding(.vertical, 32).padding(.horizontal, 8).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(height: 260)
+                .frame(height: viewportHeight)
                 .clipped()
                 .accessibilityIdentifier("lyric-style-" + style.rawValue)
                 .onAppear { if let activeIndex { proxy.scrollTo(activeIndex, anchor: .center) } }
@@ -68,12 +70,12 @@ struct CaptionView: View {
     private func wordView(_ word: CaptionWord, index: Int, active: Bool) -> some View {
         let progress = word.progress(at: positionMilliseconds)
         return Text(word.text)
-            .font(.system(size: style == .tilt ? 30 : 25, weight: style == .tilt && index % 2 == 0 ? .black : .semibold, design: style == .tilt ? .rounded : .default))
+            .font(.system(size: style == .tilt ? wordSize * 1.2 : wordSize, weight: style == .tilt && index % 2 == 0 ? .black : .semibold, design: style == .tilt ? .rounded : .default))
             .foregroundStyle(.secondary)
             .overlay(alignment: .leading) {
                 GeometryReader { geometry in
                     MBTheme.accent.frame(width: geometry.size.width * (active ? progress : 0))
-                }.mask(Text(word.text).font(.system(size: style == .tilt ? 30 : 25, weight: style == .tilt && index % 2 == 0 ? .black : .semibold, design: style == .tilt ? .rounded : .default)))
+                }.mask(Text(word.text).font(.system(size: style == .tilt ? wordSize * 1.2 : wordSize, weight: style == .tilt && index % 2 == 0 ? .black : .semibold, design: style == .tilt ? .rounded : .default)))
             }
             .overlay {
                 if sparks && !reduceMotion && active {

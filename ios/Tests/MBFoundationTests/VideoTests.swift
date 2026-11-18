@@ -2,7 +2,9 @@ import Foundation
 import MBFoundation
 import Testing
 
-@MainActor private final class TestVideo: VideoEngine {
+@MainActor private final class TestVideo: VideoEngine, VideoEngineEvents {
+    var onUpdate: (() -> Void)?
+    var isBuffering = false
     var loads: [URL] = []
     var positions: [Int64] = []
     var isPlaying = false
@@ -16,6 +18,7 @@ import Testing
 private actor VideoFixture: VideoSource, PlaybackModeStore, PlaybackSource {
     nonisolated let displayName = "test"
     var mode: PlaybackMode?
+    private var supported = true
     private var hold = false
     private var continuation: CheckedContinuation<Void, Never>?
     private var waiter: CheckedContinuation<Void, Never>?
@@ -25,6 +28,8 @@ private actor VideoFixture: VideoSource, PlaybackModeStore, PlaybackSource {
         MediaResource(url: URL(string: "https://media.example/\(trackID).m4a")!, headers: [:], fileExtension: "m4a")
     }
     func captions(trackID: String) -> CaptionTimeline { CaptionTimeline(lines: []) }
+    func supportsVideo(track: Track) -> Bool { supported }
+    func setSupported(_ value: Bool) { supported = value }
     func video(trackID: String) async -> MediaResource {
         requested.append(trackID)
         if hold, trackID == "one" {
@@ -45,7 +50,27 @@ private actor VideoFixture: VideoSource, PlaybackModeStore, PlaybackSource {
 
 private let videoTracks = ["one", "two"].map { Track(sourceID: "test", sourceTrackID: $0, title: $0, artist: "UP", durationMilliseconds: 90_000) }
 
-@Test @MainActor func videoPreferenceOnlyPersistsWithoutOpeningOrLoadingCurrentContent() async {
+@Test @MainActor func pausedVideoRefreshesBufferingAndErrorsWithoutAnAudioTick() async {
+    let source = VideoFixture(), engine = TestVideo()
+    let model = VideoModel(source: source, engine: engine)
+    model.updateTrack(videoTracks[0])
+    engine.isBuffering = true
+    await model.choose(.video)
+    await model.waitUntilLoaded()
+    #expect(model.isBuffering && !engine.isPlaying)
+    engine.isBuffering = false
+    engine.onUpdate?()
+    #expect(!model.isBuffering)
+    engine.errorMessage = "Video failed"
+    engine.onUpdate?()
+    #expect(model.errorMessage == "Video failed" && !model.isReady)
+    await model.choose(.music)
+    engine.isBuffering = true
+    engine.onUpdate?()
+    #expect(!model.isBuffering && model.errorMessage == nil)
+}
+
+@Test @MainActor func videoChoiceImmediatelyLoadsCurrentTrackAtAudioPosition() async {
     let source = VideoFixture()
     let engine = TestVideo()
     let model = VideoModel(source: source, engine: engine, store: source)
@@ -56,11 +81,10 @@ private let videoTracks = ["one", "two"].map { Track(sourceID: "test", sourceTra
     model.updateTrack(videoTracks[0])
     model.sync(positionMilliseconds: 42_000, playing: true)
     await model.choose(.video)
-    model.open()
-    #expect(model.presentationMode == .music)
-    #expect(!model.isVisible)
-    #expect(await source.calls().isEmpty)
-    #expect(engine.loads.isEmpty)
+    await model.waitUntilLoaded()
+    #expect(model.presentationMode == .video && model.isVisible && model.isReady)
+    #expect(await source.calls() == ["one"])
+    #expect(engine.positions.first == 42_000 && engine.isPlaying)
 }
 
 @Test @MainActor func restoredVideoPreferenceAndTrackStayPausedWithoutVideoRequests() async {
@@ -82,7 +106,6 @@ private let videoTracks = ["one", "two"].map { Track(sourceID: "test", sourceTra
     let source = VideoFixture()
     let engine = TestVideo()
     let model = VideoModel(source: source, engine: engine)
-    model.updateTrack(videoTracks[0])
     await model.choose(.video)
     model.handleSelection(videoTracks[0], intent: .content, positionMilliseconds: 42_000, playing: false)
     await model.waitUntilLoaded()
@@ -93,7 +116,6 @@ private let videoTracks = ["one", "two"].map { Track(sourceID: "test", sourceTra
     #expect(engine.isPlaying)
     #expect(engine.positions.last == 45_000)
     model.browse()
-    await model.choose(.video)
     #expect(!model.isVisible)
     model.handleSelection(videoTracks[0], intent: .content, positionMilliseconds: 0, playing: true)
     await model.waitUntilLoaded()
@@ -106,16 +128,17 @@ private let videoTracks = ["one", "two"].map { Track(sourceID: "test", sourceTra
 }
 
 @Test(arguments: [PlaybackSelectionIntent.transport, .automatic]) @MainActor
-func transportAndAutomaticAdvanceDoNotApplyNewVideoPreference(_ intent: PlaybackSelectionIntent) async {
+func transportAndAutomaticAdvanceKeepExplicitlySelectedVideoMode(_ intent: PlaybackSelectionIntent) async {
     let source = VideoFixture()
     let model = VideoModel(source: source, engine: TestVideo())
     model.updateTrack(videoTracks[0])
     await model.choose(.video)
+    await model.waitUntilLoaded()
     model.handleSelection(videoTracks[1], intent: intent, positionMilliseconds: 0, playing: true)
+    await model.waitUntilLoaded()
     #expect(model.track == videoTracks[1])
-    #expect(model.presentationMode == .music)
-    #expect(!model.isVisible)
-    #expect(await source.calls().isEmpty)
+    #expect(model.presentationMode == .video && model.isVisible)
+    #expect(await source.calls() == ["one", "two"])
 }
 
 @Test @MainActor func videoQueueAdvanceKeepsPresentationAndBrowsingDoesNotReopen() async {
@@ -159,7 +182,7 @@ func transportAndAutomaticAdvanceDoNotApplyNewVideoPreference(_ intent: Playback
     #expect(model.errorMessage == nil)
 }
 
-@Test @MainActor func newContentRejectsOldVideoAndUnsupportedSourceOnlyShowsAfterClick() async {
+@Test @MainActor func newContentRejectsOldVideoAndUnsupportedSourceCanReturnToMusic() async {
     let source = VideoFixture()
     await source.block()
     let engine = TestVideo()
@@ -178,9 +201,11 @@ func transportAndAutomaticAdvanceDoNotApplyNewVideoPreference(_ intent: Playback
     let unsupported = VideoModel(source: nil, engine: TestVideo())
     unsupported.updateTrack(videoTracks[0])
     await unsupported.choose(.video)
-    #expect(!unsupported.isVisible)
-    unsupported.handleSelection(videoTracks[0], intent: .content, positionMilliseconds: 0, playing: true)
     #expect(unsupported.isVisible && !unsupported.isSupported && !unsupported.isLoading)
+    await unsupported.choose(.music)
+    #expect(!unsupported.isVisible && unsupported.presentationMode == .music)
+    await unsupported.choose(.video)
+    #expect(unsupported.isVisible && !unsupported.isLoading)
 }
 
 @Test @MainActor func choosingVideoAgainDoesNotInterruptVideoAlreadyLoadingFromContentClick() async {
@@ -199,6 +224,57 @@ func transportAndAutomaticAdvanceDoNotApplyNewVideoPreference(_ intent: Playback
     #expect(engine.loads.count == 1)
 }
 
+@Test @MainActor func unsupportedCapabilityCanBeRetriedWithoutStuckLoadingTask() async {
+    let source = VideoFixture()
+    await source.setSupported(false)
+    let engine = TestVideo()
+    let model = VideoModel(source: source, engine: engine)
+    model.updateTrack(videoTracks[0])
+    await model.choose(.video)
+    await model.waitUntilLoaded()
+    #expect(!model.isSupported && !model.isLoading && model.isVisible)
+    await source.setSupported(true)
+    await model.choose(.video)
+    await model.waitUntilLoaded()
+    #expect(model.isReady && model.isSupported && engine.loads.count == 1)
+}
+
+private actor OrderedModeStore: PlaybackModeStore {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiter: CheckedContinuation<Void, Never>?
+    private(set) var saved: [PlaybackMode] = []
+    func loadPlaybackMode() -> PlaybackMode? { saved.last }
+    func savePlaybackMode(_ mode: PlaybackMode) async {
+        if saved.isEmpty {
+            await withCheckedContinuation { continuation = $0; waiter?.resume(); waiter = nil }
+        }
+        saved.append(mode)
+    }
+    func waitBlocked() async {
+        if continuation != nil { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
+@Test @MainActor func slowPreferenceWritesDoNotDelayPictureAndLatestModeWinsOnDisk() async {
+    let store = OrderedModeStore()
+    let model = VideoModel(source: VideoFixture(), engine: TestVideo(), store: store)
+    model.updateTrack(videoTracks[0])
+    let first = Task { await model.choose(.video) }
+    await store.waitBlocked()
+    await model.waitUntilLoaded()
+    #expect(model.isVisible && model.isReady)
+    let last = Task { await model.choose(.music) }
+    while model.mode != .music { await Task.yield() }
+    #expect(!model.isVisible && !model.isReady)
+    await store.release()
+    await first.value
+    await last.value
+    #expect(await store.saved == [.video, .music])
+    #expect(model.mode == .music && model.persistenceMessage == nil)
+}
+
 @MainActor private final class ContinuousAudio: AudioEngine {
     var loads = 0
     var starts = 0
@@ -215,30 +291,36 @@ func transportAndAutomaticAdvanceDoNotApplyNewVideoPreference(_ intent: Playback
     }
 }
 
-@Test @MainActor func switchingPreferencesKeepsCurrentAudioTrackAndPositionWithoutRestarting() async {
+@Test @MainActor func repeatedModeSwitchesKeepAudioTrackTimeAndPauseStateWithoutRestarting() async {
     let source = VideoFixture()
     let audio = ContinuousAudio()
     let playback = PlaybackModel(source: source, engine: audio, download: { _ in URL(fileURLWithPath: "/tmp/mb-mode-test.m4a") })
-    let video = VideoModel(source: source, engine: TestVideo())
+    let picture = TestVideo()
+    let video = VideoModel(source: source, engine: picture)
     playback.select(videoTracks, index: 0)
     await playback.waitUntilLoaded()
     video.handleSelection(playback.queue.current, intent: playback.selectionIntent, positionMilliseconds: 0, playing: true)
-    audio.position = 42_000
-    playback.tick()
     let loads = audio.loads, starts = audio.starts, stops = audio.stops
+    for index in 0..<12 {
+        audio.position = Int64(42_000 + index * 1_000)
+        playback.tick()
+        video.sync(positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing)
+        await video.choose(.video)
+        await video.waitUntilLoaded()
+        #expect(video.isVisible && video.isReady && picture.isPlaying)
+        #expect(picture.positions.last == playback.positionMilliseconds)
+        await video.choose(.music)
+        #expect(!video.isVisible && !video.isReady && !picture.isPlaying)
+        #expect(playback.queue.current == videoTracks[0] && playback.state == .playing)
+        #expect(audio.loads == loads && audio.starts == starts && audio.stops == stops)
+    }
+    playback.pause()
+    playback.seek(to: 65_000)
+    video.sync(positionMilliseconds: playback.positionMilliseconds, playing: false)
     await video.choose(.video)
-    #expect(!video.isVisible && video.presentationMode == .music)
-    #expect(await source.calls().isEmpty)
-    #expect(playback.positionMilliseconds == 42_000)
-    #expect(playback.state == .playing)
-    #expect(audio.loads == loads && audio.starts == starts && audio.stops == stops)
-    video.handleSelection(playback.queue.current, intent: .content, positionMilliseconds: 42_000, playing: true)
     await video.waitUntilLoaded()
-    await video.choose(.music)
-    #expect(!video.isVisible && !video.isReady)
-    #expect(playback.queue.current == videoTracks[0])
-    #expect(playback.positionMilliseconds == 42_000)
-    #expect(playback.state == .playing)
+    #expect(picture.positions.last == 65_000 && !picture.isPlaying)
+    #expect(playback.state == .paused && playback.positionMilliseconds == 65_000)
     #expect(audio.loads == loads && audio.starts == starts && audio.stops == stops)
 }
 
