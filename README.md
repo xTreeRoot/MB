@@ -38,6 +38,8 @@ go tool mygo build -sign - -skip-notarize
 
 新增平台时新增独立目录、声明其已实现能力，并将运行文件加入 `builtin_plugin.go` 的嵌入清单。通用页面、播放器和登录弹窗不根据平台名称调用私有 API。用户安装的 MyGo 音源插件也可通过同一契约接入，插件示例保留在 `examples/demo-plugin`。
 
+正式包同时支持 `mb://install-plugin?repo=owner/repo` 和上游社区的 `mygo-music://install-plugin?repo=owner/repo` 安装链接；开发包使用各自的 `-dev` 协议。插件兼容版本按已采用的 MyGo Music `0.1.25` 宿主契约检查，与 MB 的产品版本独立。上游历史、更新流程和本地功能优先规则见 [UPSTREAM.md](UPSTREAM.md)。
+
 哔哩哔哩能力通过平台策略适配已有 MyGo 能力入口。扫码登录使用官方 `qrcode/generate`、`qrcode/poll`，优先读取 `Set-Cookie`，兼容官方 `passport.biligame.com/crossDomain` 回调。字幕接口返回的秒数转换为毫秒后交给原生歌词组件。
 
 ## 来源与许可证

@@ -1280,6 +1280,7 @@ func TestInstallPluginFromSettings(t *testing.T) {
 // the repository it names, to ask about there, installing nothing by itself;
 // links to anything else do nothing.
 func TestInstallPluginFromLink(t *testing.T) {
+	linkScheme := pluginLinkSchemes()[0]
 	asked := make(chan string, 1)
 	was := fetchPlugin
 	defer func() { fetchPlugin = was }()

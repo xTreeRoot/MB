@@ -237,7 +237,7 @@ func (a *app) makeSources() {
 	builtIn := newLibrary(a.local)
 	a.allLibs = []*library{builtIn}
 	plugin.SetOpenURL(mygo.Shell.OpenExternal)
-	plugin.SetAppVersion(mygo.App.Version())
+	plugin.SetAppVersion(pluginCompatibilityVersion)
 	plugin.SetWebSignIn(a.webSignIn)
 	a.plugins = plugin.Discover(pluginsDir(), userDataDir("plugin-data"))
 	bundled, err := loadBundledPlugins(a.plugins, userDataDir("builtin-plugins"), userDataDir("plugin-data"))
@@ -452,8 +452,10 @@ func Run() error {
 	// The installed app's scheme is registered as it's installed; the
 	// development app, which isn't, registers its own every time it starts.
 	if mygo.IsDev() {
-		if err := mygo.App.RegisterURLScheme(linkScheme); err != nil {
-			log.Printf("registering %s links: %v", linkScheme, err)
+		for _, scheme := range pluginLinkSchemes() {
+			if err := mygo.App.RegisterURLScheme(scheme); err != nil {
+				log.Printf("registering %s links: %v", scheme, err)
+			}
 		}
 	}
 	mygo.App.OnOpenURL(func(link string) {

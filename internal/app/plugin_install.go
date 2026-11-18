@@ -19,19 +19,24 @@ import (
 // from a folder or zip on this machine. A link on the web installs one too:
 //
 //	mb://install-plugin?repo=owner/repo
+//	mygo-music://install-plugin?repo=owner/repo
 //
 // which opens the plugins' settings and asks about it there, as one chosen from
 // the + menu of their header is asked about. Nothing installs without the
 // listener allowing it.
 
-// linkScheme is the scheme of the app's links, declared in mygo.config.ts: the
-// development app's is its own, which leaves the installed app's links to it.
-var linkScheme = func() string {
+// pluginCompatibilityVersion is the MyGo Music host contract implemented by MB.
+// It follows the adopted upstream baseline, independently of MB's release version.
+const pluginCompatibilityVersion = "0.1.25"
+
+// pluginLinkSchemes matches mygo.config.ts. Development links stay separate
+// from the installed app, including those from the MyGo Music community.
+func pluginLinkSchemes() []string {
 	if mygo.IsDev() {
-		return "mb-dev"
+		return []string{"mb-dev", "mygo-music-dev"}
 	}
-	return "mb"
-}()
+	return []string{"mb", "mygo-music"}
+}
 
 // These reach GitHub, and the disk; tests replace them.
 var (
@@ -146,7 +151,7 @@ func (a *app) installFromRepo() {
 // about it, unless another is downloading, when Install takes it after.
 func (a *app) openLink(raw string) {
 	u, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(u.Scheme, linkScheme) {
+	if err != nil || !slices.Contains(pluginLinkSchemes(), strings.ToLower(u.Scheme)) {
 		return
 	}
 	// mb://install-plugin, or mb:install-plugin.
@@ -203,7 +208,7 @@ func installError(err error) string {
 		return T("There's no such public repository on GitHub")
 	}
 	if needs, ok := errors.AsType[*plugin.NeedsNewerApp](err); ok {
-		return Tf("%s needs MyGo Music %s or later. Update MyGo Music first.", needs.Plugin, needs.Version)
+		return Tf("%s needs a newer MB version compatible with MyGo Music %s or later.", needs.Plugin, needs.Version)
 	}
 	return err.Error()
 }

@@ -1,11 +1,12 @@
-/** 配置 MB 桌面应用标识、打包目录及开发和正式版本的独立链接协议。 */
+/** 配置 MB 桌面应用标识、打包目录及 MB 和 MyGo Music 社区插件的安装协议。 */
 export default ({ command }: { command: string }) => ({
   name: "MB",
   identifier: "com.xtreeroot.mb",
   slug: "mb",
-  version: "0.1.5",
+  version: "0.1.6",
   out: "build",
-  urlSchemes: [command === "dev" ? "mb-dev" : "mb"],
+  urlSchemes:
+    command === "dev" ? ["mb-dev", "mygo-music-dev"] : ["mb", "mygo-music"],
   macos: {
     minimumSystemVersion: "13.0",
   },
