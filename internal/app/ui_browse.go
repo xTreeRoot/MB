@@ -137,6 +137,7 @@ const (
 	rowFeature rowKind = iota
 	rowTitle
 	rowTrack
+	rowVideos
 	rowAlbums
 	rowArtists
 	rowPlaylists
@@ -148,16 +149,21 @@ const (
 
 // browseLayout lays out page in rows. The first section of Home, if tracks, is
 // the card that leads it.
-func browseLayout(page *music.Browse, pageID string, cols int) []browseRow {
+func browseLayout(page *music.Browse, pageID string, cols, videoCols int) []browseRow {
 	var rows []browseRow
 	cards := func(kind rowKind, s, n int) {
-		for from := 0; from < n; from += cols {
-			rows = append(rows, browseRow{kind, s, from, min(from+cols, n)})
+		step := cols
+		if kind == rowVideos {
+			step = videoCols
+		}
+		for from := 0; from < n; from += step {
+			rows = append(rows, browseRow{kind, s, from, min(from+step, n)})
 		}
 	}
 	for s := range page.Sections {
 		sec := &page.Sections[s]
-		if s == 0 && pageID == "" && len(sec.Tracks) > 0 {
+		feature := s == 0 && pageID == "" && len(sec.Tracks) > 0 && sec.TrackLayout != music.TrackLayoutVideos
+		if feature {
 			rows = append(rows, browseRow{rowFeature, s, 0, 0})
 			if len(sec.Albums)+len(sec.Artists)+len(sec.Playlists)+len(sec.Shows)+len(sec.Stations)+len(sec.Links) == 0 {
 				continue
@@ -165,7 +171,9 @@ func browseLayout(page *music.Browse, pageID string, cols int) []browseRow {
 		} else if sec.Title != "" || sec.MorePage != "" {
 			rows = append(rows, browseRow{rowTitle, s, 0, 0})
 		}
-		if s != 0 || pageID != "" {
+		if sec.TrackLayout == music.TrackLayoutVideos {
+			cards(rowVideos, s, len(sec.Tracks))
+		} else if !feature {
 			for i := range sec.Tracks {
 				rows = append(rows, browseRow{rowTrack, s, i, i})
 			}
@@ -186,7 +194,8 @@ func browseLayout(page *music.Browse, pageID string, cols int) []browseRow {
 // browseRows shows a page under a header, which scrolls with it.
 func (a *app) browseRows(c *ui.Context, page *music.Browse, pageID string, header func(c *ui.Context)) {
 	cols := a.columns(c, 156)
-	layout := browseLayout(page, pageID, cols)
+	videoCols := a.columns(c, 220)
+	layout := browseLayout(page, pageID, cols, videoCols)
 	top, bottom := a.insets(c)
 	a.underTop, a.underBottom = true, true
 	rows := len(layout) + 1
@@ -217,6 +226,8 @@ func (a *app) browseRows(c *ui.Context, page *music.Browse, pageID string, heade
 			a.browseTitle(c, sec, r.section == 0)
 		case rowTrack:
 			a.trackRow(c, sec.Tracks, r.from, true, "")
+		case rowVideos:
+			a.videoTrackRow(c, sec, r, videoCols)
 		case rowEmpty:
 			ui.Column(c).Margin(0, 12, cardRowGap, 12).Children(func() { a.empty(c, sec.Empty) })
 		default:

@@ -30,6 +30,9 @@ type settings struct {
 	// DisabledPlugins are the IDs of the plugins turned off. All are on until
 	// then, the built-in one included.
 	DisabledPlugins []string `json:"disabledPlugins,omitempty"`
+	// SystemProxyHosts is the destination allowlist; every other host is direct.
+	// Keep an empty array when the listener clears it, overriding the defaults.
+	SystemProxyHosts []string `json:"systemProxyHosts"`
 	// PluginsChecked is when plugins were last checked for new versions, once a
 	// day, and PluginUpdates the versions found, by plugin.
 	PluginsChecked time.Time         `json:"pluginsChecked,omitzero"`
@@ -101,7 +104,7 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, MenuBarLyricsWidth: menuBarDefaultWidth, MenuBarVideo: true, CacheMB: 2048}
+	return settings{SystemProxyHosts: []string{"*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com", "*.googleusercontent.com", "api.betterlyrics.org"}, Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, MenuBarLyricsWidth: menuBarDefaultWidth, MenuBarVideo: true, CacheMB: 2048}
 }
 
 func settingsPath() (string, error) {

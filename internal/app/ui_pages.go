@@ -42,7 +42,16 @@ func (a *app) homeHello(c *ui.Context, now time.Time) {
 	if a.account != nil && a.account.Name != "" {
 		hello = Tf("%s, %s", hello, a.account.Name)
 	}
-	a.heading(c, hello, i18n.Today(now))
+	ui.Row(c).AlignItems(ui.Center).Gap(16).Children(func() {
+		ui.Box(c).Grow(1).MinWidth(0).Children(func() { a.heading(c, hello, i18n.Today(now)) })
+		if a.can("home") {
+			iconButton(c.Key("refresh-home"), iconRefresh, 18, a.pal.muted, T("Refresh")).
+				Margin(0, 0, 28, 0).Disabled(a.homeLoading).OnClick(func() { a.loadHome(a.library) })
+		}
+	})
+	if a.homeErr != "" {
+		ui.Text(c, a.homeErr).FontSize(12).TextColor(a.pal.muted).Margin(0, 0, 12, 0)
+	}
 }
 
 // homePage is what the source makes up itself, if it does; else what it played

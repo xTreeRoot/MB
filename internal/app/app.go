@@ -2,6 +2,7 @@ package app
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"mygo-music/internal/i18n"
 	"mygo-music/internal/local"
 	"mygo-music/internal/music"
+	"mygo-music/internal/network"
 	"mygo-music/internal/player"
 	"mygo-music/internal/plugin"
 	"mygo-music/plugins/builtin"
@@ -119,7 +121,9 @@ type app struct {
 	query     string
 	searchBox ui.Handle
 
-	settingsPage      string // the settings' page that shows
+	settingsPage      string  // the settings' page that shows
+	proxyDraft        *string // editable domain allowlist, initialized on first display
+	proxyErr          string
 	settingsQuery     string // what's searched for in the settings
 	settingsSearchBox ui.Handle
 	settingsUnderTop  bool // the settings' page has scrolled under its top edge
@@ -339,6 +343,11 @@ func Run() error {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
+	initialSettings := loadSettings()
+	if err := network.Default.SetHosts(initialSettings.SystemProxyHosts); err != nil {
+		log.Printf("system proxy allowlist: %v", err)
+	}
+	http.DefaultTransport = network.Transport()
 	a := &app{
 		signInOver:  new(atomic.Pointer[mygo.Window]),
 		settingText: map[string]*string{},
@@ -346,7 +355,7 @@ func Run() error {
 		queueAt:     -1,
 		cacheUsed:   -1,
 	}
-	a.useUpdater(i18n.Resolve(loadSettings().Language, systemLanguages()))
+	a.useUpdater(i18n.Resolve(initialSettings.Language, systemLanguages()))
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
 		a.settings.applyAppearance()

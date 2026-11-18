@@ -452,6 +452,9 @@ const homeFresh = time.Hour
 // loadHome loads what the Home of a source shows: its own page if it makes one
 // up, else what it played lately, the playlists being the sidebar's.
 func (a *app) loadHome(lib *library) {
+	if lib == nil || lib.homeLoading {
+		return
+	}
 	lib.homeLoading, lib.homeErr = true, ""
 	at := time.Now()
 	gen := lib.accountGen
@@ -473,13 +476,14 @@ func (a *app) loadHome(lib *library) {
 				return
 			}
 			lib.homeLoading = false
-			lib.home, lib.recent = home, recent
 			lib.homeAt = at
 			switch {
 			case homeErr != nil:
 				lib.homeErr = a.problem(lib, homeErr, T("Couldn't load this page"))
 			case recentErr != nil:
 				lib.homeErr = a.problem(lib, recentErr, T("Couldn't load this page"))
+			default:
+				lib.home, lib.recent = home, recent
 			}
 		})
 	}()

@@ -20,6 +20,7 @@
 | `video({id, quality})` / `music.VideoSource` | 返回 `{url, headers?}`；`id` 与音频曲目相同。HTTP 请求头随视频下载传递 | 插件提供视频能力时显示视频，音频仍由共用播放器负责；主界面和状态栏预览跟随切歌、暂停和跳转 |
 | `cancelSignIn()` / `music.SignInCanceler` | 停止当前登录尝试、定时器和请求，使挂起的 `signIn()` 结束；未导出时取消为无操作 | 关闭登录弹窗后取消任务，并忽略迟到结果 |
 | `lyrics({id})` | 沿用现有 `{lrc, translation}` 或 `{lines:[{start,end,text,words?}]}`；时间统一为毫秒 | 播放器和状态栏按音频时间轴显示；平台原始秒数在插件中转换 |
+| `Section.trackLayout: "videos"` | 可选横版封面卡片网格；保留标准 `tracks` 字段，省略时沿用原有布局 | 首页与浏览页显示 16:9 封面、时长和作者，点击直接播放所在分区队列 |
 | `host.signInPrompt({qr,text})` | 沿用现有二维码和状态提示 | 通用登录弹窗展示二维码、刷新状态与取消操作 |
 | `requestHeaders`、媒体 `headers` 和 `host.storage` | 沿用现有权限、请求头和隔离存储契约 | 统一处理媒体请求与本地持久化，页面不接触平台凭据 |
 
@@ -34,3 +35,5 @@ CGO_ENABLED=0 go test ./internal/plugin ./internal/app
 ```
 
 新增内置插件时新增目录、清单和入口脚本；当前嵌入规则自动包含各插件的 `plugin.json`、`index.js`、`locales/*.json`。需要其他运行时资源时只调整此资源清单，不把平台实现搬回播放器。`builtin/bilibili` 本身也可通过设置中的“从目录安装”安装，使用与社区插件相同的宿主。
+
+设置中的“网络 → 系统代理白名单”按目标域名决定宿主 HTTP 请求是否使用系统代理，覆盖插件 API、封面及宿主下载的媒体；跳转后重新按目标域名判断，名单外的请求直连。默认名单仅包含 YouTube Music 相关域名。插件启动的外部程序使用各自的网络实现，不在宿主 HTTP 传输层中。

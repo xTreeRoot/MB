@@ -22,5 +22,13 @@
   "Signing in took too long. Try again.": "登录超时，请重试。",
   "Bilibili returned an unsupported login callback.": "哔哩哔哩返回的登录回调地址无效。",
   "Could not confirm the comment was published. Refresh comments before trying again.": "无法确认评论是否发送成功。请先刷新评论，确认结果后再决定是否重发。",
-  "This track has no playable MV.": "当前歌曲没有可播放的 MV。"
+  "This track has no playable MV.": "当前歌曲没有可播放的 MV。",
+  "Recommended for you": "为你推荐",
+  "Bilibili Music Chart": "B站音乐榜",
+  "Trending in Music": "音乐区热门",
+  "New in Music": "新鲜投稿",
+  "Couldn't load this section. Refresh to try again.": "这个分区加载失败，刷新后重试。",
+  "No videos available.": "暂时没有视频。",
+  "Bilibili didn't answer: try again later": "哔哩哔哩暂时无法加载，请稍后重试。",
+  "Week %d": "第 %d 期"
 }

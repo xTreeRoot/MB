@@ -196,17 +196,26 @@ type Browse struct {
 	Sections    []Section `json:"sections,omitempty"`
 }
 
+// TrackLayout is a source's optional presentation for a section's tracks.
+type TrackLayout string
+
+// TrackLayoutVideos shows directly playable tracks in landscape cover cards.
+const TrackLayoutVideos TrackLayout = "videos"
+
 // Section is a heading over what it lists. A section may hold several kinds,
 // shown in the order of the fields.
 type Section struct {
-	Title     string     `json:"title,omitempty"`
-	Tracks    []Track    `json:"tracks,omitempty"`
-	Albums    []Album    `json:"albums,omitempty"`
-	Artists   []Artist   `json:"artists,omitempty"`
-	Playlists []Playlist `json:"playlists,omitempty"`
-	Shows     []Show     `json:"shows,omitempty"`
-	Stations  []Station  `json:"stations,omitempty"`
-	Links     []Link     `json:"links,omitempty"`
+	Title  string  `json:"title,omitempty"`
+	Tracks []Track `json:"tracks,omitempty"`
+	// TrackLayout optionally chooses a cover grid; the empty value keeps the
+	// source's original feature card and track rows.
+	TrackLayout TrackLayout `json:"trackLayout,omitempty"`
+	Albums      []Album     `json:"albums,omitempty"`
+	Artists     []Artist    `json:"artists,omitempty"`
+	Playlists   []Playlist  `json:"playlists,omitempty"`
+	Shows       []Show      `json:"shows,omitempty"`
+	Stations    []Station   `json:"stations,omitempty"`
+	Links       []Link      `json:"links,omitempty"`
 	// MorePage is the Browse page with the rest of it, if there is one.
 	MorePage string `json:"morePage,omitempty"`
 	// Empty is what the section says while it holds nothing, such as "No

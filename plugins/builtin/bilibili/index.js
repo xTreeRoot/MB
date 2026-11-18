@@ -186,6 +186,7 @@ class BilibiliPlatformStrategy {
   folderMetadata = new Map();
   likedState = new Map();
   loginAttempt = null;
+  visitorRequest = null;
 
   headers() {
     return { ...requestHeaders(), ...(this.cookie ? { Cookie: this.cookie } : {}) };
@@ -209,11 +210,13 @@ class BilibiliPlatformStrategy {
     const query = options.wbi
       ? wbiQuery(params, await this.getWbiKey())
       : new URLSearchParams(params).toString();
+    const discovery = options.visitor ? await this.discoveryHeaders() : {};
     const cookie = this.cookie;
     const response = await fetch(`${apiOrigin}${path}${query ? `?${query}` : ""}`, {
       method: options.body ? "POST" : "GET",
       headers: {
         ...this.headers(),
+        ...discovery,
         ...(options.body ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
       },
       body: options.body,
@@ -404,9 +407,11 @@ class BilibiliPlatformStrategy {
 
   async tracksFrom(items) {
     const tracks = [];
+    const seen = new Set();
     for (const item of array(items)) {
       const track = mapVideo(item);
-      if (track) {
+      if (track && !seen.has(track.id)) {
+        seen.add(track.id);
         tracks.push(track);
         this.details.set(track.id, { ...object(this.details.get(track.id)), ...item });
       }
@@ -414,25 +419,97 @@ class BilibiliPlatformStrategy {
     return tracks;
   }
 
+  /** Public discovery requests need the website's visitor identity as well as any active login. */
+  async discoveryHeaders() {
+    let visitor = text(host.storage.get("visitor"));
+    if (!visitor) {
+      if (!this.visitorRequest) {
+        this.visitorRequest = this.request("/x/frontend/finger/spi").then((data) => {
+          if (!text(data.b_3)) return "";
+          const value = `buvid3=${text(data.b_3)}; buvid4=${encodeURIComponent(text(data.b_4))}; b_nut=${Math.floor(Date.now() / 1000)}`;
+          host.storage.set("visitor", value);
+          return value;
+        }).finally(() => { this.visitorRequest = null; });
+      }
+      visitor = await this.visitorRequest;
+    }
+    const cookie = [visitor, this.cookie].filter(Boolean).join("; ");
+    return { Origin: siteOrigin, ...(cookie ? { Cookie: cookie } : {}) };
+  }
+
+  async recommended() {
+    const data = await this.request("/x/web-interface/wbi/index/top/feed/rcmd", {}, { wbi: true });
+    return this.tracksFrom(array(data.item).filter((item) => item.goto === "av" && bvidOf(item.bvid)));
+  }
+
+  /** Choose the newest available period by numeric ID, independent of response ordering. */
+  async musicChart() {
+    const data = await this.request("/x/copyright-music-publicity/toplist/all_period", { list_type: "1" });
+    const periods = Object.values(object(data.list)).flatMap((group) => array(group));
+    const latest = periods.reduce((best, period) => number(period.ID) > number(best?.ID) ? period : best, null);
+    if (!latest) return { tracks: [], period: 0 };
+    const songs = await this.request("/x/copyright-music-publicity/toplist/music_list", { list_id: String(latest.ID) });
+    const tracks = await this.tracksFrom(array(songs.list).map((song) => ({
+      bvid: song.creation_bvid,
+      title: song.creation_title,
+      pic: song.creation_cover,
+      owner: { mid: song.creation_up, name: song.creation_nickname },
+      duration: song.creation_duration,
+    })));
+    return { tracks, period: number(latest.priod) };
+  }
+
+  async musicRank() {
+    const data = await this.request("/x/web-interface/ranking/v2", { rid: "1003", type: "all" });
+    return this.tracksFrom(data.list);
+  }
+
+  async musicFresh(pages = 1) {
+    const items = [];
+    for (let page = 1; page <= pages; page++) {
+      const data = await this.request("/x/web-interface/region/feed/rcmd", {
+        display_id: String(page), request_cnt: "20", from_region: "1003",
+      }, { visitor: true });
+      items.push(...array(data.archives).filter((item) => !item.goto || item.goto === "av"));
+    }
+    return this.tracksFrom(items);
+  }
+
   async home() {
-    const data = await this.request(
-      "/x/web-interface/wbi/index/top/feed/rcmd",
-      {},
-      { wbi: true },
-    );
-    const items = array(data.item).filter(
-      (item) => item.goto === "av" && bvidOf(item.bvid),
-    );
-    const tracks = await this.tracksFrom(items);
-    return {
-      title: host.t("Home"),
-      sections: [{
-        title: host.t("Recommended videos"),
-        tracks,
-        empty: host.t("Recommended videos"),
-      }],
-      imageUrl: this.accountSnapshot?.imageUrl ?? "",
-    };
+    const results = await Promise.allSettled([
+      this.recommended(), this.musicChart(), this.musicRank(), this.musicFresh(),
+    ]);
+    const names = ["Recommended for you", "Bilibili Music Chart", "Trending in Music", "New in Music"];
+    const pages = ["recommended", "chart", "rank", "fresh"];
+    const sections = results.map((result, index) => {
+      const value = result.status === "fulfilled" ? result.value : null;
+      const tracks = index === 1 ? value?.tracks ?? [] : value ?? [];
+      return {
+        title: host.t(names[index]),
+        tracks: tracks.slice(0, 6),
+        trackLayout: "videos",
+        morePage: pages[index],
+        empty: host.t(result.status === "rejected" ? "Couldn't load this section. Refresh to try again." : "No videos available."),
+      };
+    });
+    if (!sections.some((section) => section.tracks.length)) {
+      throw new Error(host.t("Bilibili didn't answer: try again later"));
+    }
+    return { title: host.t("Home"), sections };
+  }
+
+  async discoveryPage(page) {
+    const titles = { recommended: "Recommended for you", chart: "Bilibili Music Chart", rank: "Trending in Music", fresh: "New in Music" };
+    let tracks;
+    let subtitle;
+    if (page === "chart") {
+      const chart = await this.musicChart();
+      tracks = chart.tracks;
+      subtitle = chart.period ? host.t("Week %d").replace("%d", String(chart.period)) : undefined;
+    } else {
+      tracks = await (page === "rank" ? this.musicRank() : page === "fresh" ? this.musicFresh(2) : this.recommended());
+    }
+    return { title: host.t(titles[page]), subtitle, sections: [{ tracks, trackLayout: "videos", empty: host.t("No videos available.") }] };
   }
 
   async search({ query, kind, offset }) {
@@ -448,6 +525,7 @@ class BilibiliPlatformStrategy {
   }
 
   async browse({ page }) {
+    if (["recommended", "chart", "rank", "fresh"].includes(page)) return this.discoveryPage(page);
     if (page === "personal") return this.personalPage();
     if (page === "favorites") return this.favoritesPage();
     if (page === "history" || /^history:\d+$/.test(page)) return this.historyPage(page);
