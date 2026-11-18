@@ -2,6 +2,78 @@ import XCTest
 import UIKit
 
 final class MBiOSUITests: XCTestCase {
+    @MainActor func testMiniPlayerDoesNotOverlapTabsAcrossPagesAndRotation() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        app.launch()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+            app.buttons["为你推荐"].firstMatch.tap()
+        } else {
+            XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+            app.buttons["查看更多为你推荐"].tap()
+        }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["打开播放页，晚风里的片刻"].waitForExistence(timeout: 5))
+        if UIDevice.current.userInterfaceIdiom == .pad { app.buttons["首页"].tap() }
+        else { app.navigationBars["为你推荐"].buttons.element(boundBy: 0).tap() }
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            // 手机浏览页按现有策略保持竖屏；平板跟随设备旋转。
+            let landscape = UIDevice.current.userInterfaceIdiom == .pad && orientation == .landscapeLeft
+            let rotated = expectation(for: NSPredicate { _, _ in
+                let frame = app.windows.firstMatch.frame
+                return landscape ? frame.width > frame.height : frame.height > frame.width
+            }, evaluatedWith: app)
+            wait(for: [rotated], timeout: 10)
+            for title in ["发现", "我的", "资料库", "设置"] {
+                let tab = UIDevice.current.userInterfaceIdiom == .pad ? app.buttons[title].firstMatch : app.tabBars.buttons[title].firstMatch
+                XCTAssertTrue(tab.isHittable); tab.tap()
+                let mini = app.otherElements["mini-player"].firstMatch
+                XCTAssertTrue(mini.waitForExistence(timeout: 5))
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    // iPad 顶部标签在可访问树中是按钮，不归入 TabBar。
+                    for label in ["发现", "我的", "资料库", "设置"] {
+                        XCTAssertFalse(mini.frame.intersects(app.buttons[label].firstMatch.frame), "迷你播放器不应覆盖导航按钮")
+                    }
+                } else {
+                    XCTAssertFalse(mini.frame.intersects(app.tabBars.firstMatch.frame), "迷你播放器不应覆盖导航栏")
+                }
+                XCTAssertTrue(app.buttons["打开播放页，晚风里的片刻"].isHittable)
+                let layout = orientation == .portrait ? "竖屏" : landscape ? "横屏" : "设备横置保持竖屏"
+                capture("迷你播放器-\(layout)-\(title)-演示数据", app: app)
+            }
+            app.buttons["打开播放页，晚风里的片刻"].tap()
+            XCTAssertTrue(app.buttons["收起"].waitForExistence(timeout: 5))
+            app.buttons["收起"].tap()
+        }
+    }
+
+    @MainActor func testNowPlayingLyricsSwitchCapture() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        let settings = UIDevice.current.userInterfaceIdiom == .pad ? app.buttons["设置"].firstMatch : app.tabBars.buttons["设置"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 15))
+        settings.tap()
+        let row = app.switches["在歌手栏显示当前歌词"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        if !row.isHittable { app.swipeUp() }
+        XCTAssertEqual(row.value as? String, "1")
+        capture("CarPlay-逐句歌词开启-演示设置", app: app)
+        let control = row.switches.firstMatch
+        (control.exists ? control : row).tap()
+        XCTAssertEqual(row.value as? String, "0")
+        capture("CarPlay-逐句歌词关闭-演示设置", app: app)
+        (control.exists ? control : row).tap()
+        XCTAssertEqual(row.value as? String, "1")
+    }
+
     @MainActor func testAccountCommentsAndAllDiscoveryPagesCapture() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -385,7 +457,8 @@ final class MBiOSUITests: XCTestCase {
     }
 
     @MainActor private func capture(_ name: String, app: XCUIApplication) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        // 采集屏幕坐标，避免 iPad 旋转后应用截图仍沿用旧方向而裁掉右侧。
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 

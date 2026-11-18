@@ -229,6 +229,9 @@
 "歌词导入失败：%@" = "Could not import lyrics: %@";
 
 "默认打开歌词" = "Show lyrics by default";
+"CarPlay 与锁屏" = "CarPlay & Lock Screen";
+"在歌手栏显示当前歌词" = "Show current lyrics as artist";
+"保留歌名，按播放时间逐句更新歌词；无歌词时显示歌手。" = "Keep the song title and update lyrics with playback. Show the artist when no lyric is active.";
 "歌词火花" = "Lyric sparks";
 "间奏显示热评" = "Top comments in quiet parts";
 "进度条烟雾" = "Progress smoke";

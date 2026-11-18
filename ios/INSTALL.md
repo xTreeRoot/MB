@@ -26,10 +26,14 @@ bash scripts/install-device.sh TEAM_ID DEVICE_UDID
 
 ## 未签名包与到期
 
-`bash scripts/package-ipa.sh` 生成 build 4 的 `*-unsigned.ipa`。它供 AltStore 等工具用自己的账号重签，不是直接可安装的成品。AirDrop、聊天发送或在“文件”里点 IPA 都不等于安装。
+`bash scripts/package-ipa.sh` 生成 build 5 的 `*-unsigned.ipa`。它供 AltStore 等工具用自己的账号重签，不是直接可安装的成品。AirDrop、聊天发送或在“文件”里点 IPA 都不等于安装。
 
 免费签名到期后重新连接手机，在 Xcode 运行或重跑安装脚本。尽量不要先卸载，卸载会删除 App 数据。签名仅对描述文件授权的设备有效。
 
-2026-11-18 的 build 3 已完成真机签名和安装；本轮 build 4 的功能与验收状态以 [PARITY.md](PARITY.md) 为准，旧包安装成功不代表新功能真机验收通过。
+2026-11-18 的 build 3 已完成真机签名和安装；本轮 build 5 的功能与验收状态以 [PARITY.md](PARITY.md) 为准，旧包安装成功不代表新功能真机验收通过。
 
 苹果说明：[Personal Team](https://developer.apple.com/support/compare-memberships/)、[开发者模式](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)。
+
+## CarPlay 使用
+
+在手机打开 MB 并开始播放，再连接 CarPlay、进入车机自带的「正在播放」。这条路径不需要独立 CarPlay App 的专属权限。默认用歌手栏显示当前句歌词，歌名保持不变；可在「设置 → CarPlay 与锁屏」关闭，也会同步影响手机锁屏和控制中心。车机决定文字刷新、截断和滚动，暂无真实车辆验收。

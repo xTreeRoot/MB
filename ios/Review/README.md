@@ -1,10 +1,16 @@
 # 页面核对与验证
 
-产品版本 0.1.0，build 4；桌面功能对照 main `27d4337`。打开 [index.html](index.html) 可筛选页面并查看原图，或使用 [SCREENSHOTS.md](SCREENSHOTS.md) 按编号反馈。
+产品版本 0.1.0，当前 build 5；桌面功能对照 main `27d4337`。本轮底栏与歌词设置截图见 [build 5 图库](Build5/index.html) 和 [编号索引](Build5/SCREENSHOTS.md)。[原有完整图库](index.html) 与 [原有索引](SCREENSHOTS.md) 保留 build 4 的历史验证。
 
 截图来自 XCTest 在 iPhone 18 Pro / iPad Pro 13-inch (M5) 模拟器上的实际操作。账号、歌曲、评论、插件均为隔离演示数据，系统分享页使用演示静音 WAV。它们用于检查页面、导航、弹窗与状态，不代表真实账号互动、真机媒体播放或第三方平台验收。每张图的测试名称、设备、采集时间与 SHA-256 记录在 [manifest.json](manifest.json)。
 
-## 最终结果（2026-11-18）
+## Build 5（2026-11-18）
+
+Swift 行为/合同回归 122 项通过（Foundation 96、B 站 26），新增系统正在播放歌词、暂停/拖动/换曲/迟到响应与设置迁移回归。iPhone 与 iPad 各两项相关 UI 测试通过：四个 Tab 的迷你播放器不覆盖导航、播放页可打开和收起、歌词开关可切换。手机普通页面按现有策略保持竖屏，平板验证横竖屏。新增 20 张演示截图；歌词设置截图不代表真实车机显示效果。
+
+结果包为本地 `.build/Build5PhoneFinal.xcresult`、`.build/Build5TabletScreen.xcresult`。Release IPA 结构、ZIP、可执行权限检查通过，114 个生产源码/工程/脚本文件摘要与打包时的工作区一致。真实 CarPlay 和手机锁屏刷新尚待实测。
+
+## Build 4 历史结果（2026-11-18）
 
 Swift 行为/合同回归 115 项通过（Foundation 89、B 站 26）；SwiftUI 宿主编译、同步后工程的通用 iPhone/iPad `build-for-testing` 与 arm64 Release 打包通过。手机完整 UI 9 项、平板横竖屏 1 项通过，导出 96 张截图。测试包：`phone-final.xcresult`、`tablet-final.xcresult`，保留在本地 `.build/results/`。
 

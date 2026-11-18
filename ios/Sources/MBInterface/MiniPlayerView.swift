@@ -35,6 +35,8 @@ struct MiniPlayerView: View {
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.primary.opacity(0.06)))
         .padding(.horizontal, 12).padding(.vertical, 8)
         .buttonStyle(.plain)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player")
     }
 }
 

@@ -21,6 +21,7 @@ import Testing
     model.values.quality = .lossless
     model.values.hotComments = true; model.values.fog = true; model.values.smoke = true
     model.values.growFromCover = true; model.values.stageSparks = true; model.values.lyricsStage = true
+    model.values.nowPlayingLyrics = false
     model.values.selectedSourceID = "fixture"
     await model.flush()
     let restored = PreferencesModel(store: AppPersistence(directory: directory), media: media)
@@ -39,6 +40,17 @@ import Testing
     #expect(restored.values.hotComments && restored.values.fog && restored.values.smoke)
     #expect(restored.values.growFromCover && restored.values.stageSparks && restored.values.lyricsStage)
     #expect(restored.values.selectedSourceID == "fixture")
+    #expect(!restored.values.nowPlayingLyrics)
+}
+
+@Test func olderPreferencesEnableNowPlayingLyricsAndPreserveExplicitOptOut() throws {
+    let older = try JSONDecoder().decode(AppPreferences.self, from: Data(#"{"volume":0.4}"#.utf8))
+    #expect(older.nowPlayingLyrics)
+    #expect(older.volume == 0.4)
+    var disabled = older
+    disabled.nowPlayingLyrics = false
+    let restored = try JSONDecoder().decode(AppPreferences.self, from: JSONEncoder().encode(disabled))
+    #expect(!restored.nowPlayingLyrics)
 }
 
 @MainActor private final class EventAudio: AudioEngine, AudioEngineEvents, AudioEngineVolume {

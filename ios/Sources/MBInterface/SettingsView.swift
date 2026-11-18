@@ -26,6 +26,13 @@ struct SettingsView: View {
                     Slider(value: $preferences.values.volume, in: 0...1) { Text("应用音量") }
                     HStack { Text("应用音量"); Spacer(); Text("\(Int(preferences.values.volume * 100))%").monospacedDigit().foregroundStyle(.secondary) }
                 }
+                Section {
+                    Toggle("在歌手栏显示当前歌词", isOn: $preferences.values.nowPlayingLyrics)
+                } header: {
+                    Text("CarPlay 与锁屏")
+                } footer: {
+                    Text("保留歌名，按播放时间逐句更新歌词；无歌词时显示歌手。")
+                }
                 Section("缓存") {
                     Picker("缓存上限", selection: $preferences.values.cacheMegabytes) {
                         Text("不缓存").tag(0)

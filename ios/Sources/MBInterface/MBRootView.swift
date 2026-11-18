@@ -63,21 +63,19 @@ public struct MBRootView: View {
 
     public var body: some View {
         TabView(selection: $selectedTab) {
-            adaptiveNavigation.tabItem { Label("发现", systemImage: "safari") }.tag(MBTab.discover)
+            adaptiveNavigation.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .tabItem { Label("发现", systemImage: "safari") }.tag(MBTab.discover)
             AccountLibraryView(account: account, plugin: source as? PluginSource, source: source as? any LibrarySource, playback: playback, downloads: downloads, select: select)
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(MBTab.account)
-            DownloadsView(model: downloads, library: localLibrary, playback: playback).tabItem { Label("资料库", systemImage: "music.note.list") }.tag(MBTab.library)
-            SettingsView(preferences: preferences, network: networkSettings, plugins: plugins).tabItem { Label("设置", systemImage: "gearshape") }.tag(MBTab.settings)
+            DownloadsView(model: downloads, library: localLibrary, playback: playback)
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .tabItem { Label("资料库", systemImage: "music.note.list") }.tag(MBTab.library)
+            SettingsView(preferences: preferences, network: networkSettings, plugins: plugins)
+                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                .tabItem { Label("设置", systemImage: "gearshape") }.tag(MBTab.settings)
         }
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if playback.queue.current != nil {
-                    MiniPlayerView(playback: playback, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition) {
-                        if video.presentationMode == .video { video.open() }
-                        else { showingPlayer = true }
-                    }
-                }
-            }
             .tint(MBTheme.accent)
             .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, video: video, demo: demo, interactionSource: currentInteractions, accountRevision: account.revision, downloads: downloads, preferences: preferences).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
             .sheet(item: $commentTrack) { track in
@@ -94,6 +92,7 @@ public struct MBRootView: View {
                 if !demo { systemPlayback.connect(playback) }
                 if !demo { await networkSettings.restore() }
                 if !demo { await preferences.restore(); if let saved = preferences.values.selectedSourceID { selectedSourceID = saved }; playback.setVolume(preferences.values.volume); playback.setNormalization(preferences.values.normalization) }
+                if !demo { systemPlayback.setLyricsEnabled(preferences.values.nowPlayingLyrics) }
                 AppLocalization.use(preferences.values.language)
                 await router.setQuality(preferences.values.quality)
                 await account.restore()
@@ -139,7 +138,7 @@ public struct MBRootView: View {
             .onChange(of: preferences.values) { _, _ in
                 AppLocalization.use(preferences.values.language)
                 Task { await router.setQuality(preferences.values.quality) }
-                if !demo { preferences.save(); playback.setVolume(preferences.values.volume); playback.setNormalization(preferences.values.normalization) }
+                if !demo { preferences.save(); playback.setVolume(preferences.values.volume); playback.setNormalization(preferences.values.normalization); systemPlayback.setLyricsEnabled(preferences.values.nowPlayingLyrics) }
             }
             .onChange(of: downloads.items) { _, items in
                 localLibrary.updateTracks(items)
@@ -185,6 +184,16 @@ public struct MBRootView: View {
             .environment(\.lyricSparks, preferences.values.stageSparks)
             .environment(\.lyricVisualStyle, preferences.values.lyricStyle)
             .environment(\.locale, Locale(identifier: preferences.values.language.languageCode))
+    }
+
+    // 放进各个 Tab 的安全区域，避免覆盖 TabView 自己管理的浮动导航栏。
+    @ViewBuilder private var miniPlayer: some View {
+        if playback.queue.current != nil {
+            MiniPlayerView(playback: playback, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition) {
+                if video.presentationMode == .video { video.open() }
+                else { showingPlayer = true }
+            }
+        }
     }
 
     @ViewBuilder private var adaptiveNavigation: some View {

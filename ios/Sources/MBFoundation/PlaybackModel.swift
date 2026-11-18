@@ -183,6 +183,7 @@ public final class PlaybackModel {
         let start = positionMilliseconds
         captionTask?.cancel()
         captionTask = Task {
+            defer { if current == generation, !Task.isCancelled { stateDidChange?() } }
             if track.localFileID != nil {
                 timeline = .lrc(track.localMetadata?.lyrics ?? "", durationMilliseconds: track.durationMilliseconds)
                 captionMessage = timeline.lines.isEmpty ? "本地文件没有带时间的歌词" : nil

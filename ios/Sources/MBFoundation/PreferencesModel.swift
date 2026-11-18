@@ -25,8 +25,9 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var hotComments = false
     public var stageSparks = false
     public var lyricsStage = false
+    public var nowPlayingLyrics = true
     public init() {}
-    private enum CodingKeys: String, CodingKey { case selectedSourceID, builtInEnabled, appearance, volume, cacheMegabytes, searchHistory, playerStyle, lyricStyle, normalization, language, quality, stageSparks, lyricsStage, smoke, fog, growFromCover, hotComments }
+    private enum CodingKeys: String, CodingKey { case selectedSourceID, builtInEnabled, appearance, volume, cacheMegabytes, searchHistory, playerStyle, lyricStyle, normalization, language, quality, stageSparks, lyricsStage, nowPlayingLyrics, smoke, fog, growFromCover, hotComments }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         selectedSourceID = try values.decodeIfPresent(String.self, forKey: .selectedSourceID)
@@ -44,6 +45,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         hotComments = try values.decodeIfPresent(Bool.self, forKey: .hotComments) ?? false
         stageSparks = try values.decodeIfPresent(Bool.self, forKey: .stageSparks) ?? false
         lyricsStage = try values.decodeIfPresent(Bool.self, forKey: .lyricsStage) ?? false
+        nowPlayingLyrics = try values.decodeIfPresent(Bool.self, forKey: .nowPlayingLyrics) ?? true
         quality = try values.decodeIfPresent(AudioQuality.self, forKey: .quality) ?? .high
         language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .system
     }

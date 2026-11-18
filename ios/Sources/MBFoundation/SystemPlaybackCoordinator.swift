@@ -7,18 +7,47 @@ import UIKit
 import AppKit
 #endif
 
-/// 锁屏与耳机命令共用当前播放会话；音频时钟来自 AVPlayer，后台不依赖页面计时器。
+/// CarPlay 系统正在播放、锁屏与耳机共用播放会话；歌词使用音频时钟，不依赖前台页面。
 @MainActor public final class SystemPlaybackCoordinator: NSObject {
+    private struct InfoKey: Equatable {
+        let trackID: String
+        let title: String
+        let artist: String
+        let second: Int64
+        let duration: Int64
+        let controlRevision: Int
+        let playing: Bool
+        let artwork: Bool
+    }
     private weak var playback: PlaybackModel?
     private var commands: [(MPRemoteCommand, Any)] = []
     private var interruptedRevision: Int?
     private var interruptedTrack: String?
-    private var infoKey = ""
+    private var infoKey: InfoKey?
+    private var lyricsEnabled = true
+    private let publish: ([String: Any]?, MPNowPlayingPlaybackState) -> Void
     private var artworkTrack: String?
     private var artwork: MPMediaItemArtwork?
     private var artworkTask: Task<Void, Never>?
 
-    public override init() { super.init() }
+    public override init() {
+        publish = { info, state in
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            MPNowPlayingInfoCenter.default().playbackState = state
+        }
+        super.init()
+    }
+
+    init(publish: @escaping ([String: Any]?, MPNowPlayingPlaybackState) -> Void) {
+        self.publish = publish
+        super.init()
+    }
+
+    public func setLyricsEnabled(_ enabled: Bool) {
+        guard lyricsEnabled != enabled else { return }
+        lyricsEnabled = enabled
+        update()
+    }
 
     public func connect(_ playback: PlaybackModel) {
         guard self.playback == nil else { return }
@@ -62,9 +91,12 @@ import AppKit
     private func update() {
         let hasTrack = playback?.queue.current != nil
         for (command, _) in commands { command.isEnabled = hasTrack }
+        MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasTrack && ((playback?.queue.tracks.count ?? 0) > 1 || playback?.station != nil)
+        MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = hasTrack && (playback?.queue.tracks.count ?? 0) > 1
         guard let playback, let track = playback.queue.current else {
             artworkTask?.cancel(); artworkTask = nil; artwork = nil; artworkTrack = nil
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            infoKey = nil
+            publish(nil, .stopped)
             return
         }
         if artworkTrack != track.id {
@@ -91,28 +123,35 @@ import AppKit
                 }
             }
         }
-        let key = "\(track.id):\(playback.state):\(playback.positionMilliseconds / 1_000):\(playback.durationMilliseconds):\(artwork != nil)"
+        var artist = track.artist
+        if lyricsEnabled, let index = playback.timeline.activeIndex(at: playback.positionMilliseconds) {
+            let line = playback.timeline.lines[index].text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            if !line.isEmpty { artist = line }
+        }
+        // 普通进度每秒更新；同一秒内换句、拖动、切曲或修改设置立即更新。
+        let key = InfoKey(trackID: track.id, title: track.title, artist: artist,
+                          second: playback.positionMilliseconds / 1_000, duration: playback.durationMilliseconds,
+                          controlRevision: playback.controlRevision, playing: playback.state == .playing, artwork: artwork != nil)
         guard key != infoKey else { return }; infoKey = key
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: track.title, MPMediaItemPropertyArtist: track.artist,
+            MPMediaItemPropertyTitle: track.title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPlaybackDuration: Double(playback.durationMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(playback.positionMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyPlaybackRate: playback.state == .playing ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
         ]
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        MPNowPlayingInfoCenter.default().playbackState = playback.state == .playing ? .playing : .paused
-        MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = playback.queue.tracks.count > 1
-        MPRemoteCommandCenter.shared().previousTrackCommand.isEnabled = playback.queue.tracks.count > 1
+        publish(info, playback.state == .playing ? .playing : .paused)
     }
 
     public func disconnect() {
-        for (command, token) in commands { command.removeTarget(token) }
+        for (command, token) in commands { command.removeTarget(token); command.isEnabled = false }
         commands.removeAll()
         NotificationCenter.default.removeObserver(self)
         artworkTask?.cancel(); artworkTask = nil
         playback?.stateDidChange = nil; playback = nil
+        artwork = nil; artworkTrack = nil; infoKey = nil
+        publish(nil, .stopped)
     }
 
     #if os(iOS)

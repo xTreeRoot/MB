@@ -1,6 +1,6 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `4`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `5`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
 
 ## 在另一台 Mac 编译
 
@@ -21,12 +21,20 @@ Xcode 选择 `MBiOS` scheme；模拟器可直接运行。装到自己的 iPhone 
 - B 站四区首页、查看更多、刷新、游客搜索、联想、分页与失败重试；扫码登录、二维码分享、过期刷新、取消、已存 Cookie 验证复用、退出后停用。
 - 个人中心、收藏夹及内容、点赞视频、观看历史游标、关注列表、UP 投稿；评论分页、发送与视频点赞。所有发布操作由用户点击发起。
 - AVFoundation 音频、HTTP Range 分段开始播放、不支持 Range 时完整下载回退、后台全量缓存；视频选择接近 720p 的 AVC 轨道，画面静音跟随同一音频时钟，支持横屏全屏。
-- 后台音频、锁屏信息与封面、耳机/控制中心操作、系统打断与拔耳机暂停；队列、随机、单曲/列表循环、增删排序、重启恢复为暂停。插件电台自动补充曲目，电台身份随队列保存。
+- 后台音频、CarPlay 系统“正在播放”/锁屏信息与封面、耳机/控制中心操作、系统打断与拔耳机暂停；队列、随机、单曲/列表循环、增删排序、重启恢复为暂停。插件电台自动补充曲目，电台身份随队列保存。
 - 歌词逐句滚动、点击跳转、翻译、逐字时间；Flow / Steps / Tilt，封面 / 黑胶 / 磁带；标准/动态/关闭响度处理。歌词火花、进度烟雾、低音封面雾气、间奏热评和封面展开均有开关。
 - 本地歌曲/专辑/作者/喜欢/最近播放、搜索、歌单创建/重命名/删除/增删排序；文件与文件夹导入、AVFoundation 标签/封面读取、内容摘要去重、LRC 附加、音频导出分享。下载/导入独立保留，播放缓存按 LRU 和容量清理。
 - 音质、应用音量、中英文、外观、缓存容量、搜索记录、系统代理域名白名单；首页/搜索/播放按能力使用音源，切换浏览源不改变旧队列来源。
 - 外部 JavaScript 插件：ZIP/目录/GitHub/安装链接、权限预览、安装/更新/卸载、设置、启停、GitHub release 每日检查。QuickJS ES 模块解释器支持 timer/fetch/Abort、Headers/URL、隔离存储与 MD5/AES；不启用 JIT，不运行外部进程。
 - 插件首页/自定义页/导航、歌曲与专辑/作者/歌单/播客/电台、搜索分类、个人内容、收藏/关注/订阅、平台歌单增删与搜索选歌、可选评论互动、播放回报；网页登录在独立临时 WKWebView 中完成，`host.openURL` 使用 App 内网页。
+
+## CarPlay 系统正在播放与逐句歌词
+
+继续使用 AltStore 个人签名。先在手机打开 MB 开始播放，连接 CarPlay 后打开车机自带的“正在播放”，可使用系统播放/暂停、上下曲与进度控制；实际显示和可用按钮由车机决定。无需为这条路径增加 CarPlay 专属 entitlement，App 没有独立的车机图标或歌单页面。
+
+默认开启「设置 → CarPlay 与锁屏 → 在歌手栏显示当前歌词」：歌名保留，歌手字段按音频播放时间替换为当前句；前奏、间奏、无歌词或空白歌词行恢复原歌手。暂停时保留对应句，拖动、切曲、歌词迟到及开关变更立即刷新；普通进度按秒更新，句子变化不受整秒节流限制。关闭开关立即恢复正常歌手信息，选择会保存。
+
+手机锁屏和控制中心也会使用同一份文字。系统决定刷新速度、截断与文字滚动，此功能不提供自定义滚动歌词界面。真实 CarPlay 尚未实测，不能将元数据回归或设置截图当成车机显示验收。
 
 ## 模块与数据
 
@@ -57,17 +65,17 @@ xcodebuild -project MBiOS.xcodeproj -scheme MBiOS -configuration Debug \
 bash scripts/package-ipa.sh
 ```
 
-`package-ipa.sh` 输出 `.build/artifacts/MB-iOS-0.1.0-4-unsigned.ipa` 及源码 SHA-256 清单。未签名 IPA 需要自己的签名，不能点击直接安装；Xcode 直接运行是首次安装最省事的方式。
+`package-ipa.sh` 输出 `.build/artifacts/MB-iOS-0.1.0-5-unsigned.ipa` 及源码 SHA-256 清单。未签名 IPA 需要自己的签名，不能点击直接安装；Xcode 直接运行是首次安装最省事的方式。
 
 UI 回归使用后台启动的 Simulator 设备和 XCTest，不需要打开 Simulator.app 或控制 Xcode 窗口。可先用 `xcrun simctl list devices available` 找设备，再按 [Review/README.md](Review/README.md) 的命令运行和导出截图。Release 忽略 `--demo`；Debug 演示资料、插件、静音音频与实际沙盒数据隔离。
 
-2026-11-18：115 项 Swift Testing 回归通过（Foundation 89、B 站 26，参数化测试另含多个输入），公共 SwiftUI 宿主编译和 iPhone/iPad 通用模拟器测试编译通过。真实游客首页四区各 6 条，更多页分别 30/20/100/40 条；搜索“夜曲”17 条、真实音频解码 4096 PCM 帧、HTTP 206 Range 与原生视频画面输出成功。最终界面及 Release 结果见 [PARITY.md](PARITY.md) 和截图索引。
+2026-11-18 build 5：122 项 Swift Testing 回归通过（Foundation 96、B 站 26，参数化测试另含多个输入），公共 SwiftUI 宿主编译和 iPhone/iPad 通用模拟器测试编译通过。build 4 已验证真实游客首页四区各 6 条，更多页分别 30/20/100/40 条；搜索“夜曲”17 条、真实音频解码 4096 PCM 帧、HTTP 206 Range 与原生视频画面输出成功。最终界面及 Release 结果见 [PARITY.md](PARITY.md) 和截图索引。
 
 ## 宿主差异与未验收项
 
 桌面托盘、刘海、窗口和本机进程能力对应 iOS 导航、锁屏及控制中心；iOS 插件不提供外部进程、远程播放器和桌面端口监听回调 `waitForRedirect`。依赖完整浏览器 Web API 的插件可能需要适配；已验证原版 B 站 JS 可在解释器执行签名搜索合同，但不能据此宣称所有桌面插件通用。网页登录使用 WKWebView 自己的网络栈，域名代理白名单只控制 URLSession 的 API/图片/媒体请求。
 
-build 3 曾完成免费 Personal Team 真机签名与安装。本轮 build 4 的真实扫码、线上点赞/发评论、真机锁屏/后台长播、蓝牙切换和特效功耗尚未实测，不能用演示截图替代。平台风控错误保留已有内容并允许重试，不绕过风控。系统支持的本地格式以 AVFoundation 实际可解码能力为准。
+build 3 曾完成免费 Personal Team 真机签名与安装。当前 build 5 的真实扫码、线上点赞/发评论、真机锁屏/后台长播、蓝牙切换、CarPlay 显示与控制和特效功耗尚未实测，不能用演示截图替代。平台风控错误保留已有内容并允许重试，不绕过风控。系统支持的本地格式以 AVFoundation 实际可解码能力为准。
 
 ## 来源与许可证
 
