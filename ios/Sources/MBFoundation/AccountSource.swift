@@ -11,9 +11,9 @@ public struct SourceAccount: Identifiable, Equatable, Sendable {
 }
 
 public struct SignInPrompt: Equatable, Sendable {
-    public let qrURL: URL
+    public let qrURL: URL?
     public let message: String
-    public init(qrURL: URL, message: String) { self.qrURL = qrURL; self.message = message }
+    public init(qrURL: URL? = nil, message: String) { self.qrURL = qrURL; self.message = message }
 }
 
 public protocol AccountSource: MusicSource {

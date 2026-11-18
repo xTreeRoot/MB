@@ -194,3 +194,33 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
         await #expect(throws: PluginFailure.self) { try await runtime.invoke("local") }
     }
 }
+
+@Test func signInDiagnosticsKeepFailureCodesWithoutRequestOrAccountSecrets() async throws {
+    try await withPlugin("""
+    export async function signIn() {
+      await fetch('https://api.example.test/login/private-key?token=private-token', {headers:{Cookie:'session=private-cookie'}});
+      return {id:'fixture',name:'Fixture'};
+    }
+    """) { _, root, manifest in
+        let directory = root.appendingPathComponent("data")
+        let runtime = try PluginRuntime(directory: root, dataDirectory: directory, manifest: manifest, transport: { _, _ in
+            throw URLError(.networkConnectionLost)
+        })
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("signIn") }
+        let text = try String(contentsOf: directory.appendingPathComponent("sign-in-diagnostics.json"), encoding: .utf8)
+        let report = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
+        #expect(report["completed"] == .bool(false))
+        #expect(report["entries"].array.first?["errorCode"].integer == URLError.networkConnectionLost.rawValue)
+        #expect(report["entries"].array.first?["pathHash"].string == PluginSignInDiagnostics.pathHash("/login/private-key"))
+        for secret in ["private-key", "private-token", "private-cookie", "Cookie", "/login"] { #expect(!text.contains(secret)) }
+    }
+}
+
+
+@Test func pluginInterruptsInfiniteModuleInitialization() async throws {
+    try await withPlugin("while(true){} export function ok(){return 42;}") { runtime, _, _ in
+        let started = ContinuousClock.now
+        await #expect(throws: PluginFailure.self) { try await runtime.supports("ok") }
+        #expect(ContinuousClock.now - started < .seconds(2))
+    }
+}

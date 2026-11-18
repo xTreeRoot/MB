@@ -57,6 +57,21 @@ private actor SessionFixture: PlaybackSessionStore {
     func saveSession(_ session: PlaybackSession) { self.session = session }
 }
 
+private actor DelayedRestoreFixture: PlaybackSessionStore {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiter: CheckedContinuation<Void, Never>?
+    func loadSession() async -> PlaybackSession? {
+        await withCheckedContinuation { continuation = $0; waiter?.resume(); waiter = nil }
+        return PlaybackSession(queue: audioTracks, index: 0, positionMilliseconds: 1000)
+    }
+    func saveSession(_ session: PlaybackSession) {}
+    func waitForLoad() async {
+        if continuation != nil { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+}
+
 private let audioTracks = ["one", "two"].map { Track(sourceID: "test", sourceTrackID: $0, title: $0, artist: "UP", durationMilliseconds: 90_000) }
 private let fakeDownload: @Sendable (MediaResource) async throws -> URL = { _ in
     FileManager.default.temporaryDirectory.appendingPathComponent("mb-fake-\(UUID()).m4a")
@@ -225,6 +240,56 @@ private let fakeDownload: @Sendable (MediaResource) async throws -> URL = { _ in
     let restored = PlaybackModel(source: AudioSourceFixture(), engine: TestAudio(), store: store, download: fakeDownload)
     await restored.restore()
     #expect(restored.queue.current == nil)
+}
+
+@Test @MainActor func clearingPlaybackRemovesPlayingAndPausedTracksAndRejectsLateAudio() async {
+    for paused in [false, true] {
+        let engine = TestAudio(), store = SessionFixture()
+        let model = PlaybackModel(source: AudioSourceFixture(), engine: engine, store: store, download: fakeDownload)
+        model.select(audioTracks, index: 0)
+        await model.waitUntilLoaded()
+        if paused { model.pause() }
+        let plays = engine.played
+        model.clear()
+        model.play()
+        await model.saveNow()
+        #expect(model.queue.tracks.isEmpty)
+        #expect(model.queue.current == nil)
+        #expect(model.state == .paused)
+        #expect(model.positionMilliseconds == 0)
+        #expect(model.durationMilliseconds == 0)
+        #expect(model.timeline.lines.isEmpty)
+        #expect(engine.played == plays)
+        #expect(await store.session?.queue.isEmpty == true)
+    }
+    let source = AudioSourceFixture(), engine = TestAudio()
+    await source.block()
+    let model = PlaybackModel(source: source, engine: engine, download: fakeDownload)
+    model.select(audioTracks, index: 0)
+    await source.waitBlocked()
+    model.clear()
+    await source.release()
+    await model.waitUntilLoaded()
+    #expect(model.queue.current == nil)
+    #expect(engine.played == 0)
+}
+
+@Test @MainActor func clearingPlaybackWhileRestoringRejectsThePreviousPlatformsSession() async {
+    let store = DelayedRestoreFixture()
+    let model = PlaybackModel(source: AudioSourceFixture(), engine: TestAudio(), store: store, download: fakeDownload)
+    let restoring = Task { await model.restore() }
+    await store.waitForLoad()
+    model.clear()
+    await store.release()
+    await restoring.value
+    #expect(model.queue.current == nil)
+    #expect(model.positionMilliseconds == 0)
+
+    let saved = SessionFixture(PlaybackSession(queue: audioTracks, index: 0, positionMilliseconds: 1000))
+    let clearedBeforeRestore = PlaybackModel(source: AudioSourceFixture(), engine: TestAudio(), store: saved)
+    clearedBeforeRestore.clear()
+    await clearedBeforeRestore.restore()
+    #expect(clearedBeforeRestore.queue.current == nil)
 }
 
 @Test @MainActor func queueMoveKeepsCurrentAudioAndShuffleVisitsEachEntryOnce() async {

@@ -33,6 +33,8 @@ struct PluginCatalogPage: View {
     @State private var content: PluginBrowse?
     @State private var error: String?
     @State private var loading = false
+    @State private var loadRevision = 0
+    @State private var initialLoad: Task<Void, Never>?
     @State private var offset = 0
     @State private var more = false
     @State private var capabilities: Set<String> = []
@@ -119,11 +121,18 @@ struct PluginCatalogPage: View {
         }
         .listStyle(.plain)
         .navigationTitle(title)
-        .task {
-            for method in ["liked", "savedAlbums", "stations", "shows", "search", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "movePlaylistTrack", "savePlaylist", "saveAlbum", "followArtist", "subscribeShow"] where (try? await source.supports(method)) == true { capabilities.insert(method) }
-            if case .entity(let item) = request { enabled = item.value["saved"] == .bool(true) || item.value["following"] == .bool(true) || item.value["subscribed"] == .bool(true) }
-            await load()
+        .onAppear {
+            initialLoad?.cancel()
+            initialLoad = Task {
+                var found: Set<String> = []
+                for method in ["liked", "savedAlbums", "stations", "shows", "search", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "movePlaylistTrack", "savePlaylist", "saveAlbum", "followArtist", "subscribeShow"] where (try? await source.supports(method)) == true { found.insert(method) }
+                guard !Task.isCancelled else { return }
+                capabilities = found
+                if case .entity(let item) = request { enabled = item.value["saved"] == .bool(true) || item.value["following"] == .bool(true) || item.value["subscribed"] == .bool(true) }
+                await load()
+            }
         }
+        .onDisappear { initialLoad?.cancel(); initialLoad = nil }
         .refreshable { await load() }
         .alert("歌单名称", isPresented: $rename) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("保存") { Task { await playlistName(create: false) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
         .alert("新建平台歌单", isPresented: $create) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("创建") { Task { await playlistName(create: true) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
@@ -181,8 +190,10 @@ struct PluginCatalogPage: View {
     }
     private func change(_ operation: () async throws -> Void) async { guard !changing else { return }; changing = true; defer { changing = false }; do { try await operation() } catch { self.error = error.localizedDescription } }
     private func load(append: Bool = false) async {
-        guard !loading else { return }; loading = true; error = nil
-        defer { loading = false }
+        loadRevision += 1
+        let revision = loadRevision
+        loading = true; error = nil
+        defer { if revision == loadRevision { loading = false } }
         do {
             let page: PluginBrowse, hasMore: Bool, count: Int
             switch request {
@@ -192,11 +203,11 @@ struct PluginCatalogPage: View {
             case .entity(let item): (page, hasMore, count) = try await source.entity(item, offset: append ? offset : 0)
             case .search(let query, let kind): (page, hasMore, count) = try await source.searchCatalog(query, kind: kind, offset: append ? offset : 0)
             }
-            guard !Task.isCancelled else { return }
+            guard revision == loadRevision, !Task.isCancelled else { return }
             if append, var previous = content { previous.sections += page.sections.enumerated().map { index, section in section.reidentified("\(offset)-\(index)") }; content = previous; offset += count }
             else { content = page; offset = count }
             more = hasMore && count > 0
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+        } catch { if revision == loadRevision, !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }
 

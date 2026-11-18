@@ -65,19 +65,56 @@ public struct MBRootView: View {
         _plugins = State(initialValue: PluginModel(installer: preview.map { PluginInstaller(directory: $0.pluginDirectory) } ?? PluginInstaller()))
     }
 
-    public var body: some View {
+    private var tabContent: some View {
         TabView(selection: $selectedTab) {
-            adaptiveNavigation.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .discover) }
+            adaptiveNavigation
+                .safeAreaInset(edge: .bottom, spacing: 0) { legacyMiniPlayer(for: .discover) }
                 .tabItem { Label("发现", systemImage: "safari") }.tag(MBTab.discover)
-            searchNavigation.safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .search) }
+            searchNavigation.safeAreaInset(edge: .bottom, spacing: 0) { legacyMiniPlayer(for: .search) }
                 .tabItem { Label("搜索", systemImage: "magnifyingglass") }.tag(MBTab.search)
             DownloadsView(model: downloads, library: localLibrary, playback: playback)
-                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .library) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { legacyMiniPlayer(for: .library) }
                 .tabItem { Label("资料库", systemImage: "music.note.list") }.tag(MBTab.library)
             AccountLibraryView(account: account, plugin: source as? PluginSource, source: source as? any LibrarySource, playback: playback, downloads: downloads, select: select, openSettings: { showingAppSettings = true }, openPlugins: { showingPlugins = true })
-                .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer(for: .account) }
+                .safeAreaInset(edge: .bottom, spacing: 0) { legacyMiniPlayer(for: .account) }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }.tag(MBTab.account)
         }
+    }
+
+    @ViewBuilder private var tabsWithPlayer: some View {
+        #if os(iOS)
+        if #available(iOS 26.1, *) {
+            tabContent.tabViewBottomAccessory(isEnabled: playback.queue.current != nil) {
+                miniPlayer(systemContainer: true)
+            }
+        } else { tabContent }
+        #else
+        tabContent
+        #endif
+    }
+
+    @ViewBuilder private func legacyMiniPlayer(for tab: MBTab) -> some View {
+        // 旧系统仅在当前标签的内容安全区挂载，保留唯一的封面转场来源。
+        if selectedTab == tab {
+            #if os(iOS)
+            if #unavailable(iOS 26.1) { miniPlayer() }
+            #else
+            miniPlayer()
+            #endif
+        }
+    }
+
+    @ViewBuilder private func miniPlayer(systemContainer: Bool = false) -> some View {
+        if playback.queue.current != nil {
+            MiniPlayerView(playback: playback, systemContainer: systemContainer, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition, openQueue: { showingQueue = true }) {
+                if video.presentationMode == .video { video.open(); showVideo() }
+                else { showingPlayer = true }
+            }
+        }
+    }
+
+    private var tabs: some View {
+        tabsWithPlayer
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
             .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, video: video, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
             .sheet(isPresented: $showingQueue) { QueueView(playback: playback) }
@@ -90,6 +127,10 @@ public struct MBRootView: View {
                 if let repo = PluginInstaller.repository(fromInstallURL: url) { showingPlugins = true; Task { await plugins.prepareGitHub(repo) } }
             }
             .sheet(isPresented: $showingSettings) { NetworkSettingsView(model: networkSettings) }
+    }
+
+    private var initializedTabs: some View {
+        tabs
             .task {
                 await router.register(initialSource, id: initialSourceID)
                 if !demo { await plugins.restore(); await registerPlugins(); Task { await plugins.checkUpdates() } }
@@ -133,7 +174,12 @@ public struct MBRootView: View {
                     currentInteractions = available ? interactions : nil
                 }
             }
+    }
+
+    private var observedTabs: some View {
+        initializedTabs
             .onChange(of: selectedSourceID) { _, id in preferences.values.selectedSourceID = id }
+            .onChange(of: selectedTab) { _, _ in inputFocused = false }
             .onChange(of: preferences.values.builtInEnabled) { _, enabled in
                 if !enabled, selectedSourceID == initialSourceID, plugins.sources[initialSourceID] == nil { selectedSourceID = plugins.sources.keys.sorted().first ?? "" }
                 if enabled, selectedSourceID.isEmpty { selectedSourceID = initialSourceID }
@@ -181,12 +227,11 @@ public struct MBRootView: View {
             .onChange(of: searchPath) { _, pages in
                 if selectedTab == .search, !pages.contains(.video), video.isVisible { video.browse() }
             }
-            .task(id: input + ":" + selectedSourceID) {
-                suggestions = []
-                guard inputFocused, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let source = source as? any SuggestionSource else { return }
-                do { try await Task.sleep(for: .milliseconds(250)); let result = try await source.suggestions(input); guard !Task.isCancelled else { return }; suggestions = Array(Set(result)).sorted() }
-                catch { /* 联想失败保留正常搜索。 */ }
-            }
+    }
+
+    public var body: some View {
+        observedTabs
+            .task(id: input + ":" + selectedSourceID) { await updateSuggestions() }
             .task(id: request.id) {
                 if request.more { await search.loadMore() }
                 else { await search.search(request.query) }
@@ -201,14 +246,17 @@ public struct MBRootView: View {
             .tint(MBTheme.accent)
     }
 
-    // 只在当前 Tab 的安全区域挂载，保留唯一的封面转场来源。
-    @ViewBuilder private func miniPlayer(for tab: MBTab) -> some View {
-        if playback.queue.current != nil, selectedTab == tab {
-            MiniPlayerView(playback: playback, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition, openQueue: { showingQueue = true }) {
-                if video.presentationMode == .video { video.open(); showVideo() }
-                else { showingPlayer = true }
-            }
-        }
+    private func updateSuggestions() async {
+        suggestions = []
+        guard inputFocused,
+              !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let source = source as? any SuggestionSource else { return }
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+            let result = try await source.suggestions(input)
+            guard !Task.isCancelled else { return }
+            suggestions = Array(Set(result)).sorted()
+        } catch { /* 联想失败保留正常搜索。 */ }
     }
 
     @ViewBuilder private var adaptiveNavigation: some View {
@@ -259,9 +307,19 @@ public struct MBRootView: View {
                         HStack { ForEach(suggestions, id: \.self) { text in Button(text) { input = text; submit() }.buttonStyle(.bordered).frame(minHeight: 44) } }.padding(.horizontal, 20)
                     }
                 }
-                if search.query.isEmpty { searchLanding }
-                else { searchResults }
+                Group {
+                    if search.query.isEmpty { searchLanding }
+                    else { searchResults }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .scrollDismissesKeyboard(.immediately)
+                .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
+                .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in inputFocused = false })
             }
+            .defaultFocus($inputFocused, false)
+            .onAppear { inputFocused = false }
+            .onDisappear { inputFocused = false }
             .navigationTitle("搜索")
             .toolbar { toolbar }
             .navigationDestination(for: MBPage.self) { destination($0) }
@@ -302,6 +360,8 @@ public struct MBRootView: View {
                 }
             }.padding(20)
         }.background(MBTheme.background)
+            .scrollDismissesKeyboard(.immediately)
+            .accessibilityIdentifier("search-landing")
     }
 
     @ViewBuilder private func destination(_ page: MBPage) -> some View {
@@ -317,7 +377,7 @@ public struct MBRootView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Picker("音源", selection: $selectedSourceID) {
+                Picker("音源", selection: sourceSelection) {
                     if preferences.values.builtInEnabled, plugins.sources[initialSourceID] == nil { Text(initialSource.displayName).tag(initialSourceID) }
                     ForEach(plugins.installed.filter { !plugins.disabled.contains($0.id) }) { plugin in Text(plugin.manifest.displayName).tag(plugin.id) }
                 }
@@ -344,6 +404,7 @@ public struct MBRootView: View {
                 DiscoveryHomeView(model: home, source: discovery, select: select, menu: trackMenu)
             } else if let plugin = source as? PluginSource {
                 PluginHomeView(source: plugin, select: select, menu: trackMenu)
+                    .id(ObjectIdentifier(plugin))
             } else { ContentUnavailableView("从喜欢的声音开始", systemImage: "waveform", description: Text("搜索视频与音乐")) }
     }
 
@@ -382,8 +443,16 @@ public struct MBRootView: View {
             TextField("搜索视频、音乐、UP 主", text: $input)
                 .accessibilityLabel("搜索视频、音乐、UP 主")
                 .autocorrectionDisabled().focused($inputFocused)
+                .submitLabel(.search)
                 .onSubmit { submit() }
             if !input.isEmpty { Button("清空搜索", systemImage: "xmark.circle.fill") { input = "" }.labelStyle(.iconOnly).foregroundStyle(.secondary) }
+            Button("搜索") { submit() }
+                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("submit-search")
+            if inputFocused {
+                Button("完成") { inputFocused = false }
+                    .accessibilityIdentifier("dismiss-search-keyboard")
+            }
         }
         .padding(12).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 16).padding(.vertical, 8)
@@ -393,6 +462,17 @@ public struct MBRootView: View {
         if preferences.values.builtInEnabled { await router.register(initialSource, id: initialSourceID) }
         await router.keep(Set(plugins.sources.keys).union(preferences.values.builtInEnabled ? [initialSourceID] : []))
         for (id, plugin) in plugins.sources { await router.register(plugin, id: id) }
+    }
+    private var sourceSelection: Binding<String> {
+        Binding(get: { selectedSourceID }, set: { switchSource($0) })
+    }
+    private func switchSource(_ id: String) {
+        guard id != selectedSourceID else { return }
+        playback.clear()
+        video.updateTrack(nil)
+        showingPlayer = false; showingQueue = false; commentTrack = nil
+        inputFocused = false
+        selectedSourceID = id
     }
     private func activateSource() async {
         let id = selectedSourceID

@@ -56,8 +56,9 @@ public final class PlaybackModel {
         defer { stateDidChange?() }
         guard !restored else { return }
         restored = true
+        let current = generation
         do {
-            guard let session = try await store?.loadSession(), queue.current == nil,
+            guard let session = try await store?.loadSession(), current == generation, queue.current == nil,
                   session.queue.indices.contains(session.index) else { return }
             queue.replace(with: session.queue, selecting: session.index)
             station = session.station
@@ -151,9 +152,21 @@ public final class PlaybackModel {
         persistSoon(); stateDidChange?()
     }
     public func moveQueue(_ offsets: IndexSet, to destination: Int) { queue.move(offsets, to: destination); persistSoon(); stateDidChange?() }
+    /// 清除播放会话并取消所有旧请求，切换音源后迟到的恢复与加载不能重新选中旧曲目。
+    public func clear() {
+        restored = true
+        queue.remove(IndexSet(queue.tracks.indices))
+        endStation()
+        reset()
+        durationMilliseconds = 0
+        controlRevision += 1
+        selectionRevision += 1
+        persistSoon()
+        stateDidChange?()
+    }
     public func removeQueue(_ offsets: IndexSet) {
         let removedCurrent = queue.remove(offsets)
-        if queue.tracks.isEmpty { endStation(); reset(); durationMilliseconds = 0 }
+        if queue.tracks.isEmpty { clear(); return }
         else if removedCurrent, let index = queue.index { jump(to: index, intent: .transport) }
         persistSoon(); stateDidChange?()
     }

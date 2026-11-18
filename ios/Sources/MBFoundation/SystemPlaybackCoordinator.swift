@@ -147,7 +147,7 @@ import AppKit
         #else
         guard let image = NSImage(data: data) else { return nil }
         #endif
-        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        return MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
     }
 
     public func disconnect() {

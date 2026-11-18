@@ -86,6 +86,19 @@ private struct PluginSettingsView: View {
     @State private var saved = false
     var body: some View {
         Form {
+            Section("来源") {
+                if let repository = plugin.repository?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   let url = URL(string: "https://github.com/" + repository) {
+                    Link(destination: url) {
+                        Label(url.absoluteString, systemImage: "arrow.up.right.square")
+                            .font(.callout).textSelection(.enabled)
+                    }.accessibilityIdentifier("plugin-repository")
+                } else { LabeledContent("安装来源", value: "本地文件") }
+                LabeledContent("安装位置") {
+                    Text(plugin.directory.path).font(.caption.monospaced())
+                        .textSelection(.enabled).accessibilityIdentifier("plugin-install-location")
+                }
+            }
             ForEach(plugin.manifest.settings ?? []) { setting in
                 Section {
                     switch setting.type {

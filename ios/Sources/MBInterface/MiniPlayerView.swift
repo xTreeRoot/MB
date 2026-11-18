@@ -3,12 +3,31 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     let playback: PlaybackModel
+    var systemContainer = false
     var transitionEnabled = false
     let transitionNamespace: Namespace.ID
     let openQueue: () -> Void
     let open: () -> Void
 
     var body: some View {
+        if systemContainer {
+            controls.padding(.horizontal, 12).padding(.vertical, 8)
+        } else {
+            controls
+                .padding(8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.06)))
+                .overlay(alignment: .bottomLeading) {
+                    GeometryReader { area in
+                        Capsule().fill(MBTheme.accent.opacity(0.5)).frame(width: area.size.width * min(1, max(0, Double(playback.positionMilliseconds) / Double(max(1, playback.durationMilliseconds)))), height: 2).offset(y: area.size.height - 2)
+                    }.clipped().allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .frame(maxWidth: 680).padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity)
+        }
+    }
+
+    private var controls: some View {
         HStack(spacing: 12) {
             if let track = playback.queue.current {
                 Button(action: open) {
@@ -34,16 +53,6 @@ struct MiniPlayerView: View {
                     .accessibilityValue("\(playback.queue.tracks.count)")
             }
         }
-        .padding(8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.06)))
-        .overlay(alignment: .bottomLeading) {
-            GeometryReader { area in
-                Capsule().fill(MBTheme.accent.opacity(0.5)).frame(width: area.size.width * min(1, max(0, Double(playback.positionMilliseconds) / Double(max(1, playback.durationMilliseconds)))), height: 2).offset(y: area.size.height - 2)
-            }.clipped().allowsHitTesting(false).accessibilityHidden(true)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .frame(maxWidth: 680).padding(.horizontal, 12).padding(.vertical, 5).frame(maxWidth: .infinity)
         .buttonStyle(.plain)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")

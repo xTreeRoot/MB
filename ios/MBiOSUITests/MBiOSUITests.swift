@@ -2,6 +2,95 @@ import XCTest
 import UIKit
 
 final class MBiOSUITests: XCTestCase {
+    /// 手动联网回归，需先安装原版网易云插件；不扫码确认，不改变账号。
+    @MainActor func testNeteaseQRCodeRetryAndPlaybackSurviveRelaunch() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let mode = app.buttons["切换播放模式"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 20))
+        mode.tap()
+        let source = app.buttons["网易云音乐"]
+        guard source.waitForExistence(timeout: 5) else {
+            throw XCTSkip("需要预先安装 sogud/mygo-music-netease v0.1.14")
+        }
+        source.tap()
+        app.tabBars.buttons["我的"].tap()
+        let login = app.buttons["登录网易云音乐"]
+        XCTAssertTrue(login.waitForExistence(timeout: 15))
+        for attempt in 1...2 {
+            login.tap()
+            XCTAssertTrue(app.images["登录二维码"].waitForExistence(timeout: 20))
+            XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Invalid sign-in prompt")).firstMatch.exists)
+            capture("网易云-第\(attempt)次生成二维码-未扫码", app: app)
+            app.buttons["取消"].tap()
+            XCTAssertTrue(login.waitForExistence(timeout: 5))
+        }
+        app.tabBars.buttons["搜索"].tap()
+        let search = app.textFields["搜索视频、音乐、UP 主"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("夜曲\n")
+        let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "选择 夜曲", "Cover")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 20))
+        song.tap()
+        let player = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "打开播放页，")).firstMatch
+        XCTAssertTrue(player.waitForExistence(timeout: 15))
+        let title = player.label
+        let pause = app.buttons["暂停"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 30), "真实音频应进入播放状态")
+        pause.tap()
+        capture("网易云-真实曲目播放后暂停", app: app)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons[title].waitForExistence(timeout: 20))
+        app.buttons[title].tap()
+        XCTAssertTrue(app.buttons["收起"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.state, .runningForeground)
+        capture("网易云-重启恢复并展开播放器", app: app)
+    }
+
+    @MainActor func testSearchKeyboardRequiresTapAndCanBeDismissed() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("搜索", app: app)
+        let field = app.textFields["搜索视频、音乐、UP 主"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "进入搜索不应自动弹出键盘")
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let done = app.buttons["dismiss-search-keyboard"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.staticTexts["浏览音乐"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let landing = app.scrollViews["search-landing"]
+        XCTAssertTrue(landing.isHittable)
+        capture("搜索-滚动收起键盘前-演示数据", app: app)
+        // 滚动容器延伸到键盘后方，手势落在当前可见内容内。
+        let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.30))
+        dragStart.press(forDuration: 0.05, thenDragTo: dragEnd)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        selectTab("发现", app: app)
+        selectTab("搜索", app: app)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        field.tap()
+        field.typeText("music")
+        app.buttons["submit-search"].tap()
+        XCTAssertTrue(app.buttons["选择 晚风里的片刻"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        capture("搜索-手动输入与收起键盘-演示数据", app: app)
+    }
+
     @MainActor func testPlayerControlsAndMiniQueueStayUsableAcrossTrackChanges() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -256,16 +345,24 @@ final class MBiOSUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.tap()
         let server = app.textFields["服务地址"]
         XCTAssertTrue(server.waitForExistence(timeout: 5))
+        let location = app.staticTexts["plugin-install-location"]
+        XCTAssertTrue(location.waitForExistence(timeout: 5))
+        XCTAssertTrue(location.label.hasSuffix("/installed/fixture"))
         server.tap(); server.typeText("https://media.example.test")
         app.switches["启用示例"].tap()
         app.buttons["保存"].tap()
         capture("插件-设置-演示数据", app: app)
         selectTab("发现", app: app)
+        app.buttons["查看更多为你推荐"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        let oldPlayer = app.buttons["打开播放页，晚风里的片刻"]
+        XCTAssertTrue(oldPlayer.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["切换播放模式"].waitForExistence(timeout: 5))
         app.buttons["切换播放模式"].tap()
         if app.buttons["音源"].exists { app.buttons["音源"].tap() }
         app.buttons["示例插件"].tap()
         XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
+        XCTAssertTrue(oldPlayer.waitForNonExistence(timeout: 5), "切换平台应清除上一平台暂停中的曲目")
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].exists)
         capture("插件-首页-演示数据", app: app)
         app.buttons["更多示例"].tap()

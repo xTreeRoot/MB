@@ -66,8 +66,8 @@ private actor Prompts { var values: [SignInPrompt] = []; func add(_ value: SignI
     let memory = SessionMemory(nil), prompts = Prompts()
     let routes = AccountRoutes([
         "/x/passport-login/web/qrcode/generate": [
-            #"{"code":0,"data":{"url":"https://passport.bilibili.com/scan?key=one","qrcode_key":"one"}}"#,
-            #"{"code":0,"data":{"url":"https://passport.bilibili.com/scan?key=two","qrcode_key":"two"}}"#,
+            #"{"code":0,"data":{"url":"https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=one","qrcode_key":"one"}}"#,
+            #"{"code":0,"data":{"url":"https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=two","qrcode_key":"two"}}"#,
         ],
         "/x/passport-login/web/qrcode/poll": [
             #"{"code":0,"data":{"code":86038}}"#, #"{"code":0,"data":{"code":86090}}"#,
@@ -80,11 +80,51 @@ private actor Prompts { var values: [SignInPrompt] = []; func add(_ value: SignI
     #expect(await memory.value?.active == true)
     let messages = await prompts.values
     #expect(messages.count == 3)
-    #expect(messages[1].qrURL.query == "key=two")
+    #expect(messages.first?.qrURL?.host == "account.bilibili.com")
+    #expect(messages[1].qrURL?.query == "qrcode_key=two")
     #expect(messages.last?.message.contains("确认") == true)
     let calls = await routes.calls
     let polls = calls.filter { $0.url?.path.hasSuffix("/poll") == true }
     #expect(polls.map { $0.url?.query } == ["qrcode_key=one", "qrcode_key=two", "qrcode_key=two"])
+}
+
+@Test @MainActor func qrGenerationReportsPlatformFailureAndRetryCanCompleteLogin() async throws {
+    let memory = SessionMemory(nil)
+    let routes = AccountRoutes([
+        "/x/passport-login/web/qrcode/generate": [
+            #"{"code":-352,"data":null}"#,
+            #"{"code":0,"data":{"url":"https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=retry","qrcode_key":"retry"}}"#,
+        ],
+        "/x/passport-login/web/qrcode/poll": [
+            #"{"code":0,"data":{"code":0,"url":"https://passport.biligame.com/crossDomain?SESSDATA=test-session&DedeUserID=42&bili_jct=test-csrf"}}"#,
+        ],
+        "/x/web-interface/nav": [loggedIn],
+    ])
+    let model = AccountModel(source: accountSource(routes, store: memory))
+    model.signIn()
+    await model.waitForSignIn()
+    #expect(model.errorMessage == BilibiliError.api(-352).localizedDescription)
+    #expect(model.prompt == nil)
+    #expect(!model.isSigningIn)
+
+    model.signIn()
+    await model.waitForSignIn()
+    #expect(model.account?.id == "42")
+    #expect(model.errorMessage == nil)
+    #expect(!model.isSigningIn)
+    #expect(await memory.value?.active == true)
+}
+
+@Test(arguments: ["https://evil.test/scan", "https://account.bilibili.com.evil.test/scan", "http://account.bilibili.com/scan"])
+func qrGenerationRejectsUntrustedLinksBeforePromptOrPolling(_ url: String) async throws {
+    let memory = SessionMemory(nil)
+    let body = #"{"code":0,"data":{"url":"\#(url)","qrcode_key":"one"}}"#
+    let routes = AccountRoutes(["/x/passport-login/web/qrcode/generate": [body]])
+    await #expect(throws: BilibiliError.invalidResponse) {
+        try await accountSource(routes, store: memory).signIn { _ in Issue.record("不可信二维码不应显示") }
+    }
+    #expect(await routes.calls.count == 1)
+    #expect(await memory.value == nil)
 }
 
 private actor PollGate {

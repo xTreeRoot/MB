@@ -1,6 +1,6 @@
 # iOS 与 main 功能对照
 
-对照 main `27d433743f29b5c04ce4a9ddc95aff99f1204067`，产品 build 7。工程在同仓库 `ios` 分支的 `ios/`。桌面代码未改；平台合同沿用 main 已启用能力，平台专属请求集中在 MBBilibili，公共业务与插件能力集中在 MBFoundation。
+对照 main `27d433743f29b5c04ce4a9ddc95aff99f1204067`，产品 build 7。工程现位于同仓库 `main` 分支的 `ios/`。桌面代码未改；平台合同沿用 main 已启用能力，平台专属请求集中在 MBBilibili，公共业务与插件能力集中在 MBFoundation。
 
 | 功能 | iOS 实现与验证 | 实机/宿主边界 |
 | --- | --- | --- |

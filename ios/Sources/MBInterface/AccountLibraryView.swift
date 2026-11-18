@@ -76,13 +76,15 @@ private struct SignInView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-                if let prompt = model.prompt, let image = qrImage(prompt.qrURL.absoluteString) {
-                    image.interpolation(.none).resizable().scaledToFit().frame(maxWidth: 270).padding(16).background(.white)
-                        .accessibilityLabel("登录二维码")
+                if let prompt = model.prompt {
+                    if let url = prompt.qrURL, let image = qrImage(url.absoluteString) {
+                        image.interpolation(.none).resizable().scaledToFit().frame(maxWidth: 270).padding(16).background(.white)
+                            .accessibilityLabel("登录二维码")
+                        ShareLink(item: image, preview: SharePreview("登录二维码", image: image)) {
+                            Label("保存或分享二维码", systemImage: "square.and.arrow.up")
+                        }
+                    } else if model.isSigningIn { ProgressView() }
                     Text(LocalizedStringKey(prompt.message)).multilineTextAlignment(.center)
-                    ShareLink(item: image, preview: SharePreview("登录二维码", image: image)) {
-                        Label("保存或分享二维码", systemImage: "square.and.arrow.up")
-                    }
                 } else if model.isSigningIn { ProgressView("正在准备登录") }
                 if let error = model.errorMessage {
                     Text(LocalizedStringKey(error)).foregroundStyle(.red)

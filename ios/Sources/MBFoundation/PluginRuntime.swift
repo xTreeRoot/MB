@@ -14,6 +14,7 @@ private final class PluginContext: @unchecked Sendable {
 public actor PluginRuntime {
     public typealias Transport = @Sendable (URLRequest, PluginManifest.Permissions) async throws -> (Data, HTTPURLResponse)
     private let host: PluginHostState
+    private var signInDiagnostics: PluginSignInDiagnostics?
     private var context: PluginContext?
     private struct Completed: Sendable { let id: Int32; let success: Bool; let value: PluginJSON }
     private var events: [Int32: Task<Void, Never>] = [:]
@@ -54,12 +55,18 @@ public actor PluginRuntime {
         try await load()
         guard let context else { throw PluginFailure.execution("Runtime unavailable") }
         let json = try arguments.encoded()
+        let diagnostics = name == "signIn" ? PluginSignInDiagnostics(directory: host.data) : nil
+        signInDiagnostics = diagnostics
+        defer { signInDiagnostics = nil }
         do {
-            return try await withTaskCancellationHandler {
+            let value = try await withTaskCancellationHandler {
                 let status = name.withCString { name in json.withCString { mbjs_start(context.pointer, name, $0, 100) } }
                 return try await finish(status, context: context, timeout: timeout)
             } onCancel: { context.cancel() }
+            await diagnostics?.finish(completed: true)
+            return value
         } catch {
+            await diagnostics?.finish(completed: false)
             reset()
             throw error
         }
@@ -92,7 +99,8 @@ public actor PluginRuntime {
                 _ = try await finish(setup, context: context, timeout: .seconds(5))
                 let entry = host.manifest.entry
                 let module = try host.call("module", [.string(entry)]).string ?? ""
-                let status = entry.withCString { name in module.withCString { mbjs_evaluate(pointer, $0, name, 1, 100) } }
+                // 模块初始化可能建立 AES 查找表，允许最多 500ms；导出动作仍使用 100ms 执行片段。
+                let status = entry.withCString { name in module.withCString { mbjs_evaluate(pointer, $0, name, 1, 500) } }
                 _ = try await finish(status, context: context, timeout: .seconds(10))
             } onCancel: { context.cancel() }
             loaded = true
@@ -123,11 +131,17 @@ public actor PluginRuntime {
             let event = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
             if event["kind"].string == "cancel", let id = event["request"].integer { events.removeValue(forKey: Int32(id))?.cancel(); continue }
             guard let id = event["id"].integer, events.count < 512 else { throw PluginFailure.execution("Host request limit exceeded") }
-            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, openURL = openURL, name = host.manifest.displayName
+            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, openURL = openURL, name = host.manifest.displayName, diagnostics = signInDiagnostics
             events[Int32(id)] = Task { [weak self] in
                 let completed: Completed
-                do { completed = Completed(id: Int32(id), success: true, value: try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, openURL: openURL, transport: transport)) }
-                catch { completed = Completed(id: Int32(id), success: false, value: .string(error.localizedDescription)) }
+                do {
+                    let value = try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, openURL: openURL, transport: transport)
+                    await diagnostics?.record(event, result: value, error: nil)
+                    completed = Completed(id: Int32(id), success: true, value: value)
+                } catch {
+                    await diagnostics?.record(event, result: nil, error: error)
+                    completed = Completed(id: Int32(id), success: false, value: .string(error.localizedDescription))
+                }
                 guard !Task.isCancelled else { return }
                 await self?.complete(completed, context: context)
             }

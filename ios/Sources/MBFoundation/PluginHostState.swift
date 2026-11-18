@@ -57,7 +57,15 @@ final class PluginHostState {
             guard status == kCCSuccess else { throw PluginFailure.invalid("AES operation failed") }
             return .string(output.prefix(count).map { String(format: "%02x", $0) }.joined())
         case "prompt":
-            guard let value = values.first, let text = value["qr"].string, let url = URL(string: text), ["http", "https"].contains(url.scheme ?? "") else { throw PluginFailure.invalid("Invalid sign-in prompt") }
+            guard let value = values.first, case .object = value else { throw PluginFailure.invalid("Invalid sign-in prompt") }
+            var url: URL?
+            // 桌面合同允许生成二维码前和确认后只发送文字，不伪造二维码地址。
+            if value["qr"] != .null, value["qr"] != .string("") {
+                guard let text = value["qr"].string, let address = URL(string: text),
+                      ["http", "https"].contains(address.scheme ?? ""),
+                      let host = address.host, !host.isEmpty, address.user == nil else { throw PluginFailure.invalid("Invalid sign-in prompt") }
+                url = address
+            }
             prompt?(SignInPrompt(qrURL: url, message: value["text"].string ?? "")); return .null
         case "url":
             guard let url = URL(string: first, relativeTo: values.count > 1 ? values[1].string.flatMap(URL.init(string:)) : nil)?.absoluteURL, let parts = URLComponents(url: url, resolvingAgainstBaseURL: true), let scheme = parts.scheme else { throw PluginFailure.invalid("Invalid URL") }

@@ -129,9 +129,12 @@ extension BilibiliSource {
     private func newQRCode() async throws -> (url: URL, key: String) {
         let result: APIEnvelope<QRCodeDTO> = try await request(path: "/x/passport-login/web/qrcode/generate",
             origin: "https://passport.bilibili.com", cookieOverride: "")
-        guard result.code == 0, let data = result.data, !data.qrcode_key.isEmpty,
-              let url = URL(string: data.url), url.scheme == "https", url.host == "passport.bilibili.com" else {
-            throw BilibiliError.invalidLogin
+        guard result.code == 0 else { throw BilibiliError.api(result.code) }
+        // 生成接口位于 passport 域名，实际扫码链接由 account 域名承载。
+        guard let data = result.data, !data.qrcode_key.isEmpty,
+              let url = URL(string: data.url), url.scheme == "https",
+              ["account.bilibili.com", "passport.bilibili.com"].contains(url.host ?? "") else {
+            throw BilibiliError.invalidResponse
         }
         return (url, data.qrcode_key)
     }

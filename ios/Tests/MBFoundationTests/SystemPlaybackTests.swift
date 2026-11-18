@@ -69,8 +69,8 @@ private actor SystemSource: PlaybackSource {
     let info = SystemInfo()
     let playback: PlaybackModel
     let coordinator: SystemPlaybackCoordinator
-    init(source: SystemSource = SystemSource()) {
-        playback = PlaybackModel(source: source, engine: clock)
+    init(source: SystemSource = SystemSource(), store: (any PlaybackSessionStore)? = nil) {
+        playback = PlaybackModel(source: source, engine: clock, store: store)
         let info = self.info
         coordinator = SystemPlaybackCoordinator { value, state in
             info.value = value; info.state = state; info.writes += 1
@@ -220,4 +220,41 @@ private actor SystemSource: PlaybackSource {
         #expect(f.info.artist == "Updated line")
         #expect(f.info.title == "Song one")
     }
+
+    @Test @MainActor func systemArtworkCanBeRequestedOffMainAfterSelectionAndSessionRestore() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("cover.png")
+        let png = try #require(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII="))
+        try png.write(to: file)
+        let store = AppPersistence(directory: directory)
+        var f = SystemFixture(store: store)
+        defer { f.coordinator.disconnect() }
+        var track = systemTracks[0]
+        track.artworkURL = file
+        f.playback.select([track], index: 0, autoplay: false)
+        for pass in 0..<2 {
+            if pass == 1 {
+                f = SystemFixture(store: AppPersistence(directory: directory))
+                await f.playback.restore()
+                #expect(f.playback.queue.current?.id == track.id)
+                #expect(f.playback.state == .paused)
+            }
+            for _ in 0..<200 where f.info.value?[MPMediaItemPropertyArtwork] == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let artwork = try #require(f.info.value?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork)
+            // MediaPlayer 在自己的 accessQueue 请求封面，不能继承创建处的 MainActor。
+            let request = BackgroundArtworkRequest(artwork: artwork)
+            #expect(await Task.detached { request.hasImage() }.value)
+            await f.playback.saveNow()
+            f.coordinator.disconnect()
+        }
+    }
+}
+
+private struct BackgroundArtworkRequest: @unchecked Sendable {
+    let artwork: MPMediaItemArtwork
+    func hasImage() -> Bool { artwork.image(at: CGSize(width: 32, height: 32)) != nil }
 }
