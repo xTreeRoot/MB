@@ -255,6 +255,18 @@ type Stream struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+// VideoStream is the picture accompanying a track. The shared player keeps
+// responsibility for its sound and playback position.
+type VideoStream struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// VideoSource optionally supplies a track's MV when Can("video") is true.
+type VideoSource interface {
+	Video(id, quality string) (*VideoStream, error)
+}
+
 // Lyrics are a track's words: as LRC, the simple way, or as timed Lines, which
 // can time each word, and are used if there are any.
 type Lyrics struct {

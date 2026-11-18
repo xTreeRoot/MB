@@ -136,11 +136,20 @@ function mapVideo(data) {
     id: bvid,
     name: text(data.title) || bvid,
     artists: authorName ? [{ id: authorId, name: authorName, imageUrl: text(owner.face) }] : [],
-    album: { id: section || "bilibili", name: section || host.t("Bilibili videos") },
+    album: {
+      id: section || "bilibili",
+      name: section || host.t("Bilibili videos"),
+      imageUrl: imageURL(data.pic || data.cover),
+    },
     duration,
     url: `${siteOrigin}/video/${bvid}/`,
-    imageUrl: text(data.pic ?? data.cover),
   };
+}
+
+/** Normalize the image addresses Bilibili returns, including scheme-relative covers. */
+function imageURL(value) {
+  const address = text(value);
+  return address.startsWith("//") ? `https:${address}` : address;
 }
 
 function mapComment(data) {
@@ -173,6 +182,7 @@ class BilibiliPlatformStrategy {
   wbiKey = "";
   details = new Map();
   historyCursors = new Map();
+  folderMetadata = new Map();
   likedState = new Map();
   loginAttempt = null;
 
@@ -337,6 +347,7 @@ class BilibiliPlatformStrategy {
     this.wbiKey = "";
     this.details.clear();
     this.historyCursors.clear();
+    this.folderMetadata.clear();
     this.likedState.clear();
   }
 
@@ -433,10 +444,30 @@ class BilibiliPlatformStrategy {
     if (!Array.isArray(data.list) && number(data.count) !== 0) {
       throw new Error("Bilibili did not return the account's favorite folders.");
     }
-    return array(data.list).map((folder) => ({
+    const folders = array(data.list);
+    const enriched = [];
+    // The list-all endpoint omits covers; read lightweight folder metadata in bounded batches.
+    for (let start = 0; start < folders.length; start += 4) {
+      const batch = await Promise.all(folders.slice(start, start + 4).map(async (folder) => {
+        const id = text(folder.id);
+        const cached = this.folderMetadata.get(id);
+        if (cached && Date.now() - cached.at < 60000) return { ...folder, ...cached.data };
+        try {
+          const metadata = await this.request("/x/v3/fav/folder/info", { media_id: id });
+          this.folderMetadata.set(id, { data: metadata, at: Date.now() });
+          return { ...folder, ...metadata };
+        } catch (error) {
+          if (error.code === "signIn") throw error;
+          console.warn(`Bilibili favorite folder ${id}: ${error.message}`);
+          return folder;
+        }
+      }));
+      enriched.push(...batch);
+    }
+    return enriched.map((folder) => ({
       id: text(folder.id),
       name: text(folder.title) || text(folder.id),
-      imageUrl: text(folder.cover),
+      imageUrl: imageURL(folder.cover),
       description: text(folder.intro),
       trackCount: number(folder.media_count),
       mine: true,
@@ -481,7 +512,7 @@ class BilibiliPlatformStrategy {
     return {
       id: text(metadata.id ?? folderId),
       name: text(metadata.title) || folderId,
-      imageUrl: text(metadata.cover),
+      imageUrl: imageURL(metadata.cover),
       description: text(metadata.intro),
       owner: text(metadata.upper?.name),
       trackCount: number(metadata.media_count),
@@ -637,16 +668,21 @@ class BilibiliPlatformStrategy {
     return { tracks: await this.tracksFrom(list), more: page * 25 < total };
   }
 
-  async stream({ id }) {
+  async playbackInfo(id) {
     const bvid = bvidOf(id);
     const detail = await this.detail(bvid);
-    const response = await fetch(`${siteOrigin}/video/${bvid}/`, { headers: this.headers() });
-    if (!response.ok) throw new Error(`Bilibili video page returned HTTP ${response.status}.`);
-    const html = await response.text();
-    const match = html.match(/window\.__playinfo__\s*=\s*(\{[\s\S]*?\})\s*<\/script>/);
-    if (!match?.[1]) throw fail("unavailable", "Bilibili did not provide playback data for this video.");
-    const playInfo = object(JSON.parse(match[1]));
-    const audio = object(array(object(playInfo.data).dash?.audio)[0]);
+    // Use Zhuoqi's signed playback endpoint; current video pages may omit __playinfo__ entirely.
+    const data = await this.request("/x/player/wbi/playurl", {
+      bvid, cid: text(detail.cid), qn: "80", fnval: "4048", fnver: "0", fourk: "1",
+      gaia_source: "view-card", from_client: "BROWSER", is_main_page: "false",
+      need_fragment: "false", isGaiaAvoided: "true", voice_balance: "1", web_location: "1315873",
+    }, { wbi: true });
+    return { detail, dash: object(data.dash) };
+  }
+
+  async stream({ id }) {
+    const { detail, dash } = await this.playbackInfo(id);
+    const audio = object(array(dash.audio)[0]);
     const url = text(audio.base_url ?? audio.baseUrl);
     if (!url) throw fail("unavailable", host.t("The video does not have a playable audio track."));
     return {
@@ -657,6 +693,19 @@ class BilibiliPlatformStrategy {
       size: number(audio.size),
       _cid: text(detail.cid),
     };
+  }
+
+  async video({ id }) {
+    const { dash } = await this.playbackInfo(id);
+    const streams = array(dash.video).filter((stream) => text(stream.base_url ?? stream.baseUrl));
+    // AVC is supported by every system media framework used by the app.
+    const avc = streams.filter((stream) => number(stream.codecid) === 7 || text(stream.codecs).startsWith("avc1"));
+    const video = (avc.length ? avc : streams).sort((a, b) => {
+      const score = (stream) => Math.abs(number(stream.height) - 720);
+      return score(a) - score(b) || number(a.bandwidth) - number(b.bandwidth);
+    })[0];
+    if (!video) throw fail("unavailable", host.t("This track has no playable MV."));
+    return { url: text(video.base_url ?? video.baseUrl), headers: requestHeaders() };
   }
 
   async lyrics({ id }) {
@@ -849,4 +898,8 @@ export function lyrics(input) {
 
 export function stream(input) {
   return activePlatformStrategy().stream(input);
+}
+
+export function video(input) {
+  return activePlatformStrategy().video(input);
 }

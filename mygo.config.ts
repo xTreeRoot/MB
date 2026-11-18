@@ -3,7 +3,7 @@ export default ({ command }: { command: string }) => ({
   name: "MB",
   identifier: "com.xtreeroot.mb",
   slug: "mb",
-  version: "0.1.2",
+  version: "0.1.3",
   out: "build",
   urlSchemes: [command === "dev" ? "mb-dev" : "mb"],
   macos: {

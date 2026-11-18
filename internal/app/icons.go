@@ -60,6 +60,12 @@ var (
 // draws them.
 var iconThumbFill = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M2.9 10.9h2.3v10.2H2.9z"/><path d="M9 10.4 12 2a3.13 3.13 0 0 1 3 3.88L14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H9z"/></svg>`))
 
+var (
+	iconMV     = strokeIcon(`<rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 8 6 4-6 4z"/>`)
+	iconPin    = strokeIcon(`<path d="M9 3h6l-1 6 4 4v2H6v-2l4-4z"/><path d="M12 15v7"/>`)
+	iconExpand = strokeIcon(`<path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/>`)
+)
+
 // navIcon is the icon a source names for an entry of the sidebar.
 func navIcon(name string) *ui.SVG {
 	switch name {

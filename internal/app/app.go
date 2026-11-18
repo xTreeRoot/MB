@@ -59,6 +59,7 @@ type app struct {
 	art   *artCache
 	pl    *player.Player
 	pal   palette
+	mv    mvState
 
 	// libs are the sources, the built-in one first, and what the app has of
 	// each. The active one's is embedded: a.mine is what the active source
@@ -363,6 +364,7 @@ func Run() error {
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()
+			a.syncMV()
 		}
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
@@ -433,6 +435,7 @@ func Run() error {
 	// Windows leaves an icon in the notification area after its app until
 	// the pointer passes over it.
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		a.mv.release()
 		if a.tray != nil {
 			a.tray.Destroy()
 		}

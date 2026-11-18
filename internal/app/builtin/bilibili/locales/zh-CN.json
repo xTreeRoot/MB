@@ -21,5 +21,6 @@
   "The QR code expired. Scan the new code with the Bilibili app.": "二维码已过期，请扫描自动刷新的二维码。",
   "Signing in took too long. Try again.": "登录超时，请重试。",
   "Bilibili returned an unsupported login callback.": "哔哩哔哩返回的登录回调地址无效。",
-  "Could not confirm the comment was published. Refresh comments before trying again.": "无法确认评论是否发送成功。请先刷新评论，确认结果后再决定是否重发。"
+  "Could not confirm the comment was published. Refresh comments before trying again.": "无法确认评论是否发送成功。请先刷新评论，确认结果后再决定是否重发。",
+  "This track has no playable MV.": "当前歌曲没有可播放的 MV。"
 }

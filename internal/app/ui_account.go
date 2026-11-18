@@ -433,6 +433,7 @@ func (a *app) avatar(c *ui.Context, url string, size float32, empty ui.Color) {
 // and closes them: those they made, if mine, with a button to make one
 // and a menu to rename them, or else with a menu to unsave them.
 func (a *app) myPlaylists(c *ui.Context, title string, lists []music.Playlist, mine bool, collapsed *bool) {
+	lists = a.orderedSidebarPlaylists(a.library, lists, mine)
 	canCreate := mine && a.can("createPlaylist")
 	if len(lists) == 0 && !canCreate {
 		return
@@ -466,13 +467,14 @@ func (a *app) myPlaylists(c *ui.Context, title string, lists []music.Playlist, m
 	for i := range lists {
 		pl := &lists[i]
 		selected := a.route.page == pagePlaylist && a.route.id == pl.ID && !a.nowPlaying
-		b := ui.ButtonBase(c.Key(pl.ID)).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(pl.Name)
+		b := ui.ButtonBase(c.Key(sidebarPlaylistKey{mine, pl.ID})).Height(34).PaddingX(8).Gap(10).Radius(8).AlignItems(ui.Center).Justify(ui.Start).FocusRing(false).Label(pl.Name)
 		switch {
 		case selected:
 			b.Background(p.press)
 		case b.Hovered():
 			b.Background(p.hover)
 		}
+		a.bindSidebarPlaylistDrag(b, a.library, pl.ID, mine)
 		b.Children(func() {
 			a.cover(c, pl.ImageURL, 80, 22, 5)
 			ui.Text(c, pl.Name).FontSize(13).SingleLine().Shrink(1).MinWidth(0)

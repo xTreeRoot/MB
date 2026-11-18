@@ -357,7 +357,7 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *music.Track, art *artwork, accen
 				ui.Box(c.Key("over-cover")).Grow(1).Basis(0).MinHeight(npCoverTop)
 				// The cover flies out of the bar's as Now Playing opens.
 				a.npMorph(c, ui.Box(c.Key("cover-morph")).Size(coverSize, coverSize).AlignSelf(ui.Start)).Children(func() {
-					a.npCover(c, tr, art, coverSize)
+					a.npMedia(c, tr, art, coverSize)
 				})
 
 				a.npRise(ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(36, 0, 18, 0), 1).Children(func() {

@@ -297,16 +297,18 @@ test("audio stream headers do not include the account cookie", async () => {
       }
       if (url.pathname === "/x/web-interface/nav") {
         assert.match(options.headers.Cookie, /SESSDATA=session-value/);
-        return jsonResponse({ code: 0, data: { isLogin: true, mid: 123, uname: "listener" } });
+        return jsonResponse({ code: 0, data: { isLogin: true, mid: 123, uname: "listener", wbi_img: { img_url: `https://i.example/${"a".repeat(32)}.png`, sub_url: `https://i.example/${"b".repeat(32)}.png` } } });
       }
       if (url.pathname === "/x/web-interface/view") {
         assert.match(options.headers.Cookie, /SESSDATA=session-value/);
         return jsonResponse({ code: 0, data: { aid: 7, cid: 8 } });
       }
-      if (url.pathname === "/video/BV1Q9YX6QEn2/") {
+      if (url.pathname === "/x/player/wbi/playurl") {
         assert.match(options.headers.Cookie, /SESSDATA=session-value/);
-        const playInfo = { data: { dash: { audio: [{ base_url: "https://upos-sz-mirrorcos.bilivideo.com/audio.m4a", mime_type: "audio/mp4", id: 30280, size: 120 }] } } };
-        return { ok: true, status: 200, text: async () => `window.__playinfo__=${JSON.stringify(playInfo)}</script>` };
+        const playInfo = { data: { dash: { video: [{ base_url: "https://upos-sz-mirrorcos.bilivideo.com/1080.m4s", height: 1080, codecid: 7 }, { baseUrl: "https://upos-sz-mirrorcos.bilivideo.com/720.m4s", height: 720, codecs: "avc1.640028" }, { base_url: "https://upos-sz-mirrorcos.bilivideo.com/av1.m4s", height: 720, codecid: 13 }], audio: [{ base_url: "https://upos-sz-mirrorcos.bilivideo.com/audio.m4a", mime_type: "audio/mp4", id: 30280, size: 120 }] } } };
+        assert.equal(url.searchParams.get("cid"), "8");
+        assert.equal(url.searchParams.get("fnval"), "4048");
+        return jsonResponse({ code: 0, ...playInfo });
       }
       throw new Error(`Unexpected Bilibili request: ${url}`);
     }, prompts);
@@ -316,6 +318,10 @@ test("audio stream headers do not include the account cookie", async () => {
     assert.equal(stream.url, "https://upos-sz-mirrorcos.bilivideo.com/audio.m4a");
     assert.equal(stream.headers.Cookie, undefined);
     assert.equal(stream._cid, "8");
+    const video = await module.video({ id: "BV1Q9YX6QEn2" });
+    assert.equal(video.url, "https://upos-sz-mirrorcos.bilivideo.com/720.m4s");
+    assert.equal(video.headers.Cookie, undefined);
+    assert.equal(video.headers.Referer, "https://www.bilibili.com/");
   } finally {
     globalThis.fetch = original.fetch;
     globalThis.host = original.host;

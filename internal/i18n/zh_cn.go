@@ -2,6 +2,17 @@ package i18n
 
 // zhCN is the app's text in Simplified Chinese, by its English.
 var zhCN = map[string]string{
+	"Video":                            "视频",
+	"MV Mini Player":                   "MV 小窗",
+	"Open MV Mini Player":              "打开 MV 小窗",
+	"Music Video":                      "音乐视频",
+	"This track has no playable MV.":   "当前歌曲没有可播放的 MV。",
+	"Couldn't load the MV. Try again.": "MV 加载失败，请重试。",
+	"Close MV":                         "关闭 MV 小窗",
+	"Show Main Window":                 "显示主窗口",
+	"Keep MV on Top":                   "MV 窗口置顶",
+	"Full Screen MV":                   "MV 全屏",
+
 	"%.1f GB used":                 "已用 %.1f GB",
 	"%d MB used":                   "已用 %d MB",
 	"%d albums":                    "%d 张专辑",

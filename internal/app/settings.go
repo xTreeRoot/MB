@@ -20,6 +20,10 @@ type settings struct {
 	Language string `json:"language"`
 	// Source is the ID of the source last used.
 	Source string `json:"source,omitempty"`
+	// PlaylistOrders keeps sidebar ordering separately for each source, account and section.
+	PlaylistOrders map[string][]string `json:"playlistOrders,omitempty"`
+	// NowPlayingMedia remembers whether the large player shows its cover or video.
+	NowPlayingMedia string `json:"nowPlayingMedia,omitempty"`
 	// Captions writes down episodes as they play, for their captions, on this
 	// device, once the listener has the model.
 	Captions bool `json:"captions"`

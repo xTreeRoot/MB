@@ -316,6 +316,15 @@ func (p *Plugin) Stream(id, quality string) (*music.Stream, error) {
 	return &s, nil
 }
 
+// Video asks an optional platform strategy for the picture of a track.
+func (p *Plugin) Video(id, quality string) (*music.VideoStream, error) {
+	var video music.VideoStream
+	if err := p.call("video", map[string]string{"id": id, "quality": quality}, &video); err != nil {
+		return nil, err
+	}
+	return &video, nil
+}
+
 func (p *Plugin) RemotePlay(ids []string, start int, position int64) error {
 	return p.call("remotePlay", map[string]any{"ids": ids, "start": start, "position": position}, nil)
 }
