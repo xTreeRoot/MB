@@ -3,7 +3,7 @@ export default ({ command }: { command: string }) => ({
   name: "MB",
   identifier: "com.xtreeroot.mb",
   slug: "mb",
-  version: "0.1.6",
+  version: "0.1.7",
   out: "build",
   urlSchemes:
     command === "dev" ? ["mb-dev", "mygo-music-dev"] : ["mb", "mygo-music"],

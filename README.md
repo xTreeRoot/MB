@@ -34,9 +34,9 @@ go tool mygo build -sign - -skip-notarize
 
 ## 平台策略
 
-通用播放器只依赖 `internal/music.Source`。内置平台分别放在 `internal/app/builtin/<platform>`，每个平台有自己的清单、网络权限、会话和 API 实现，通过 `loadBundledPlugins` 注册。当前仅接入哔哩哔哩。
+通用播放器只依赖 `internal/music.Source`。自带插件集中在 `plugins/builtin/<platform>`，每个平台有自己的清单、网络权限、会话和 API 实现，通过通用的 `internal/plugin.LoadBundled` 加载。当前仅内置哔哩哔哩；源码、测试和平台资料均独立于播放器页面。
 
-新增平台时新增独立目录、声明其已实现能力，并将运行文件加入 `builtin_plugin.go` 的嵌入清单。通用页面、播放器和登录弹窗不根据平台名称调用私有 API。用户安装的 MyGo 音源插件也可通过同一契约接入，插件示例保留在 `examples/demo-plugin`。
+新增平台时新增独立目录并声明其已实现能力，运行时文件通过 `plugins/builtin/assets.go` 嵌入。通用页面、播放器和登录弹窗不根据平台名称调用私有 API。为平台需求增加的视频、登录取消等逻辑必须扩展为可复用的播放器能力，用户安装的 MyGo 音源插件也可通过同一契约接入。能力契约见 [插件开发约定](plugins/README.md)，插件示例保留在 `examples/demo-plugin`。
 
 正式包同时支持 `mb://install-plugin?repo=owner/repo` 和上游社区的 `mygo-music://install-plugin?repo=owner/repo` 安装链接；开发包使用各自的 `-dev` 协议。插件兼容版本按已采用的 MyGo Music `0.1.25` 宿主契约检查，与 MB 的产品版本独立。上游历史、更新流程和本地功能优先规则见 [UPSTREAM.md](UPSTREAM.md)。
 

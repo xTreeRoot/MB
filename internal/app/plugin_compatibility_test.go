@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/egoist/mygo/ui"
+
+	"mygo-music/internal/music"
 	"mygo-music/internal/plugin"
 )
 
@@ -71,6 +74,46 @@ func TestCommunityPluginInstallLinks(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// The community website's Qishui URL must queue its repository for confirmation.
+func TestQishuiCommunityInstallLink(t *testing.T) {
+	t.Setenv("MYGO_ENV", "production")
+	was := fetchPlugin
+	t.Cleanup(func() { fetchPlugin = was })
+	asked := make(chan string, 1)
+	fetchPlugin = func(repo, dir string) (*plugin.Pending, error) {
+		asked <- repo
+		return &plugin.Pending{
+			Release: plugin.Release{Repo: repo},
+			Manifest: plugin.Manifest{
+				Info: music.Info{ID: "qishui-app-login", Name: "Qishui"},
+				Main: "index.js",
+			},
+		}, nil
+	}
+	a := newTestApp()
+	post := posts(a)
+	a.openLink("mygo-music://install-plugin?repo=lane128/mygo-music-qishui")
+	if got := wait(t, asked, "Qishui plugin download"); got != "lane128/mygo-music-qishui" {
+		t.Fatalf("downloaded %q", got)
+	}
+	runPost(t, post)
+	if a.settingsPage != "plugins" || !a.installer.open || a.installer.pending == nil {
+		t.Fatal("Qishui download did not open the install confirmation")
+	}
+	tt := ui.NewTester(a.settingsView, 780, 640)
+	settled(tt)
+	if _, ok := tt.AccessByRole(ui.RoleButton, Tf("Install %s", "Qishui")); !ok {
+		t.Fatal("download did not expose its installation action")
+	}
+	if err := tt.Click(T("Cancel")); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.installer.open || a.installer.pending != nil {
+		t.Fatal("cancelling the linked plugin did not dismiss the pending installation")
 	}
 }
 

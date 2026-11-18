@@ -17,6 +17,7 @@ import (
 	"mygo-music/internal/music"
 	"mygo-music/internal/player"
 	"mygo-music/internal/plugin"
+	"mygo-music/plugins/builtin"
 )
 
 type pageKind int
@@ -240,7 +241,7 @@ func (a *app) makeSources() {
 	plugin.SetAppVersion(pluginCompatibilityVersion)
 	plugin.SetWebSignIn(a.webSignIn)
 	a.plugins = plugin.Discover(pluginsDir(), userDataDir("plugin-data"))
-	bundled, err := loadBundledPlugins(a.plugins, userDataDir("builtin-plugins"), userDataDir("plugin-data"))
+	bundled, err := plugin.LoadBundled(builtin.Assets, a.plugins, userDataDir("builtin-plugins"), userDataDir("plugin-data"))
 	if err != nil {
 		log.Printf("loading bundled platform sources: %v", err)
 	} else {
@@ -449,10 +450,10 @@ func Run() error {
 	mygo.App.OnWindowAllClosed(func() {})
 	mygo.App.OnActivate(func(bool) { a.showMain() })
 	mygo.App.OnSecondInstance(func([]string, string) { a.showMain() })
-	// The installed app's scheme is registered as it's installed; the
-	// development app, which isn't, registers its own every time it starts.
-	if mygo.IsDev() {
-		for _, scheme := range pluginLinkSchemes() {
+	// Repair missing URL associations on launch, including after an upgrade
+	// adds a community scheme to an already installed application.
+	for _, scheme := range pluginLinkSchemes() {
+		if !mygo.App.IsURLSchemeRegistered(scheme) {
 			if err := mygo.App.RegisterURLScheme(scheme); err != nil {
 				log.Printf("registering %s links: %v", scheme, err)
 			}

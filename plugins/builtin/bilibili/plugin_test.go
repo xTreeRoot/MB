@@ -1,4 +1,4 @@
-package app
+package bilibili_test
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 
 	"mygo-music/internal/music"
 	"mygo-music/internal/plugin"
+	"mygo-music/plugins/builtin"
 )
 
 // The bundled Bilibili source must compile in MyGo and expose the playback and library operations it implements.
@@ -22,7 +23,7 @@ func TestBundledBilibiliPluginLoads(t *testing.T) {
 	defer plugin.SetAppVersion("")
 	pluginSource := filepath.Join(t.TempDir(), "plugins", "bilibili")
 	pluginData := filepath.Join(t.TempDir(), "plugin-data")
-	source, err := loadBundledPlatform("bilibili", pluginSource, pluginData)
+	source, err := loadBilibili(pluginSource, pluginData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(string(encoded))), Request: request}, nil
 	})
 	directory, data := filepath.Join(t.TempDir(), "bilibili"), t.TempDir()
-	source, err := loadBundledPlatform("bilibili", directory, data)
+	source, err := loadBilibili(directory, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatal("session storage must remain readable only by the current user")
 	}
-	again, err := plugin.Load(directory, data)
+	again, err := plugin.Load(filepath.Join(directory, "bilibili"), data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +165,7 @@ func TestBundledBilibiliQRCancel(t *testing.T) {
 		body := `{"code":0,"data":{"url":"https://account.bilibili.com/scan","qrcode_key":"test"}}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})
-	source, err := loadBundledPlatform("bilibili", filepath.Join(t.TempDir(), "bilibili"), t.TempDir())
+	source, err := loadBilibili(filepath.Join(t.TempDir(), "bilibili"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,4 +188,24 @@ func TestBundledBilibiliQRCancel(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("cancelling sign-in did not stop its timer")
 	}
+}
+
+// loadBilibili installs the shipped plugin through the same generic loader as the app.
+func loadBilibili(directory, dataDirectory string) (*plugin.Plugin, error) {
+	sources, err := plugin.LoadBundled(builtin.Assets, nil, directory, dataDirectory)
+	if err != nil {
+		return nil, err
+	}
+	var bilibili *plugin.Plugin
+	for _, source := range sources {
+		if source.Info().ID == "bilibili" {
+			bilibili = source
+		} else {
+			source.Close()
+		}
+	}
+	if bilibili == nil {
+		return nil, fmt.Errorf("bundled Bilibili plugin was not found")
+	}
+	return bilibili, nil
 }

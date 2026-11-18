@@ -1,4 +1,4 @@
-package app
+package bilibili_test
 
 import (
 	"encoding/json"
@@ -58,7 +58,7 @@ func TestBundledBilibiliArtworkAndPlayback(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(string(b))), Request: r}, nil
 	})
-	src, err := loadBundledPlatform("bilibili", filepath.Join(t.TempDir(), "bilibili"), t.TempDir())
+	src, err := loadBilibili(filepath.Join(t.TempDir(), "bilibili"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -170,11 +170,8 @@ func (a *app) openLink(raw string) {
 	in := &a.installer
 	in.repo = repo
 	in.open, in.github = true, true
+	a.showMain()
 	a.openSourceSettings()
-	if a.win != nil {
-		// The link was opened in the browser, which is in front.
-		mygo.App.Focus()
-	}
 	if !in.busy {
 		a.installFromRepo()
 	}

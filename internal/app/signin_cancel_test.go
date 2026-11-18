@@ -54,21 +54,21 @@ func TestSignInCancelStopsSource(t *testing.T) {
 	}
 }
 
-// With MM_FRAMES set, render the actual native sign-in dialog containing Bilibili's QR payload.
-func TestBilibiliQRDialogFrame(t *testing.T) {
+// With MM_FRAMES set, render the native QR dialog without a platform dependency.
+func TestPluginQRDialogFrame(t *testing.T) {
 	dir := framesDir(t)
 	a := newTestApp()
 	lib := a.library
-	fake(a).info.Name = "哔哩哔哩"
+	fake(a).info.Name = "示例平台"
 	a.signIn = signInDialog{open: true, waiting: true, lib: lib}
 	a.signInPrompted(music.SignInPrompt{
-		QR:   "https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=test",
-		Text: "使用哔哩哔哩 App 扫描二维码。",
+		QR:   "https://login.example.com/qr?code=test",
+		Text: "使用平台 App 扫描二维码。",
 	})
 	tt := ui.NewTester(func(c *ui.Context) { a.signInDialog(c, a.pal, false) }, 800, 600)
 	a.pal = paletteFor(ui.LightTheme())
 	settled(tt)
 	tt.Advance(time.Second)
 	tt.Frame()
-	saveFrame(t, dir, "bilibili-qr-login.png", tt.Image())
+	saveFrame(t, dir, "plugin-qr-login.png", tt.Image())
 }

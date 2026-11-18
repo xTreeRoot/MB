@@ -15,8 +15,9 @@
 
 ## 平台与宿主策略
 
-- 通用播放器依赖 `internal/music.Source`。平台私有 API、签名、分页、响应解析、会话、播放和字幕都放入独立的 `internal/app/builtin/<platform>`。
-- 新平台通过独立目录、清单和内置加载器注册，不在通用业务与页面散落平台判断。只声明已实现能力。
+- 通用播放器依赖 `internal/music.Source`。平台私有 API、签名、分页、响应解析、会话、媒体地址和字幕转换都放入独立的 `plugins/builtin/<platform>`。
+- 新平台通过独立目录、清单和 `internal/plugin.LoadBundled` 注册，不在通用业务与页面散落平台判断。只声明已实现能力。
+- 为平台需求增加的播放器逻辑必须扩展为 `internal/music` 和 `internal/plugin` 的通用能力，供内置及外部插件复用；按 `plugins/README.md` 维护契约和不依赖平台的回归。
 - 宿主差异使用 MyGo 已有能力或独立宿主策略，避免在通用业务中散落系统分支。
 - 页面空间紧凑；不添加无意义的说明横幅、教程或重复标题。保留必要状态、业务操作和错误反馈。
 - 本项目无 MySQL 和服务器部署任务；不照搬 SocialCrawlerHub 的数据库、服务器凭据和运维脚本。
