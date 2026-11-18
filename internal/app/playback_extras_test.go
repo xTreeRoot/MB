@@ -31,14 +31,14 @@ func TestCurrentLyricFollowsSeek(t *testing.T) {
 	}
 }
 
-// Long menu bar lyrics stay bounded without splitting a UTF-8 character.
+// The first marquee frame stays bounded without splitting a UTF-8 character.
 func TestMenuBarLineIsBounded(t *testing.T) {
 	text := strings.Repeat("中文🎵", 20)
-	got := menuBarLine(text)
-	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != 18 || !strings.HasSuffix(got, "…") {
-		t.Fatalf("invalid shortened lyric: %q", got)
+	got := menuBarLine(text, 0)
+	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != 18 {
+		t.Fatalf("invalid marquee lyric: %q", got)
 	}
-	if menuBarLine("short line") != "short line" {
+	if menuBarLine("short line", time.Hour) != "short line" {
 		t.Fatal("short lyric was changed")
 	}
 }

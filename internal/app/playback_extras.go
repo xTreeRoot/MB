@@ -7,28 +7,11 @@ import (
 	"github.com/egoist/mygo"
 )
 
-func menuBarLine(text string) string {
-	runes := []rune(text)
-	if len(runes) > 18 {
-		return string(runes[:17]) + "…"
-	}
-	return text
-}
-
 func (a *app) updateTrayLyric() {
 	if runtime.GOOS != "darwin" || a.tray == nil {
 		return
 	}
-	text, tip := "", mygo.App.Name()
-	if track := a.pl.Current(); a.settings.MenuBarLyrics && track != nil {
-		lines, _ := a.pl.Lyrics()
-		text = currentLyric(lines, a.pl.Position())
-		if text == "" {
-			text = track.Name
-		}
-		tip = text + "\n" + track.Name + " · " + track.ArtistNames()
-		text = menuBarLine(text)
-	}
+	text, tip := a.menuBarText()
 	if text != a.trayLyric {
 		a.tray.SetTitle(text)
 		a.trayLyric = text
@@ -47,8 +30,7 @@ func (a *app) syncPlaybackExtras() {
 	}
 	a.updateTrayLyric()
 	a.syncMV()
-	mvActive := a.mv.win != nil && (a.pl.Playing() || a.mv.loading || a.mv.video != nil && (!a.mv.video.Ready() || a.mv.video.Buffering()))
-	needed := mvActive || runtime.GOOS == "darwin" && a.tray != nil && a.settings.MenuBarLyrics && a.pl.Playing()
+	needed := runtime.GOOS == "darwin" && a.tray != nil && a.settings.MenuBarLyrics && a.pl.Playing()
 	if !needed || a.extrasTick {
 		return
 	}
