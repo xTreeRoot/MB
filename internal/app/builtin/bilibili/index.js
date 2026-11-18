@@ -88,7 +88,9 @@ function loginCookie(response, value) {
       values.set(cookie.slice(0, separator), cookie.slice(separator + 1));
     }
   }
-  if (value) {
+  // Like Zhuoqi, trust session cookies from the HTTPS passport response, not its navigation target.
+  const hasSession = ["SESSDATA", "DedeUserID", "bili_jct"].every((name) => values.get(name));
+  if (value && !hasSession) {
     const callback = new URL(value);
     const validCallback = callback.hostname === "www.bilibili.com" ||
       (callback.hostname === "passport.biligame.com" && callback.pathname === "/crossDomain");

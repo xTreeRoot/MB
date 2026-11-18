@@ -46,8 +46,21 @@ func (transport bundledTransport) RoundTrip(request *http.Request) (*http.Respon
 	return transport(request)
 }
 
-// The packaged strategy must accept Bilibili's biligame callback and prefer raw Set-Cookie values.
+// A complete passport session must use raw Set-Cookie values regardless of its navigation URL.
 func TestBundledBilibiliQRLogin(t *testing.T) {
+	for _, callback := range []string{
+		"https://passport.biligame.com/crossDomain",
+		"http://passport.biligame.com/crossDomain",
+		"https://passport.bilibili.com/crossDomain",
+		"",
+	} {
+		t.Run(callback, func(t *testing.T) { testBundledBilibiliQRLogin(t, callback) })
+	}
+}
+
+// Zhuoqi reads the authenticated passport response's cookies without requiring its navigation URL.
+func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
+	t.Helper()
 	transport := http.DefaultTransport
 	defer func() { http.DefaultTransport = transport }()
 	http.DefaultTransport = bundledTransport(func(request *http.Request) (*http.Response, error) {
@@ -63,9 +76,12 @@ func TestBundledBilibiliQRLogin(t *testing.T) {
 			header.Add("Set-Cookie", "SESSDATA=raw%2Ccookie; Path=/; Domain=bilibili.com; HttpOnly")
 			header.Add("Set-Cookie", "DedeUserID=123; Path=/; Domain=bilibili.com")
 			header.Add("Set-Cookie", "bili_jct=csrf; Path=/; Domain=bilibili.com")
-			callback := "https://passport.biligame.com/crossDomain?" + url.Values{
-				"SESSDATA": {"fallback-cookie"}, "DedeUserID": {"123"}, "bili_jct": {"csrf"},
-			}.Encode()
+			callback := callbackBase
+			if callback != "" {
+				callback += "?" + url.Values{
+					"SESSDATA": {"fallback-cookie"}, "DedeUserID": {"123"}, "bili_jct": {"csrf"},
+				}.Encode()
+			}
 			body = map[string]any{"code": 0, "data": map[string]any{"code": 0, "url": callback}}
 		case "/x/web-interface/nav":
 			if request.Header.Get("Cookie") != "SESSDATA=raw%2Ccookie; DedeUserID=123; bili_jct=csrf" {
