@@ -117,9 +117,13 @@ func (a *app) loadMine(lib *library) {
 		return
 	}
 	lib.mineAt = time.Now()
+	gen := lib.accountGen
 	go func() {
 		lists, err := lib.src.Playlists()
 		a.post(func() {
+			if lib.accountGen != gen {
+				return
+			}
 			if err != nil {
 				a.problem(lib, err, T("Couldn't load your playlists"))
 				return

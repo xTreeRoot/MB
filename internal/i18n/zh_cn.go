@@ -2,7 +2,9 @@ package i18n
 
 // zhCN is the app's text in Simplified Chinese, by its English.
 var zhCN = map[string]string{
-	"Video":                            "视频",
+	"Video":           "视频",
+	"Menu Bar Lyrics": "菜单栏歌词",
+	"Show the current lyric in the menu bar. Long lines are shortened; hover to read the full line.": "在菜单栏显示当前歌词。长句会截短，悬停可查看完整内容。",
 	"MV Mini Player":                   "MV 小窗",
 	"Open MV Mini Player":              "打开 MV 小窗",
 	"Music Video":                      "音乐视频",

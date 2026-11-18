@@ -372,6 +372,13 @@ func (a *app) settingsSections(c *ui.Context, p palette) []settingsSection {
 		// Only on macOS: elsewhere the icon is always in the notification
 		// area.
 		if runtime.GOOS == "darwin" {
+			row(T("Menu Bar Lyrics"), T("Show the current lyric in the menu bar. Long lines are shortened; hover to read the full line."), func() {
+				if ui.Switch(c.Key("menu-bar-lyrics"), &s.MenuBarLyrics).Label(T("Menu Bar Lyrics")).Changed() {
+					a.changed()
+					a.changeAppIcon()
+					a.syncPlaybackExtras()
+				}
+			})
 			row(T("App Icon"), T("Shown in the menu bar, it opens the window again after you close it"), func() {
 				labels := make([]string, len(appIcons))
 				at := 0

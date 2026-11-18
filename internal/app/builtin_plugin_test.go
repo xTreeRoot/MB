@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,11 +64,13 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 	t.Helper()
 	transport := http.DefaultTransport
 	defer func() { http.DefaultTransport = transport }()
+	generated, validated := 0, 0
 	http.DefaultTransport = bundledTransport(func(request *http.Request) (*http.Response, error) {
 		header := make(http.Header)
 		var body any
 		switch request.URL.Path {
 		case "/x/passport-login/web/qrcode/generate":
+			generated++
 			body = map[string]any{"code": 0, "data": map[string]any{
 				"url":        "https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=test",
 				"qrcode_key": "test",
@@ -84,6 +87,7 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 			}
 			body = map[string]any{"code": 0, "data": map[string]any{"code": 0, "url": callback}}
 		case "/x/web-interface/nav":
+			validated++
 			if request.Header.Get("Cookie") != "SESSDATA=raw%2Ccookie; DedeUserID=123; bili_jct=csrf" {
 				return nil, fmt.Errorf("login did not preserve response cookies")
 			}
@@ -97,7 +101,8 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(string(encoded))), Request: request}, nil
 	})
-	source, err := loadBundledPlatform("bilibili", filepath.Join(t.TempDir(), "bilibili"), t.TempDir())
+	directory, data := filepath.Join(t.TempDir(), "bilibili"), t.TempDir()
+	source, err := loadBundledPlatform("bilibili", directory, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +113,43 @@ func testBundledBilibiliQRLogin(t *testing.T, callbackBase string) {
 	}
 	if account.ID != "123" || account.Name != "Listener" {
 		t.Fatalf("account: %+v", account)
+	}
+	if err := source.SignOut(); err != nil {
+		t.Fatal(err)
+	}
+	source.Close()
+	path := filepath.Join(data, "bilibili", "storage.json")
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var storage struct {
+		Session struct {
+			Cookie string `json:"cookie"`
+			Active bool   `json:"active"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(stored, &storage); err != nil {
+		t.Fatal(err)
+	}
+	if storage.Session.Cookie == "" || storage.Session.Active {
+		t.Fatal("sign-out did not keep a disabled session in the software data directory")
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatal("session storage must remain readable only by the current user")
+	}
+	again, err := plugin.Load(directory, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if account, err := again.Account(); err != nil || account != nil || validated != 1 {
+		t.Fatal("a disabled session was used after restarting")
+	}
+	account, err = again.SignIn()
+	if err != nil || account == nil || account.ID != "123" || generated != 1 || validated != 2 {
+		t.Fatalf("saved cookie was not validated and reused: generated %d, validated %d, error %v", generated, validated, err)
 	}
 }
 

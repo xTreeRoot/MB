@@ -6,11 +6,16 @@ const pluginSource = await readFile(new URL("../index.js", import.meta.url), "ut
 let runtimeID = 0;
 
 /** Load the Bilibili strategy with isolated host and network stubs. */
-async function loadStrategy(fetchMock, prompts) {
+async function loadStrategy(fetchMock, prompts, storage = new Map()) {
   globalThis.host = {
     t: (message) => message,
     signInPrompt: (prompt) => prompts.push(prompt),
     crypto: { md5: () => "signature" },
+    storage: {
+      get: (key) => structuredClone(storage.get(key)),
+      set: (key, value) => storage.set(key, structuredClone(value)),
+      remove: (key) => storage.delete(key),
+    },
   };
   globalThis.fetch = fetchMock;
   globalThis.setTimeout = (callback) => {
@@ -40,6 +45,179 @@ function loginCallback() {
   });
   return `https://passport.biligame.com/crossDomain?${query}`;
 }
+
+/** Public recommendations, search and playback must remain usable before login. */
+test("guests can browse, search and play without a cookie or QR login", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  const prompts = [];
+  const video = { goto: "av", bvid: "BV1Q9YX6QEn2", title: "Public video" };
+  try {
+    const module = await loadStrategy(async (input, options) => {
+      const url = new URL(input);
+      assert.equal(options.headers.Cookie, undefined);
+      switch (url.pathname) {
+        case "/x/web-interface/nav":
+          return jsonResponse({ code: -101, data: { isLogin: false, wbi_img: {
+            img_url: `https://i.example/${"a".repeat(32)}.png`, sub_url: `https://i.example/${"b".repeat(32)}.png`,
+          } } });
+        case "/x/web-interface/wbi/index/top/feed/rcmd":
+          return jsonResponse({ code: 0, data: { item: [video] } });
+        case "/x/web-interface/wbi/search/type":
+          return jsonResponse({ code: 0, data: { result: [video], numPages: 1 } });
+        case "/x/web-interface/view":
+          return jsonResponse({ code: 0, data: { aid: 7, cid: 8 } });
+        case "/x/player/wbi/playurl":
+          return jsonResponse({ code: 0, data: { dash: {
+            audio: [{ base_url: "https://media.bilivideo.com/audio.m4a" }],
+            video: [{ base_url: "https://media.bilivideo.com/video.m4s", codecid: 7, height: 720 }],
+          } } });
+        default:
+          throw new Error(`Unexpected guest request: ${url.pathname}`);
+      }
+    }, prompts);
+    assert.equal(await module.account(), null);
+    assert.equal((await module.home()).sections[0].tracks[0].id, video.bvid);
+    assert.equal((await module.search({ query: "music", kind: "tracks", offset: 0 })).tracks[0].id, video.bvid);
+    assert.equal((await module.stream({ id: video.bvid })).url, "https://media.bilivideo.com/audio.m4a");
+    assert.equal((await module.video({ id: video.bvid })).url, "https://media.bilivideo.com/video.m4s");
+    assert.deepEqual(await module.playlists(), []);
+    await assert.rejects(module.browse({ page: "personal" }), { code: "signIn" });
+    assert.deepEqual(prompts, []);
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
+
+/** Keep a logged-out session across runtimes, then validate it before reusing it. */
+test("sign-out preserves the cookie across restarts without sending it until sign-in", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  const storage = new Map();
+  const prompts = [];
+  let generateCount = 0;
+  let validationCount = 0;
+  let guest = false;
+  const fetchMock = async (input, options) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith("/generate")) {
+      generateCount++;
+      return jsonResponse({ code: 0, data: { url: "https://account.bilibili.com/scan", qrcode_key: "key" } });
+    }
+    if (url.pathname.endsWith("/poll")) return jsonResponse({ code: 0, data: { code: 0, url: loginCallback() } });
+    if (url.pathname === "/x/web-interface/nav") {
+      if (guest) {
+        assert.equal(options.headers.Cookie, undefined);
+        return jsonResponse({ code: -101, data: { isLogin: false, wbi_img: {
+          img_url: `https://i.example/${"a".repeat(32)}.png`, sub_url: `https://i.example/${"b".repeat(32)}.png`,
+        } } });
+      }
+      validationCount++;
+      assert.match(options.headers.Cookie, /SESSDATA=session-value/);
+      return jsonResponse({ code: 0, data: { isLogin: true, mid: 123, uname: "listener" } });
+    }
+    assert.equal(url.pathname, "/x/web-interface/wbi/index/top/feed/rcmd");
+    assert.equal(options.headers.Cookie, undefined);
+    return jsonResponse({ code: 0, data: { item: [{ goto: "av", bvid: "BV1Q9YX6QEn2", title: "Public video" }] } });
+  };
+  try {
+    let module = await loadStrategy(fetchMock, prompts, storage);
+    await module.signIn();
+    const saved = storage.get("session").cookie;
+    await module.signOut();
+    assert.deepEqual(storage.get("session"), { cookie: saved, active: false });
+    assert.equal(await module.account(), null);
+    guest = true;
+    module = await loadStrategy(fetchMock, prompts, storage);
+    assert.equal(await module.account(), null);
+    assert.deepEqual(await module.playlists(), []);
+    assert.deepEqual(await module.isLiked({ ids: ["BV1Q9YX6QEn2"] }), {});
+    const home = await module.home();
+    assert.equal(home.sections[0].tracks[0].name, "Public video");
+    assert.equal(storage.get("session").cookie, saved);
+    assert.equal(storage.get("session").active, false);
+    guest = false;
+    assert.equal((await module.signIn()).id, "123");
+    assert.equal(storage.get("session").active, true);
+    assert.equal(generateCount, 1, "a valid saved cookie must not open another QR login");
+    assert.equal(validationCount, 2);
+    module = await loadStrategy(fetchMock, prompts, storage);
+    assert.equal((await module.account()).id, "123");
+    assert.equal(validationCount, 3, "an active session must be validated after restart");
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
+
+/** Expired saved cookies fall back to scanning and are replaced only after validation. */
+test("expired saved cookies fall back to QR login", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  try {
+    for (const expired of [{ code: -101, data: {} }, { code: 0, data: { isLogin: false } }]) {
+      const storage = new Map([["session", { cookie: "SESSDATA=expired", active: false }]]);
+      let validations = 0;
+      const module = await loadStrategy(async (input, options) => {
+        const url = new URL(input);
+        if (url.pathname === "/x/web-interface/nav") {
+          validations++;
+          if (options.headers.Cookie === "SESSDATA=expired") return jsonResponse(expired);
+          assert.match(options.headers.Cookie, /SESSDATA=session-value/);
+          return jsonResponse({ code: 0, data: { isLogin: true, mid: 123 } });
+        }
+        if (url.pathname.endsWith("/generate")) {
+          assert.equal(storage.has("session"), false);
+          return jsonResponse({ code: 0, data: { url: "https://account.bilibili.com/scan", qrcode_key: "key" } });
+        }
+        assert.ok(url.pathname.endsWith("/poll"));
+        return jsonResponse({ code: 0, data: { code: 0, url: loginCallback() } });
+      }, [], storage);
+      assert.equal((await module.signIn()).id, "123");
+      assert.equal(validations, 2);
+      assert.match(storage.get("session").cookie, /SESSDATA=session-value/);
+      assert.equal(storage.get("session").active, true);
+    }
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
+
+/** A temporary network failure must not erase a reusable saved session or demand a scan. */
+test("failed cookie validation keeps the saved session for a later retry", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  const saved = { cookie: "SESSDATA=saved", active: false };
+  const storage = new Map([["session", saved]]);
+  try {
+    const module = await loadStrategy(async (input) => {
+      assert.equal(new URL(input).pathname, "/x/web-interface/nav");
+      throw new Error("offline");
+    }, [], storage);
+    await assert.rejects(module.signIn(), /offline/);
+    assert.deepEqual(storage.get("session"), saved);
+    assert.equal(await module.account(), null);
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
+
+/** Cancelling a saved-cookie check must not activate its late successful response. */
+test("cancelled cookie reuse cannot silently sign in", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  const saved = { cookie: "SESSDATA=saved", active: false };
+  const storage = new Map([["session", saved]]);
+  let finish;
+  try {
+    const module = await loadStrategy(async (input) => {
+      assert.equal(new URL(input).pathname, "/x/web-interface/nav");
+      return new Promise((resolve) => { finish = resolve; });
+    }, [], storage);
+    const signingIn = module.signIn();
+    await module.signOut();
+    finish(jsonResponse({ code: 0, data: { isLogin: true, mid: 123 } }));
+    await assert.rejects(signingIn);
+    assert.equal(await module.account(), null);
+    assert.deepEqual(storage.get("session"), saved);
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
 
 /** Verify scanning, confirmation and successful session validation in order. */
 test("QR sign-in reports scan states and validates the returned account", async () => {

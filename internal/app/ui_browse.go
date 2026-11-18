@@ -40,9 +40,13 @@ func (a *app) loadBrowse(lib *library, page string, again bool) {
 		return
 	}
 	d.loading, d.err = true, ""
+	gen := lib.accountGen
 	go func() {
 		b, err := answered(lib.src.Browse(page))
 		a.post(func() {
+			if lib.accountGen != gen {
+				return
+			}
 			d.loading = false
 			if err != nil {
 				d.err = a.problem(lib, err, T("Couldn't load this page"))

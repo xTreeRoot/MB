@@ -177,7 +177,8 @@ function randomDmToken() {
 
 class BilibiliPlatformStrategy {
   id = "bilibili";
-  cookie = "";
+  session = object(host.storage.get("session"));
+  cookie = this.session.active === true ? text(this.session.cookie) : "";
   accountSnapshot = null;
   wbiKey = "";
   details = new Map();
@@ -190,13 +191,12 @@ class BilibiliPlatformStrategy {
     return { ...requestHeaders(), ...(this.cookie ? { Cookie: this.cookie } : {}) };
   }
 
-  async response(response, label, allowSignedOut = false) {
+  async response(response, label, allowSignedOut = false, cookie = this.cookie) {
     if (!response.ok) throw new Error(`Bilibili ${label} returned HTTP ${response.status}.`);
     const result = await response.json();
     if (allowSignedOut && result.code === -101) return object(result.data);
     if (result.code === -101) {
-      this.cookie = "";
-      this.accountSnapshot = null;
+      this.forgetSession(cookie);
       throw signedOut();
     }
     if (result.code !== 0) {
@@ -209,6 +209,7 @@ class BilibiliPlatformStrategy {
     const query = options.wbi
       ? wbiQuery(params, await this.getWbiKey())
       : new URLSearchParams(params).toString();
+    const cookie = this.cookie;
     const response = await fetch(`${apiOrigin}${path}${query ? `?${query}` : ""}`, {
       method: options.body ? "POST" : "GET",
       headers: {
@@ -217,7 +218,7 @@ class BilibiliPlatformStrategy {
       },
       body: options.body,
     });
-    return this.response(response, path, options.allowSignedOut === true);
+    return this.response(response, path, options.allowSignedOut === true, cookie);
   }
 
   async getWbiKey() {
@@ -232,21 +233,46 @@ class BilibiliPlatformStrategy {
     return this.wbiKey;
   }
 
-  async accountInfo() {
-    if (!this.cookie) return null;
-    const data = await this.request("/x/web-interface/nav");
+  // Validate a candidate without enabling it for unrelated requests.
+  async checkCookie(cookie, signal) {
+    const response = await fetch(`${apiOrigin}/x/web-interface/nav`, {
+      headers: { ...requestHeaders(), Cookie: cookie }, signal,
+    });
+    const data = await this.response(response, "/x/web-interface/nav", true);
     if (data.isLogin !== true || !text(data.mid)) {
-      this.cookie = "";
-      this.accountSnapshot = null;
       return null;
     }
-    this.accountSnapshot = {
+    return {
       id: text(data.mid),
       name: text(data.uname) || text(data.mid),
       imageUrl: text(data.face),
       page: "personal",
     };
-    return this.accountSnapshot;
+  }
+
+  async accountInfo() {
+    const cookie = this.cookie;
+    if (!cookie) return null;
+    const account = await this.checkCookie(cookie);
+    if (this.cookie !== cookie) return null;
+    if (!account) this.forgetSession(cookie);
+    this.accountSnapshot = account;
+    return account;
+  }
+
+  rememberSession(cookie, active) {
+    const session = { cookie, active };
+    host.storage.set("session", session);
+    this.session = session;
+  }
+
+  // Only a confirmed expired session is removed; network failures keep it.
+  forgetSession(cookie) {
+    if (this.cookie === cookie) this.resetAccount();
+    if (text(this.session.cookie) === cookie) {
+      host.storage.remove("session");
+      this.session = {};
+    }
   }
 
   async requireAccount() {
@@ -256,11 +282,24 @@ class BilibiliPlatformStrategy {
   }
 
   async signIn() {
-    this.signOut();
+    this.cancelSignIn();
+    this.resetAccount();
     const attempt = new AbortController();
     this.loginAttempt = attempt;
     try {
-      return await this.scanLogin(attempt.signal);
+      const signal = attempt.signal;
+      let cookie = text(this.session.cookie);
+      let account = cookie ? await this.checkCookie(cookie, signal) : null;
+      signal.throwIfAborted();
+      if (!account) {
+        if (cookie) this.forgetSession(cookie);
+        ({ cookie, account } = await this.scanLogin(signal));
+      }
+      signal.throwIfAborted();
+      this.rememberSession(cookie, true);
+      this.cookie = cookie;
+      this.accountSnapshot = account;
+      return account;
     } finally {
       if (this.loginAttempt === attempt) this.loginAttempt = null;
     }
@@ -308,17 +347,11 @@ class BilibiliPlatformStrategy {
           showStatus(86038, "The QR code expired. Scan the new code with the Bilibili app.");
           break;
         case 0:
-          this.cookie = loginCookie(response, text(data.url));
-          this.accountSnapshot = null;
-          this.wbiKey = "";
-          const account = await this.accountInfo();
-          if (signal.aborted) {
-            this.cookie = "";
-            this.accountSnapshot = null;
-            signal.throwIfAborted();
-          }
+          const cookie = loginCookie(response, text(data.url));
+          const account = await this.checkCookie(cookie, signal);
+          signal.throwIfAborted();
           if (!account) throw signedOut();
-          return account;
+          return { cookie, account };
         default:
           throw new Error(`Bilibili QR login: ${text(data.message) || "unknown login status."}`);
       }
@@ -342,6 +375,11 @@ class BilibiliPlatformStrategy {
 
   signOut() {
     this.cancelSignIn();
+    this.resetAccount();
+    this.rememberSession(text(this.session.cookie), false);
+  }
+
+  resetAccount() {
     this.cookie = "";
     this.accountSnapshot = null;
     this.wbiKey = "";
@@ -377,7 +415,6 @@ class BilibiliPlatformStrategy {
   }
 
   async home() {
-    const account = await this.requireAccount();
     const data = await this.request(
       "/x/web-interface/wbi/index/top/feed/rcmd",
       {},
@@ -394,7 +431,7 @@ class BilibiliPlatformStrategy {
         tracks,
         empty: host.t("Recommended videos"),
       }],
-      imageUrl: account.imageUrl,
+      imageUrl: this.accountSnapshot?.imageUrl ?? "",
     };
   }
 
@@ -439,7 +476,8 @@ class BilibiliPlatformStrategy {
   }
 
   async playlists() {
-    const account = await this.requireAccount();
+    const account = await this.accountInfo();
+    if (!account) return [];
     const data = await this.request("/x/v3/fav/folder/created/list-all", { up_mid: account.id });
     if (!Array.isArray(data.list) && number(data.count) !== 0) {
       throw new Error("Bilibili did not return the account's favorite folders.");
@@ -800,6 +838,7 @@ class BilibiliPlatformStrategy {
 
   async isLiked({ ids }) {
     const out = {};
+    if (!this.cookie) return out;
     for (const id of array(ids).slice(0, 40)) {
       const bvid = bvidOf(id);
       if (!bvid) continue;

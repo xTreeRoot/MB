@@ -454,6 +454,7 @@ const homeFresh = time.Hour
 func (a *app) loadHome(lib *library) {
 	lib.homeLoading, lib.homeErr = true, ""
 	at := time.Now()
+	gen := lib.accountGen
 	go func() {
 		var home *music.Browse
 		var recent []music.Track
@@ -468,6 +469,9 @@ func (a *app) loadHome(lib *library) {
 			}
 		}
 		a.post(func() {
+			if lib.accountGen != gen {
+				return
+			}
 			lib.homeLoading = false
 			lib.home, lib.recent = home, recent
 			lib.homeAt = at

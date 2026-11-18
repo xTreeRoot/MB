@@ -52,10 +52,14 @@ func (a *app) loadAccount(lib *library) {
 		return
 	}
 	lib.accountBusy = true
+	gen := lib.accountGen
 	go func() {
 		acc, err := lib.src.Account()
 		a.post(func() {
 			lib.accountBusy = false
+			if lib.accountGen != gen {
+				return
+			}
 			first := !lib.accountAsked
 			lib.accountAsked = true
 			if err != nil {
@@ -133,6 +137,7 @@ func (a *app) startSignIn() {
 		return
 	}
 	d.waiting, d.err, d.last = true, "", d.err
+	accountGen := lib.accountGen
 	d.prompt, d.qr = music.SignInPrompt{}, nil
 	d.asked = time.Time{}
 	gen := d.gen
@@ -155,6 +160,9 @@ func (a *app) startSignIn() {
 	go func() {
 		acc, err := lib.src.SignIn()
 		a.post(func() {
+			if lib.accountGen != accountGen {
+				return
+			}
 			current := a.signIn.gen == gen
 			if current {
 				a.signIn.waiting = false
@@ -174,6 +182,7 @@ func (a *app) startSignIn() {
 			if current {
 				a.signIn.open = false
 			}
+			lib.accountGen++
 			lib.account = acc
 			a.afterAccount(lib)
 			// Signed in to another source from the settings: that's the one they're
@@ -202,12 +211,30 @@ func (a *app) signInPrompted(prompt music.SignInPrompt) {
 
 // signOut signs out of a source.
 func (a *app) signOut(lib *library) {
+	if a.signIn.lib == lib {
+		a.cancelSignIn()
+	}
+	lib.accountGen++
+	gen := lib.accountGen
 	lib.account = nil
-	a.afterAccount(lib)
+	lib.accountAsked = true
+	lib.mine, lib.saved = nil, nil
+	lib.forget()
 	go func() {
-		if err := lib.src.SignOut(); err != nil {
-			a.post(func() { a.actionFailed(lib, err, T("Couldn't sign out")) })
-		}
+		err := lib.src.SignOut()
+		a.post(func() {
+			if lib.accountGen != gen {
+				return
+			}
+			if err != nil {
+				a.actionFailed(lib, err, T("Couldn't sign out"))
+				return
+			}
+			if a.library == lib {
+				a.open(route{page: pageHome, src: lib.id})
+			}
+			a.afterAccount(lib)
+		})
 	}()
 }
 

@@ -36,7 +36,7 @@ var appIcons = []struct{ id, label string }{
 // showsTray tells whether the app's icon shows in the menu bar or the
 // notification area.
 func showsTray(s settings) bool {
-	return runtime.GOOS != "darwin" || s.AppIcon != "dock"
+	return runtime.GOOS != "darwin" || s.AppIcon != "dock" || s.MenuBarLyrics
 }
 
 // activationPolicy is macOS's for the settings: no Dock icon for the menu
@@ -49,9 +49,12 @@ func activationPolicy(s settings, windowOpen bool) mygo.ActivationPolicy {
 	return mygo.ActivationPolicyRegular
 }
 
-// windowOpen tells whether the main window or the settings window is
-// open: shown or minimized, as the notch player doesn't count.
+// windowOpen counts ordinary app windows, including the MV player, but not
+// the notch player.
 func (a *app) windowOpen() bool {
+	if a.mv.win != nil {
+		return true
+	}
 	if a.settingsWin != nil {
 		return true
 	}
@@ -71,6 +74,7 @@ func (a *app) syncDock() {
 func (a *app) changeAppIcon() {
 	a.syncDock()
 	a.applyTray()
+	a.refreshTray()
 }
 
 // applyTray adds or removes the icon in the menu bar or notification area,
@@ -90,6 +94,8 @@ func (a *app) applyTray() {
 		// Windows' left click, where the right one opens the menu.
 		t.OnClick(a.showMain)
 		a.tray = t
+		a.trayLyric, a.trayTip = "", ""
+		a.syncPlaybackExtras()
 	case !show && a.tray != nil:
 		a.tray.Destroy()
 		a.tray = nil
@@ -100,6 +106,7 @@ func (a *app) applyTray() {
 func (a *app) refreshTray() {
 	if a.tray != nil {
 		a.tray.SetMenu(a.trayMenu())
+		a.updateTrayLyric()
 	}
 }
 
@@ -120,7 +127,7 @@ func (a *app) trayMenu() *mygo.Menu {
 		}
 	}
 	name := mygo.App.Name()
-	return mygo.NewMenu([]*mygo.MenuItem{
+	items := []*mygo.MenuItem{
 		{Label: Tf("Open %s", name), Click: run(a.showMain)},
 		mygo.Separator(),
 		{Label: T("Play/Pause"), Click: run(func() { a.pl.TogglePlay() })},
@@ -128,9 +135,21 @@ func (a *app) trayMenu() *mygo.Menu {
 		{Label: T("Previous"), Click: run(func() { a.pl.Prev() })},
 		{Label: T("Like/Unlike"), Click: run(a.likeCurrent)},
 		mygo.Separator(),
-		{Label: T("Settings…"), Click: run(front(a.openSettings))},
-		{Label: T("Check for Updates…"), Click: run(front(checkForUpdates))},
+	}
+	if runtime.GOOS == "darwin" {
+		items = append(items, &mygo.MenuItem{Label: T("Menu Bar Lyrics"), Type: mygo.MenuItemCheckbox, Checked: a.settings.MenuBarLyrics,
+			Click: func(item *mygo.MenuItem, _ *mygo.Window) {
+				a.settings.MenuBarLyrics = item.IsChecked()
+				a.changed()
+				a.changeAppIcon()
+				a.syncPlaybackExtras()
+			}})
+	}
+	items = append(items,
+		&mygo.MenuItem{Label: T("Settings…"), Click: run(front(a.openSettings))},
+		&mygo.MenuItem{Label: T("Check for Updates…"), Click: run(front(checkForUpdates))},
 		mygo.Separator(),
-		{Label: Tf("Quit %s", name), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
-	})
+		&mygo.MenuItem{Label: Tf("Quit %s", name), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
+	)
+	return mygo.NewMenu(items)
 }

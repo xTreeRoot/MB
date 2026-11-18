@@ -786,6 +786,7 @@ func (p *Player) loadLyrics(gen int, src music.Source, t music.Track) {
 			if gen == p.gen {
 				p.lyrics = lines
 				p.lyricsLoaded = true
+				p.sync()
 			}
 		})
 	}()

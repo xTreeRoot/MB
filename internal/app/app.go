@@ -53,13 +53,16 @@ type route struct {
 // app is the state both windows show. Everything in it is read and changed
 // on the main thread: by the views, and by goroutines through post.
 type app struct {
-	win   *mygo.Window
-	notch *notch
-	tray  *mygo.Tray // the icon in the menu bar or notification area, while it shows
-	art   *artCache
-	pl    *player.Player
-	pal   palette
-	mv    mvState
+	win        *mygo.Window
+	notch      *notch
+	tray       *mygo.Tray // the icon in the menu bar or notification area, while it shows
+	art        *artCache
+	pl         *player.Player
+	pal        palette
+	mv         mvState
+	extrasTick bool
+	trayLyric  string
+	trayTip    string
 
 	// libs are the sources, the built-in one first, and what the app has of
 	// each. The active one's is embedded: a.mine is what the active source
@@ -364,7 +367,7 @@ func Run() error {
 		a.pl.Changed = func() {
 			a.keepSession()
 			a.syncCaptions()
-			a.syncMV()
+			a.syncPlaybackExtras()
 		}
 		a.volume = a.settings.Volume
 		a.pl.SetVolume(a.volume)
