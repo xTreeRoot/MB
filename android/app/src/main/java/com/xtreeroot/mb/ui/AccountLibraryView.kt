@@ -1,0 +1,60 @@
+package com.xtreeroot.mb.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.xtreeroot.mb.music.LibraryRoute
+import com.xtreeroot.mb.music.Track
+
+@Composable
+internal fun LibraryRoute.title(): String = when (this) {
+    LibraryRoute.Favorites -> mb("收藏夹", "Collections")
+    LibraryRoute.Liked -> mb("点赞的视频", "Liked Videos")
+    LibraryRoute.History -> mb("观看历史", "Watch History")
+    LibraryRoute.Following -> mb("我的关注", "Following")
+    is LibraryRoute.Folder -> mb("收藏夹内容", "Collection")
+    is LibraryRoute.Creator -> mb("UP 主投稿", "Creator Uploads")
+}
+
+@Composable
+internal fun AccountLibraryView(model: LibraryPages, connected: Boolean, open: (LibraryRoute) -> Unit,
+                                play: (List<Track>, Track) -> Unit) {
+    val state by model.state.collectAsStateWithLifecycle()
+    val page = state.value
+    val refreshing = state.loading && !state.appending && (page.tracks.isNotEmpty() || page.links.isNotEmpty())
+    RefreshableList(refreshing = refreshing, refresh = model::refresh) {
+        state.error?.takeUnless { state.retryingAppend }?.let { item { Retry(it, model::retry) } }
+        items(page.links, key = { "link:${it.id}" }) { link ->
+            ListItem(headlineContent = { Text(link.title) }, supportingContent = { Text(link.subtitle) },
+                leadingContent = {
+                    AsyncImage(link.imageUrl, contentDescription = null,
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                }, modifier = Modifier.clickable { open(link.route) })
+        }
+        if (page.tracks.isNotEmpty()) item {
+            Button(enabled = connected, onClick = { play(page.tracks, page.tracks.first()) },
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { Text(mb("播放全部", "Play All")) }
+        }
+        items(page.tracks, key = Track::id) { track -> TrackRow(track, connected) { play(page.tracks, track) } }
+        when {
+            state.loading -> if (!refreshing) item { Loading() }
+            state.error != null -> if (state.retryingAppend) item { Retry(checkNotNull(state.error), model::retry) }
+            page.nextCursor != null -> item { TextButton(onClick = model::loadMore) { Text(mb("加载更多", "Load More")) } }
+            page.tracks.isEmpty() && page.links.isEmpty() -> item { EmptyMessage(mb("暂无内容", "No Content")) }
+        }
+    }
+}

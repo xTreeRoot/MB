@@ -1,0 +1,236 @@
+package com.xtreeroot.mb.plugin
+
+import com.xtreeroot.mb.local.parseLrc
+import com.xtreeroot.mb.music.AccountSource
+import com.xtreeroot.mb.music.AudioQuality
+import com.xtreeroot.mb.music.CaptionLine
+import com.xtreeroot.mb.music.CaptionWord
+import com.xtreeroot.mb.music.CommentPage
+import com.xtreeroot.mb.music.InteractionCapabilities
+import com.xtreeroot.mb.music.InteractionSource
+import com.xtreeroot.mb.music.MediaResource
+import com.xtreeroot.mb.music.PlaybackIssue
+import com.xtreeroot.mb.music.PlaybackIssueException
+import com.xtreeroot.mb.music.TrackUnavailableReason
+import com.xtreeroot.mb.music.PlaybackRecorder
+import com.xtreeroot.mb.music.StationPlaybackSource
+import com.xtreeroot.mb.music.SuggestionSource
+import com.xtreeroot.mb.music.PlaybackSource
+import com.xtreeroot.mb.music.SignInPrompt
+import com.xtreeroot.mb.music.SourceAccount
+import com.xtreeroot.mb.music.Track
+import com.xtreeroot.mb.music.TrackComment
+import com.xtreeroot.mb.music.TrackPage
+import com.xtreeroot.mb.music.VideoSource
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
+import org.json.JSONObject
+
+internal class PluginSource(
+    val manifest: PluginManifest,
+    private val runtime: PluginRuntime,
+) : PlaybackSource, VideoSource, AccountSource, InteractionSource, PlaybackRecorder, StationPlaybackSource, SuggestionSource {
+    override val id: String get() = manifest.id
+    val catalog = PluginCatalog(manifest, runtime, ::tracks, ::image)
+    private val searchLock = Mutex()
+    private var searchTerm = ""
+    private val offsets = mutableMapOf<Int, Int>()
+
+    override suspend fun suggestions(query: String): List<String> {
+        if (!runtime.supports("suggest")) return emptyList()
+        val rows = runtime.invoke("suggest", JSONObject().put("query", query)) as? JSONArray ?: return emptyList()
+        return (0 until rows.length()).mapNotNull { rows.opt(it) as? String }
+    }
+
+    override suspend fun search(query: String, page: Int): TrackPage = searchLock.withLock {
+        val term = query.trim()
+        if (term.isEmpty()) return TrackPage(emptyList(), false)
+        if (page == 1) {
+            searchTerm = term
+            offsets.clear()
+            offsets[1] = 0
+        }
+        val offset = offsets[page]?.takeIf { term == searchTerm } ?: throw PluginException("Search page has no previous cursor")
+        val result = runtime.invoke("search", JSONObject().put("query", term).put("kind", "tracks").put("offset", offset)) as? JSONObject
+            ?: throw PluginException("Invalid plugin search response")
+        val values = result.optJSONArray("tracks") ?: JSONArray()
+        val tracks = tracks(values)
+        offsets[page + 1] = offset + values.length()
+        TrackPage(tracks, result.optBoolean("more") && tracks.isNotEmpty())
+    }
+
+    override suspend fun audio(trackId: String): MediaResource = media("stream", JSONObject().put("id", trackId).put("quality", ""))
+
+    override suspend fun audio(trackId: String, quality: AudioQuality): MediaResource =
+        media("stream", JSONObject().put("id", trackId).put("quality", quality.name.lowercase()))
+
+    override suspend fun video(trackId: String): MediaResource = media("video", JSONObject().put("id", trackId).put("quality", ""))
+
+    override suspend fun video(trackId: String, quality: AudioQuality): MediaResource =
+        media("video", JSONObject().put("id", trackId).put("quality", quality.name.lowercase()))
+
+    override suspend fun supportsVideo(): Boolean = runtime.supports("video")
+
+    override suspend fun supportsSignIn(): Boolean = runtime.supports("signIn")
+    override suspend fun supportsSignOut(): Boolean = runtime.supports("signOut")
+
+    override suspend fun account(): SourceAccount? {
+        if (!runtime.supports("account")) return null
+        return account(runtime.invoke("account"))
+    }
+
+    override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit): SourceAccount = coroutineScope {
+        val prompts = Channel<PluginPrompt>(Channel.CONFLATED)
+        val observer = launch {
+            for (item in prompts) prompt(SignInPrompt(item.qrUrl, message = item.message))
+        }
+        try { account(runtime.signIn { prompts.trySend(it) }) ?: throw PluginException("Sign-in returned no account") }
+        finally { observer.cancel(); prompts.cancel() }
+    }
+
+    override suspend fun signOut() { runtime.invoke("signOut") }
+
+    override suspend fun interactionCapabilities() = InteractionCapabilities(
+        likes = runtime.supports("like"), comments = runtime.supports("comments"),
+        posting = runtime.supports("postComment"), commentLikes = runtime.supports("likeComment"),
+    )
+
+    override suspend fun isLiked(trackId: String): Boolean {
+        if (!runtime.supports("isLiked")) return false
+        val value = runtime.invoke("isLiked", JSONObject().put("ids", JSONArray(listOf(trackId)))) as? JSONObject
+        return value?.opt(trackId) == true
+    }
+
+    override suspend fun like(trackId: String, enabled: Boolean) {
+        runtime.invoke("like", JSONObject().put("id", trackId).put("on", enabled))
+    }
+
+    override suspend fun comments(trackId: String, cursor: Int?): CommentPage {
+        val offset = cursor ?: 0
+        val args = JSONObject().put("trackId", trackId).put("offset", offset)
+        val value = runtime.invoke("comments", args) as? JSONObject ?: throw PluginException("Invalid comments response")
+        val raw = value.optJSONArray("comments") ?: JSONArray()
+        val comments = (0 until raw.length()).mapNotNull { raw.optJSONObject(it)?.let(::comment) }
+        val next = (offset + raw.length()).takeIf { raw.length() > 0 && it > offset && value.opt("more") == true }
+        return CommentPage(comments, value.optInt("total").coerceAtLeast(0), next)
+    }
+
+    override suspend fun postComment(trackId: String, text: String): TrackComment {
+        val value = runtime.invoke("postComment", JSONObject().put("trackId", trackId).put("text", text))
+        return (value as? JSONObject)?.let(::comment) ?: throw PluginException("Invalid comment response")
+    }
+
+    override suspend fun likeComment(trackId: String, commentId: String, enabled: Boolean) {
+        runtime.invoke("likeComment", JSONObject().put("trackId", trackId).put("commentId", commentId).put("on", enabled))
+    }
+
+    override suspend fun played(trackId: String) {
+        if (runtime.supports("played")) runtime.invoke("played", JSONObject().put("id", trackId))
+    }
+
+    override suspend fun stationNext(id: String): List<Track> {
+        val rows = runtime.invoke("stationNext", JSONObject().put("id", id)) as? JSONArray
+            ?: throw PluginException("Invalid station response")
+        return tracks(rows)
+    }
+
+    private fun comment(value: JSONObject): TrackComment? {
+        val id = (value.opt("id") as? String)?.takeIf(String::isNotBlank) ?: return null
+        val text = value.opt("text") as? String ?: return null
+        return TrackComment(id, (value.opt("author") as? String).orEmpty(), value.opt("avatarUrl") as? String,
+            text, value.optInt("likes").coerceAtLeast(0), value.optLong("time"), value.opt("liked") == true)
+    }
+
+    private suspend fun account(result: Any): SourceAccount? {
+        val value = result as? JSONObject ?: return null
+        val id = value.opt("id") as? String ?: return null
+        val name = value.opt("name") as? String ?: return null
+        val avatar = image(value.opt("imageUrl") as? String)
+        return SourceAccount(id, name, avatar?.url, value.opt("page") as? String, avatar?.headers.orEmpty())
+    }
+
+    override suspend fun captions(trackId: String): List<CaptionLine> {
+        if (!runtime.supports("lyrics")) return emptyList()
+        val value = runtime.invoke("lyrics", JSONObject().put("id", trackId)) as? JSONObject
+            ?: throw PluginException("Invalid plugin lyrics response")
+        val lines = value.optJSONArray("lines")
+        if (lines != null && lines.length() > 0) return captionLines(lines)
+        return parseLrc(value.optString("lrc"), value.optString("translation"))
+    }
+
+    suspend fun close() = runtime.close()
+
+    suspend fun configure(settings: Map<String, String>, language: String) = runtime.configure(settings, language)
+
+    private suspend fun media(method: String, arguments: JSONObject): MediaResource {
+        val result = if (method == "stream") runtime.stream(arguments) else runtime.invoke(method, arguments)
+        if (method == "stream" && (result === JSONObject.NULL || result is JSONObject &&
+                (result.isNull("url") || (result.opt("url") as? String)?.isBlank() == true))) {
+            throw PlaybackIssueException(PlaybackIssue.SourceUnavailable, "Plugin returned no audio stream")
+        }
+        val value = result as? JSONObject ?: throw PluginException("Invalid plugin media response")
+        val address = value.optString("url")
+        val parsed = uri(address)
+        if (!parsed.isHttp()) throw PluginException("Invalid plugin media URL")
+        val headers = runtime.headersFor(parsed, "audio").toMutableMap()
+        val extra = value.optJSONObject("headers")
+        extra?.keys()?.forEach { name ->
+            val text = extra.opt(name) as? String ?: throw PluginException("Invalid plugin media header")
+            if (!allowedPluginHeader(name) || text.any { it == '\r' || it == '\n' }) throw PluginException("Invalid plugin media header")
+            headers.keys.removeAll { it.equals(name, true) }
+            headers[name] = text
+        }
+        val defaultExtension = if (method == "video") "mp4" else "m4a"
+        val extension = value.optString("type", defaultExtension).lowercase().takeIf { it.matches(Regex("[a-z0-9]{1,8}")) } ?: defaultExtension
+        return MediaResource(parsed.toASCIIString(), headers, extension)
+    }
+
+    private suspend fun tracks(values: JSONArray): List<Track> =
+        (0 until values.length()).mapNotNull { index -> values.optJSONObject(index)?.let { track(it) } }
+
+    private suspend fun image(address: String?): PluginImage? {
+        val url = address?.let { runCatching { uri(it) }.getOrNull() }?.takeIf { it.isHttp() } ?: return null
+        return PluginImage(url.toASCIIString(), runtime.headersFor(url, "image"))
+    }
+
+    private suspend fun track(value: JSONObject): Track? {
+        val id = (value.opt("id") as? String)?.takeIf(String::isNotBlank) ?: return null
+        val title = (value.opt("name") as? String)?.takeIf(String::isNotBlank) ?: return null
+        val artists = value.optJSONArray("artists") ?: JSONArray()
+        val artist = (0 until artists.length()).mapNotNull { artists.optJSONObject(it)?.optString("name")?.takeIf(String::isNotBlank) }
+            .joinToString(", ")
+        val album = value.optJSONObject("album")
+        val image = image(album?.opt("imageUrl") as? String)
+        val page = value.opt("url") as? String
+        val artistId = artists.optJSONObject(0)?.opt("id") as? String
+        return Track(sourceId = manifest.id, sourceTrackId = id, title = title, artist = artist,
+            artworkUrl = image?.url, durationMs = value.optLong("duration").coerceAtLeast(0), pageUrl = page,
+            artistId = artistId, artworkHeaders = image?.headers.orEmpty(),
+            unavailable = value.optBoolean("unavailable"),
+            unavailableReason = TrackUnavailableReason.fromCode(value.optString("unavailableReason")))
+    }
+
+    private fun captionLines(values: JSONArray): List<CaptionLine> {
+        val ordered = (0 until values.length()).mapNotNull { values.optJSONObject(it) }
+            .filter { it.optLong("start", -1) >= 0 }.sortedBy { it.optLong("start") }
+        return ordered.mapIndexedNotNull { index, line ->
+            val start = line.optLong("start")
+            val nextStart = ordered.getOrNull(index + 1)?.optLong("start") ?: start + 6_000
+            val end = line.optLong("end").takeIf { it > start } ?: minOf(start + 6_000, nextStart)
+            val words = line.optJSONArray("words")?.let { list -> (0 until list.length()).mapNotNull { wordIndex ->
+                val word = list.optJSONObject(wordIndex) ?: return@mapNotNull null
+                val from = word.optLong("start", -1)
+                val to = word.optLong("end", -1)
+                val text = word.optString("text").takeIf(String::isNotEmpty) ?: return@mapNotNull null
+                if (from < 0 || to < from) null else CaptionWord(from, to, text)
+            } }.orEmpty()
+            val text = line.optString("text").trim().ifEmpty { words.joinToString("") { it.text }.trim() }
+            if (text.isEmpty()) null else CaptionLine(start, maxOf(start, end), text,
+                line.optString("translation").takeIf(String::isNotBlank), words)
+        }
+    }
+}
