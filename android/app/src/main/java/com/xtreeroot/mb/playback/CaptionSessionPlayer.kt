@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.playback
 
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.ForwardingSimpleBasePlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -27,6 +28,7 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
     }
 
     override fun handleSetMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
+        if (mediaItems.singleOrNull()?.mediaId == resumeMediaId) return Futures.immediateVoidFuture()
         if (stations?.station != null) stations.set(null)
         val selected = mediaItems.getOrNull(startIndex)?.station()
         val clean = if (selected == null) mediaItems else mediaItems.mapIndexed { index, item ->
@@ -52,10 +54,23 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
     }
 
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
-        if ((seekCommand == Player.COMMAND_SEEK_TO_NEXT || seekCommand == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) &&
-            stations?.next() == true) return Futures.immediateVoidFuture()
-        return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+        val forward = when (seekCommand) {
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> true
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> false
+            else -> return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+        }
+        if (!audio.isPlayingAd && !(forward && stations?.next() == true)) {
+            val target = audio.manualNeighbor(forward)
+            if (target != C.INDEX_UNSET) {
+                audio.seekToDefaultPosition(target)
+                if (audio.playbackState == Player.STATE_IDLE) audio.prepare()
+                return handleSetPlayWhenReady(true)
+            }
+        }
+        return Futures.immediateVoidFuture()
     }
+
+    fun stationChanged() = invalidateState()
 
     override fun handlePrepare(): ListenableFuture<*> {
         if (player.playerError != null) retryPlayback()
@@ -74,6 +89,17 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
     override fun getState(): State {
         val original = super.getState()
         val builder = original.buildUpon()
+        val queueSize = if (audio.isPlayingAd) 0 else audio.mediaItemCount
+        val commands = original.availableCommands.buildUpon().removeAll(
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+        ).apply {
+            if (queueSize > 1 || (queueSize == 1 && stations?.station != null)) {
+                addAll(Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+            }
+            if (queueSize > 1) addAll(Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+        }
+        builder.setAvailableCommands(commands.build())
         video.heldIntent?.let { intent ->
             builder.setPlayWhenReady(intent, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             if (player.playbackState == Player.STATE_READY) builder.setPlaybackState(Player.STATE_BUFFERING)
@@ -88,6 +114,13 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
         }
         return builder.build()
     }
+}
+
+internal fun Player.manualNeighbor(forward: Boolean): Int {
+    val timeline = currentTimeline
+    if (timeline.isEmpty) return C.INDEX_UNSET
+    return if (forward) timeline.getNextWindowIndex(currentMediaItemIndex, Player.REPEAT_MODE_ALL, shuffleModeEnabled)
+    else timeline.getPreviousWindowIndex(currentMediaItemIndex, Player.REPEAT_MODE_ALL, shuffleModeEnabled)
 }
 
 private val captionWhitespace = Regex("[\\p{Z}\\s]+")

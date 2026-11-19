@@ -43,13 +43,14 @@ internal fun Track.mediaItem(): MediaItem = MediaItem.Builder()
         .build())
     .build()
 
-internal fun MediaItem.track(): Track? {
-    val metadata = mediaMetadata
-    val extras = metadata.extras ?: return null
+internal fun MediaItem.track(): Track? = mediaMetadata.track()
+
+internal fun MediaMetadata.track(): Track? {
+    val extras = extras ?: return null
     val source = extras.getString("mb.source") ?: return null
     val identifier = extras.getString("mb.track") ?: return null
     val headers = extras.getBundle("mb.artworkHeaders")
-    return Track(source, identifier, metadata.title?.toString().orEmpty(), metadata.artist?.toString().orEmpty(),
-        metadata.artworkUri?.toString(), extras.getLong("mb.duration"), extras.getString("mb.page"),
+    return Track(source, identifier, title?.toString().orEmpty(), artist?.toString().orEmpty(),
+        artworkUri?.toString(), extras.getLong("mb.duration"), extras.getString("mb.page"),
         extras.getString("mb.author"), headers?.keySet()?.associateWith { headers.getString(it).orEmpty() }.orEmpty())
 }

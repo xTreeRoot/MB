@@ -1,12 +1,25 @@
 package com.xtreeroot.mb.playback
 
+import android.Manifest
+import android.app.SearchManager
+import android.app.UiAutomation
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
+import android.media.MediaMetadata as PlatformMediaMetadata
+import android.media.browse.MediaBrowser as PlatformMediaBrowser
+import android.media.session.MediaController as PlatformMediaController
+import android.media.session.MediaSessionManager
+import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.service.media.MediaBrowserService as PlatformMediaBrowserService
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -18,6 +31,9 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
 import androidx.test.platform.app.InstrumentationRegistry
+import coil.Coil
+import coil.ImageLoader
+import coil.imageLoader
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.MainActivity
 import com.xtreeroot.mb.local.PortableAsset
@@ -31,9 +47,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -41,9 +60,16 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Call
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PlaybackReportingDeviceTest {
@@ -282,6 +308,218 @@ class PlaybackReportingDeviceTest {
         }
     }
 
+    @Test fun audioFocusDenialCanBeRetriedWithoutLosingTheQueueOrPosition() = runBlocking {
+        assumeTrue(Build.VERSION.SDK_INT >= 35)
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command))
+                .bufferedReader().use { it.readText().trim() }
+            val userId = shell("am get-current-user").toInt()
+            check(userId == app.applicationInfo.uid / 100_000) { "Run on the foreground test user" }
+            val target = "--user $userId ${app.packageName} TAKE_AUDIO_FOCUS"
+            fun focusMode() = shell("cmd appops get $target").lineSequence()
+                .firstOrNull { it.startsWith("TAKE_AUDIO_FOCUS:") }?.substringAfter(':')?.substringBefore(';')?.trim()
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val store = ViewModelStore()
+            val model = withContext(Dispatchers.Main) {
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            val denied = CompletableDeferred<Unit>()
+            val listener = object : Player.Listener {
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) denied.complete(Unit)
+                }
+            }
+            var original: String? = null
+            try {
+                eventually { model.playback.value.connected && activity.hasWindowFocus() }
+                withContext(Dispatchers.Main) {
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 1, 14_000)
+                    player.prepare()
+                    player.play()
+                }
+                eventually { player.isPlaying }
+                original = checkNotNull(focusMode()) { "The baseline audio focus request did not record an AppOp mode" }
+                withContext(Dispatchers.Main) {
+                    player.pause()
+                    player.stop()
+                    player.seekTo(14_000)
+                    player.prepare()
+                }
+                eventually { player.playbackState == Player.STATE_READY }
+                shell("cmd appops set $target ignore")
+                assertEquals("ignore", focusMode())
+                withContext(Dispatchers.Main) {
+                    player.addListener(listener)
+                    player.play()
+                }
+                withTimeout(8_000) { denied.await() }
+                try { eventually { model.playback.value.audioFocusBlocked } }
+                catch (failure: TimeoutCancellationException) { throw AssertionError("Audio focus denial was not exposed to the player", failure) }
+                assertNull(withContext(Dispatchers.Main) { player.playerError })
+                assertEquals(14_000L, model.playback.value.positionMs)
+                shell("cmd appops set $target $original")
+                assertEquals(original, focusMode())
+                withContext(Dispatchers.Main) { model.retry() }
+                eventually { player.isPlaying && player.currentPosition > 14_000 && !model.playback.value.audioFocusBlocked }
+                assertEquals(listOf(first.id, second.id), model.playback.value.tracks.map(Track::id))
+                assertEquals(second.id, model.playback.value.current?.id)
+            } finally {
+                original?.let { shell("cmd appops set $target $it") }
+                withContext(Dispatchers.Main) {
+                    player.removeListener(listener)
+                    store.clear()
+                    activity.finish()
+                }
+            }
+        }
+    }
+
+    @Test fun carMediaBrowserResumesTheExistingQueueWithoutReplacingIt() = runBlocking {
+        withFixture { player ->
+            val service = ComponentName(app, PlaybackService::class.java)
+            val discovery = Intent(PlatformMediaBrowserService.SERVICE_INTERFACE).setPackage(app.packageName)
+            assertTrue("Expose a media browser for car hosts", app.packageManager.queryIntentServices(discovery, 0)
+                .any { it.serviceInfo.name == service.className && it.serviceInfo.exported })
+            val connected = CompletableDeferred<Unit>()
+            val browser = withContext(Dispatchers.Main) {
+                PlatformMediaBrowser(app, service, object : PlatformMediaBrowser.ConnectionCallback() {
+                    override fun onConnected() { connected.complete(Unit) }
+                    override fun onConnectionFailed() { connected.completeExceptionally(AssertionError("Media browser rejected")) }
+                }, null).also(PlatformMediaBrowser::connect)
+            }
+            try {
+                withTimeout(8_000) { connected.await() }
+                suspend fun children(): List<PlatformMediaBrowser.MediaItem> {
+                    val result = CompletableDeferred<List<PlatformMediaBrowser.MediaItem>>()
+                    val callback = object : PlatformMediaBrowser.SubscriptionCallback() {
+                        override fun onChildrenLoaded(parentId: String, children: List<PlatformMediaBrowser.MediaItem>) { result.complete(children) }
+                        override fun onError(parentId: String) { result.completeExceptionally(AssertionError("Media browser could not load its root")) }
+                    }
+                    withContext(Dispatchers.Main) { browser.subscribe(browser.root, callback) }
+                    try { return withTimeout(8_000) { result.await() } }
+                    finally { withContext(Dispatchers.Main) { browser.unsubscribe(browser.root, callback) } }
+                }
+                assertTrue(children().isEmpty())
+                withContext(Dispatchers.Main) { player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 1, 12_000) }
+                eventually { player.currentMediaItem?.mediaId == second.id }
+                val resume = children().single()
+                assertTrue(resume.isPlayable)
+                assertEquals(second.title, resume.description.title.toString())
+                assertNull(resume.description.mediaUri)
+                assertNull(resume.description.iconUri)
+                assertTrue(resume.description.extras?.keySet().orEmpty().none { it.startsWith("mb.") })
+                withContext(Dispatchers.Main) {
+                    PlatformMediaController(app, browser.sessionToken).transportControls.prepareFromMediaId(resume.mediaId!!, null)
+                }
+                eventually { player.playbackState == Player.STATE_READY }
+                withContext(Dispatchers.Main) {
+                    assertEquals(listOf(first.id, second.id), (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId })
+                    assertEquals(second.id, player.currentMediaItem?.mediaId)
+                    assertEquals(12_000L, player.currentPosition)
+                    assertTrue(!player.playWhenReady)
+                }
+                withContext(Dispatchers.Main) {
+                    PlatformMediaController(app, browser.sessionToken).transportControls.prepareFromSearch("first fixture", null)
+                }
+                eventually { player.currentMediaItem?.mediaId == first.id && player.playbackState == Player.STATE_READY }
+                withContext(Dispatchers.Main) {
+                    assertEquals(2, player.mediaItemCount)
+                    assertEquals(0L, player.currentPosition)
+                    assertTrue(!player.playWhenReady)
+                }
+                val voiceIntent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(app.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(SearchManager.QUERY, second.title)
+                val activity = InstrumentationRegistry.getInstrumentation().startActivitySync(voiceIntent)
+                try {
+                    eventually { player.currentMediaItem?.mediaId == second.id }
+                    withContext(Dispatchers.Main) { assertEquals(2, player.mediaItemCount) }
+                } finally {
+                    withContext(Dispatchers.Main) { activity.finish() }
+                }
+            } finally {
+                withContext(Dispatchers.Main) { browser.disconnect() }
+            }
+        }
+    }
+
+    @Test fun systemMediaArtworkUsesSourceHeadersAndCancelsOnTrackChange() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val original = app.imageLoader
+        val slowCall = AtomicReference<Call>()
+        val releaseSlow = CountDownLatch(1)
+        val artwork = Bitmap.createBitmap(640, 640, Bitmap.Config.ARGB_8888).let { bitmap ->
+            try {
+                bitmap.eraseColor(Color.GREEN)
+                ByteArrayOutputStream().apply { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, this)) }.toByteArray()
+            } finally { bitmap.recycle() }
+        }
+        val fixtureClient = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val permitted = request.url.host == "artwork.fixture.test" && request.header("Authorization") == "Fixture artwork-only"
+            if (permitted && request.url.encodedPath == "/slow.png") {
+                slowCall.set(chain.call())
+                releaseSlow.await(10, TimeUnit.SECONDS)
+            }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                .code(if (permitted) 200 else 403).message(if (permitted) "OK" else "Forbidden")
+                .header("Content-Type", "image/png")
+                .body((if (permitted) artwork else byteArrayOf()).toResponseBody("image/png".toMediaType())).build()
+        }.build()
+        val fixtureLoader = ImageLoader.Builder(app).okHttpClient(fixtureClient).build()
+        Coil.setImageLoader(fixtureLoader)
+        try {
+            withFixture { player ->
+                val covered = first.copy(artworkUrl = "https://artwork.fixture.test/first.png")
+                val slow = second.copy(artworkUrl = "https://artwork.fixture.test/slow.png")
+                val uncovered = first.copy(title = "No cover")
+                withContext(Dispatchers.Main) {
+                    player.setMediaItems(listOf(covered, slow, uncovered).map(Track::mediaItem), 0, 0)
+                    player.prepare()
+                }
+                val automation = instrumentation.uiAutomation
+                val manager = app.getSystemService(MediaSessionManager::class.java)
+                var platform: PlatformMediaController? = null
+                try {
+                    automation.adoptShellPermissionIdentity(Manifest.permission.MEDIA_CONTENT_CONTROL)
+                    eventually { platform = manager.getActiveSessions(null).firstOrNull { it.packageName == app.packageName }; platform != null }
+                } finally { automation.dropShellPermissionIdentity() }
+                val system = checkNotNull(platform)
+                fun bitmap() = system.metadata?.getBitmap(PlatformMediaMetadata.METADATA_KEY_ALBUM_ART)
+                try { eventually { bitmap()?.let { it.getPixel(0, 0) == Color.GREEN && maxOf(it.width, it.height) <= 384 } == true } }
+                catch (failure: TimeoutCancellationException) { throw AssertionError("Android media session did not publish the authorized cover", failure) }
+                withContext(Dispatchers.Main) {
+                    assertEquals(covered, player.getMediaItemAt(0).track())
+                    assertNull(player.getMediaItemAt(0).mediaMetadata.artworkData)
+                    assertTrue(playbackStorage.getString("queue", null)?.contains("artwork-only") == false)
+                    player.seekTo(1, 0)
+                }
+                try { eventually { slowCall.get() != null } }
+                catch (failure: TimeoutCancellationException) { throw AssertionError("The next track did not request its cover", failure) }
+                withContext(Dispatchers.Main) { player.seekTo(2, 0) }
+                try {
+                    eventually {
+                        slowCall.get()?.isCanceled() == true && bitmap() == null &&
+                            system.metadata?.getString(PlatformMediaMetadata.METADATA_KEY_TITLE) == uncovered.title &&
+                            player.playbackState == Player.STATE_READY && !player.playWhenReady
+                    }
+                } catch (failure: TimeoutCancellationException) {
+                    throw AssertionError(withContext(Dispatchers.Main) {
+                        "Track change: request cancelled=${slowCall.get()?.isCanceled()}, cover cleared=${bitmap() == null}, " +
+                            "title=${system.metadata?.getString(PlatformMediaMetadata.METADATA_KEY_TITLE)}, " +
+                            "intent=${player.playWhenReady}, state=${player.playbackState}, suppression=${player.playbackSuppressionReason}"
+                    }, failure)
+                }
+            }
+        } finally {
+            releaseSlow.countDown()
+            Coil.setImageLoader(original)
+            fixtureLoader.shutdown()
+        }
+    }
+
     @Test fun reportsOnlyWhenASelectionStartsPlayingThroughTheMediaSession() = runBlocking {
         withFixture { player ->
             suspend fun reports() = source.search("reports", 1).tracks.map(Track::title)
@@ -394,6 +632,167 @@ class PlaybackReportingDeviceTest {
         }
     }
 
+    @Test fun mediaSessionSkipsByFifteenSecondsWithoutResumingPausedAudio() = runBlocking {
+        withFixture { player ->
+            withContext(Dispatchers.Main) {
+                player.setMediaItems(listOf(first.mediaItem()), 0, 20_000)
+                player.prepare()
+            }
+            eventually { player.playbackState == Player.STATE_READY && player.currentPosition == 20_000L }
+            withContext(Dispatchers.Main) {
+                assertEquals(15_000L, player.seekBackIncrement)
+                assertEquals(15_000L, player.seekForwardIncrement)
+                player.seekBack()
+            }
+            eventually { player.currentPosition == 5_000L && !player.playWhenReady }
+            withContext(Dispatchers.Main) { player.seekForward() }
+            eventually { player.currentPosition == 20_000L && !player.playWhenReady }
+        }
+    }
+
+    @Test fun draggingQueueRowsPreservesPlaybackAndPersistsTheirOrder() = runBlocking {
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val startingOrder = listOf(first.id, second.id)
+            val rotatedOrder = listOf(second.id, first.id)
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            try {
+                withContext(Dispatchers.Main) {
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 8_000)
+                    player.prepare()
+                    player.play()
+                }
+                eventually { player.isPlaying && player.currentPosition >= 8_000 }
+                automation.press(automation.queueNode("播放队列", "Queue"))
+                automation.queueNode("关闭队列", "Close Queue")
+                automation.waitForIdle(250, 5_000)
+                val firstHandle = automation.queueNode("编辑 First", "Edit First")
+                val secondHandle = automation.queueNode("编辑 Second", "Edit Second")
+                automation.drag(firstHandle, secondHandle, cancel = true)
+                instrumentation.waitForIdleSync()
+                withContext(Dispatchers.Main) { assertEquals(startingOrder, player.queueIds()) }
+
+                val before = withContext(Dispatchers.Main) { player.currentPosition }
+                automation.drag(automation.queueNode("编辑 First", "Edit First"), automation.queueNode("编辑 Second", "Edit Second"))
+                try { eventually { player.queueIds() == rotatedOrder } }
+                catch (failure: TimeoutCancellationException) { throw AssertionError("Dropping First below Second did not reorder the queue", failure) }
+                eventually {
+                    val saved = playbackStorage.getString("queue", null)?.let(QueueSnapshot::decode)
+                    saved?.tracks?.map(Track::id) == rotatedOrder && saved.index == 1
+                }
+                withContext(Dispatchers.Main) {
+                    assertTrue(player.isPlaying)
+                    assertEquals(first.id, player.currentMediaItem?.mediaId)
+                    assertTrue(player.currentPosition >= before)
+                }
+
+                automation.press(automation.queueNode("关闭队列", "Close Queue"))
+                automation.press(automation.queueNode("First"))
+                automation.press(automation.queueNode("横屏播放", "Landscape Player"))
+                automation.press(automation.queueNode("待播清单", "Up Next"))
+                automation.waitForIdle(250, 5_000)
+                automation.drag(automation.queueNode("编辑 First", "Edit First"), automation.queueNode("编辑 Second", "Edit Second"))
+                eventually { player.queueIds() == startingOrder && player.currentMediaItem?.mediaId == first.id && player.isPlaying }
+
+                withTimeout(5_000) {
+                    while (automation.queueNode("编辑 First", "Edit First").screenBounds().centerY() >=
+                        automation.queueNode("编辑 Second", "Edit Second").screenBounds().centerY()) delay(50)
+                }
+                automation.press(automation.queueNode("编辑 Second", "Edit Second"))
+                automation.press(automation.queueNode("从队列移除", "Remove from Queue"))
+                eventually { player.queueIds() == listOf(first.id) && player.isPlaying }
+            } finally { withContext(Dispatchers.Main) { activity.finish() } }
+        }
+    }
+
+    @Test fun draggingAQueueRowCanScrollPastTheInitiallyVisibleTracks() = runBlocking {
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val tracks = listOf(first, second) + (1..24).map { index -> first.copy(sourceTrackId = "extra-$index", title = "Queue $index") }
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            try {
+                withContext(Dispatchers.Main) {
+                    player.setMediaItems(tracks.map(Track::mediaItem), 0, 0)
+                    player.prepare()
+                    player.play()
+                }
+                eventually { player.isPlaying }
+                automation.press(automation.queueNode("播放队列", "Queue"))
+                automation.queueNode("关闭队列", "Close Queue")
+                automation.waitForIdle(250, 5_000)
+                val initiallyLast = (1..24).lastOrNull { index -> automation.findQueueNode(setOf("编辑 Queue $index", "Edit Queue $index")) != null } ?: 0
+                val bottom = checkNotNull(automation.rootInActiveWindow).screenBounds().bottom
+                val firstHandle = automation.queueNode("编辑 First", "Edit First")
+                automation.drag(firstHandle, bottom - 3, holdMs = 2_000)
+                try { eventually { player.currentMediaItemIndex > initiallyLast + 1 } }
+                catch (failure: TimeoutCancellationException) {
+                    val actual = withContext(Dispatchers.Main) { player.currentMediaItemIndex }
+                    throw AssertionError("Dragging at the viewport edge stopped at $actual; last initial track was Queue $initiallyLast", failure)
+                }
+                withContext(Dispatchers.Main) {
+                    assertEquals(first.id, player.currentMediaItem?.mediaId)
+                    assertTrue(player.isPlaying)
+                    assertEquals(tracks.drop(1).map(Track::id), player.queueIds().filterNot { it == first.id })
+                }
+            } finally { withContext(Dispatchers.Main) { activity.finish() } }
+        }
+    }
+
+    @Test fun mediaSessionTrackButtonsWrapButAutomaticPlaybackStillStopsAtTheTail() = runBlocking {
+        withFixture { player ->
+            withContext(Dispatchers.Main) {
+                player.repeatMode = Player.REPEAT_MODE_OFF
+                player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 25_000)
+                player.prepare()
+            }
+            eventually { player.playbackState == Player.STATE_READY }
+            withContext(Dispatchers.Main) { player.seekToPrevious() }
+            eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id }
+            withContext(Dispatchers.Main) {
+                assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM))
+                player.seekToNextMediaItem()
+            }
+            eventually { player.isPlaying && player.currentMediaItem?.mediaId == first.id }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+                val manager = app.getSystemService(MediaSessionManager::class.java)
+                var platform: PlatformMediaController? = null
+                try {
+                    automation.adoptShellPermissionIdentity(Manifest.permission.MEDIA_CONTENT_CONTROL)
+                    eventually {
+                        platform = manager.getActiveSessions(null).firstOrNull { it.packageName == app.packageName }
+                        platform != null
+                    }
+                } finally { automation.dropShellPermissionIdentity() }
+                checkNotNull(platform).transportControls.skipToPrevious()
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id }
+            }
+            withContext(Dispatchers.Main) { player.seekTo(1, 89_850) }
+            eventually { player.playbackState == Player.STATE_ENDED && player.currentMediaItem?.mediaId == second.id }
+            withContext(Dispatchers.Main) { assertEquals(Player.REPEAT_MODE_OFF, player.repeatMode) }
+        }
+    }
+
+    @Test fun mediaSessionNextCanContinueAStationWithOneTrack() = runBlocking {
+        withFixture { player ->
+            val station = PlaybackStation(first.sourceId, "transport", "Transport Fixture")
+            withContext(Dispatchers.Main) {
+                player.setMediaItems(listOf(first.mediaItem().withStation(station)), 0, 0)
+                player.prepare()
+            }
+            eventually { player.playbackState == Player.STATE_READY && app.stationStatus.value.failure == StationFailure.Empty }
+            withContext(Dispatchers.Main) {
+                assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+                player.seekToNext()
+            }
+            eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id }
+        }
+    }
+
     @Test fun leavingStationCancelsPendingPluginRequestAndKeepsThePlayingQueue() = runBlocking {
         withFixture { player ->
             val station = PlaybackStation(first.sourceId, "daily", "Daily")
@@ -433,6 +832,57 @@ class PlaybackReportingDeviceTest {
     }
 
     private val playbackStorage get() = app.getSharedPreferences("playback", Context.MODE_PRIVATE)
+
+    private fun MediaController.queueIds() = (0 until mediaItemCount).map { getMediaItemAt(it).mediaId }
+
+    private fun AccessibilityNodeInfo.screenBounds() = Rect().also(::getBoundsInScreen)
+
+    private fun UiAutomation.findQueueNode(labels: Set<String>): AccessibilityNodeInfo? {
+        fun find(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            if (node.isVisibleToUser && (node.text?.toString() in labels || node.contentDescription?.toString() in labels)) return node
+            return (0 until node.childCount).firstNotNullOfOrNull { index -> node.getChild(index)?.let(::find) }
+        }
+        return rootInActiveWindow?.let(::find)
+    }
+
+    private suspend fun UiAutomation.queueNode(vararg labels: String): AccessibilityNodeInfo = withTimeoutOrNull(10_000) {
+        val targets = labels.toSet()
+        var match = findQueueNode(targets)
+        while (match == null) { delay(50); match = findQueueNode(targets) }
+        match
+    } ?: error("Missing UI element: ${labels.joinToString()}")
+
+    private fun UiAutomation.touch(start: Long, action: Int, x: Int, y: Int) {
+        val event = MotionEvent.obtain(start, SystemClock.uptimeMillis(), action, x.toFloat(), y.toFloat(), 0)
+        try {
+            event.source = InputDevice.SOURCE_TOUCHSCREEN
+            assertTrue(injectInputEvent(event, true))
+        } finally { event.recycle() }
+    }
+
+    private fun UiAutomation.press(node: AccessibilityNodeInfo) {
+        val bounds = node.screenBounds()
+        val start = SystemClock.uptimeMillis()
+        touch(start, MotionEvent.ACTION_DOWN, bounds.centerX(), bounds.centerY())
+        touch(start, MotionEvent.ACTION_UP, bounds.centerX(), bounds.centerY())
+    }
+
+    private suspend fun UiAutomation.drag(from: AccessibilityNodeInfo, to: AccessibilityNodeInfo, cancel: Boolean = false) =
+        drag(from, to.screenBounds().centerY(), cancel)
+
+    private suspend fun UiAutomation.drag(from: AccessibilityNodeInfo, endY: Int, cancel: Boolean = false, holdMs: Long = 0) {
+        val bounds = from.screenBounds()
+        val x = bounds.centerX()
+        val startY = bounds.centerY()
+        val start = SystemClock.uptimeMillis()
+        touch(start, MotionEvent.ACTION_DOWN, x, startY)
+        for (step in 1..10) {
+            delay(24)
+            touch(start, MotionEvent.ACTION_MOVE, x, startY + (endY - startY) * step / 10)
+        }
+        delay(holdMs)
+        touch(start, if (cancel) MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP, x, endY)
+    }
 
     private inner class Fixture(val plugin: InstalledPlugin, val first: Track, val second: Track) {
         val connections = mutableListOf<ListenableFuture<MediaController>>()
@@ -501,7 +951,8 @@ class PlaybackReportingDeviceTest {
     private fun fixtureZip(id: String) = ByteArrayOutputStream().apply {
         ZipOutputStream(this).use { zip ->
             zip.putNextEntry(ZipEntry("plugin.json"))
-            zip.write("""{"id":"$id"}""".encodeToByteArray())
+            zip.write("""{"id":"$id","permissions":{"network":["artwork.fixture.test"]},
+                "requestHeaders":[{"hosts":["artwork.fixture.test"],"kinds":["image"],"headers":{"Authorization":"Fixture artwork-only"}}]}""".encodeToByteArray())
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("index.js"))
             zip.write("""
@@ -514,6 +965,11 @@ class PlaybackReportingDeviceTest {
                 }
                 export function stationNext({id}) {
                     host.storage.set('stationRequest', id);
+                    if (id === 'transport') {
+                        const count = (host.storage.get('stationCount') ?? 0) + 1;
+                        host.storage.set('stationCount', count);
+                        return count === 4 ? [{id: 'second', name: 'Second', duration: 90000}] : [];
+                    }
                     return new Promise(() => {});
                 }
                 export function search({query}) {

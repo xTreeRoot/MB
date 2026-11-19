@@ -22,6 +22,7 @@ import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.TrackComment
 import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.music.VideoSource
+import java.net.URI
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -194,8 +195,10 @@ internal class PluginSource(
 
     private suspend fun image(address: String?): PluginImage? {
         val url = address?.let { runCatching { uri(it) }.getOrNull() }?.takeIf { it.isHttp() } ?: return null
-        return PluginImage(url.toASCIIString(), runtime.headersFor(url, "image"))
+        return PluginImage(url.toASCIIString(), artworkHeaders(url))
     }
+
+    suspend fun artworkHeaders(address: URI): Map<String, String> = runtime.headersFor(address, "image")
 
     private suspend fun track(value: JSONObject): Track? {
         val id = (value.opt("id") as? String)?.takeIf(String::isNotBlank) ?: return null

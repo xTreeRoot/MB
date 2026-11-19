@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,10 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -33,17 +29,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
@@ -99,9 +90,14 @@ import com.xtreeroot.mb.preferences.LyricStyle
 import kotlinx.coroutines.CancellationException
 
 @Composable
+private fun PlaybackState.failureMessage(): String? =
+    if (audioFocusBlocked) mb("系统暂未允许播放音频", "System audio focus is unavailable") else error
+
+@Composable
 internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Unit, queue: () -> Unit,
                         coverBounds: (Rect) -> Unit) {
     val track = state.current ?: return
+    val failure = state.failureMessage()
     val colors = MaterialTheme.colorScheme
     Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
         shape = RoundedCornerShape(8.dp), color = colors.surfaceContainer, shadowElevation = 2.dp,
@@ -114,13 +110,13 @@ internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Un
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        (state.error ?: track.artist).takeIf(String::isNotBlank)?.let { subtitle ->
+                        (failure ?: track.artist).takeIf(String::isNotBlank)?.let { subtitle ->
                             Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                         }
                     }
                 }
-                PlayButton(state.playWhenReady && state.error == null, toggle)
+                PlayButton(state.playWhenReady && failure == null, toggle)
                 IconButton(onClick = queue) { Icon(Icons.AutoMirrored.Filled.List, mb("播放队列", "Queue"), Modifier.size(20.dp)) }
             }
             if (state.durationMs > 0) {
@@ -139,6 +135,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         close: () -> Unit, showQueue: () -> Unit, showArtist: (String) -> Unit, openingCover: Rect?,
                         rotate: ((PlaybackDirection) -> Unit)?) {
     val track = state.current ?: return
+    val failure = state.failureMessage()
     val offline by saved.offline.collectAsStateWithLifecycle()
     val transfers by saved.transfers.collectAsStateWithLifecycle()
     val activity by saved.activity.collectAsStateWithLifecycle()
@@ -293,7 +290,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                             }
                         }
                     }
-                    if (state.error != null) Retry(state.error, model::retry)
+                    if (failure != null) Retry(failure, model::retry)
                     else if (state.loading) Text(mb("正在加载…", "Loading…"), style = MaterialTheme.typography.labelMedium)
                     PlayerProgress(state, preferences.smoke && animate, seekCurrent)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -303,7 +300,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         IconButton(onClick = model::previous) {
                             Icon(painterResource(R.drawable.ic_media_previous), mb("上一首", "Previous"))
                         }
-                        PlayButton(state.playWhenReady && state.error == null, model::toggle, prominent = !enlargedText)
+                        PlayButton(state.playWhenReady && failure == null, model::toggle, prominent = !enlargedText)
                         IconButton(onClick = model::next) {
                             Icon(painterResource(R.drawable.ic_media_next), mb("下一首", "Next"))
                         }
@@ -384,9 +381,7 @@ internal fun PlayButton(playing: Boolean, toggle: () -> Unit, prominent: Boolean
 @Composable
 internal fun QueueSheet(model: PlaybackModel, state: PlaybackState, close: () -> Unit) {
     var confirmClear by rememberSaveable { mutableStateOf(false) }
-    val windowHeight = LocalWindowInfo.current.containerSize.height
-    val expand = with(LocalDensity.current) { windowHeight.toDp() < 480.dp || fontScale >= 1.5f }
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = expand)
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = close, sheetState = sheet) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(mb("播放队列 · ${state.tracks.size}", "Queue · ${state.tracks.size}"), Modifier.weight(1f),
@@ -394,39 +389,9 @@ internal fun QueueSheet(model: PlaybackModel, state: PlaybackState, close: () ->
             TextButton(onClick = { confirmClear = true }, enabled = state.tracks.isNotEmpty()) { Text(mb("清空", "Clear")) }
             IconButton(onClick = close) { Icon(Icons.Default.Close, mb("关闭队列", "Close Queue")) }
         }
-        QueueTracks(model, state)
+        QueueTracks(model, state, onSelect = close)
     }
     if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false }, title = { Text(mb("清空播放队列？", "Clear the play queue?")) },
         confirmButton = { TextButton(onClick = { confirmClear = false; model.clear(); close() }) { Text(mb("清空", "Clear")) } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(mb("取消", "Cancel")) } })
-}
-
-@Composable
-internal fun QueueTracks(model: PlaybackModel, state: PlaybackState, modifier: Modifier = Modifier) {
-    if (state.tracks.isEmpty()) return EmptyMessage(mb("队列为空", "Your queue is empty"))
-    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 14.dp)) {
-        itemsIndexed(state.tracks, key = { index, track -> "$index:${track.id}" }) { index, track ->
-            val active = index == state.index
-            var menu by remember { mutableStateOf(false) }
-            val colors = MaterialTheme.colorScheme
-            ListItem(modifier = Modifier.selectable(active, enabled = state.connected, role = Role.Button,
-                onClick = { model.select(index) }), colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (active) colors.primary else colors.onSurface) },
-                supportingContent = { TrackSubtitle(track) },
-                leadingContent = { Artwork(track, Modifier.size(44.dp)) },
-                trailingContent = {
-                    Box {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, mb("编辑 ${track.title}", "Edit ${track.title}")) }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text(mb("上移", "Move Up")) }, enabled = index > 0,
-                                onClick = { menu = false; model.move(index, index - 1) })
-                            DropdownMenuItem(text = { Text(mb("下移", "Move Down")) }, enabled = index < state.tracks.lastIndex,
-                                onClick = { menu = false; model.move(index, index + 1) })
-                            DropdownMenuItem(text = { Text(mb("从队列移除", "Remove from Queue")) }, onClick = { menu = false; model.remove(index) })
-                        }
-                    }
-                })
-        }
-    }
 }

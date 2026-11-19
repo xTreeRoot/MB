@@ -3,10 +3,13 @@ package com.xtreeroot.mb.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.xtreeroot.mb.R
+import com.xtreeroot.mb.account.QrSignInService
 import com.xtreeroot.mb.music.AccountSource
 import com.xtreeroot.mb.music.SignInPrompt
 import com.xtreeroot.mb.music.SourceAccount
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.ensureActive
@@ -14,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal data class AccountState(
     val account: SourceAccount? = null,
@@ -34,6 +38,7 @@ internal class AccountModel(application: Application) : AndroidViewModel(applica
     private var source: AccountSource? = null
     private val state = MutableStateFlow(AccountState())
     private var job: Job? = null
+    private var releaseQrProtection: (() -> Unit)? = null
     private var operation = 0L
     val account = state.asStateFlow()
 
@@ -56,7 +61,19 @@ internal class AccountModel(application: Application) : AndroidViewModel(applica
         if (!state.value.canSignIn) return
         launch(true) { active, generation ->
             active.signIn { prompt ->
-                if (generation == operation) state.update { it.copy(prompt = prompt) }
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != operation) return@withContext
+                    state.update { it.copy(prompt = prompt) }
+                    if (prompt.qrUrl != null && releaseQrProtection == null) {
+                        val app = getApplication<Application>()
+                        releaseQrProtection = QrSignInService.protect(app) {
+                            if (generation == operation) {
+                                stop()
+                                state.update { it.copy(loading = false, prompt = null, error = app.getString(R.string.qr_sign_in_expired)) }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -74,7 +91,15 @@ internal class AccountModel(application: Application) : AndroidViewModel(applica
     private fun stop() {
         operation++
         job?.cancel()
+        endQrProtection()
     }
+
+    private fun endQrProtection() {
+        releaseQrProtection?.invoke()
+        releaseQrProtection = null
+    }
+
+    override fun onCleared() = stop()
 
     private fun launch(login: Boolean, work: suspend (AccountSource, Long) -> SourceAccount?) {
         val active = source ?: return
@@ -89,12 +114,14 @@ internal class AccountModel(application: Application) : AndroidViewModel(applica
                     it.copy(account = result, loading = false, signingIn = false, prompt = null, verifiedSource = active)
                 }
             } catch (timedOut: TimeoutCancellationException) {
-                if (generation == operation) state.update { it.copy(loading = false, error = "Sign-in timed out") }
+                if (generation == operation) state.update { it.copy(loading = false, prompt = null, error = "Sign-in timed out") }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 ensureActive()
-                if (generation == operation) state.update { it.copy(loading = false, error = failure.message ?: "账号请求失败") }
+                if (generation == operation) state.update { it.copy(loading = false, prompt = null, error = failure.message ?: "账号请求失败") }
+            } finally {
+                if (generation == operation) endQrProtection()
             }
         }
     }

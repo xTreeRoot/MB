@@ -61,6 +61,7 @@ import okhttp3.OkHttpClient
 internal class MBApplication : Application(), ImageLoaderFactory {
     val bassLevel = MutableStateFlow(0f)
     val trackPlaybackIssues = TrackPlaybackIssues()
+    val audioFocusBlockedTrack = MutableStateFlow<String?>(null)
     val videoPlayback = MutableStateFlow<VideoPlayback?>(null)
     val stationStatus = MutableStateFlow(StationStatus())
     val settings by lazy { SettingsStore(this) }

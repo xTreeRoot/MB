@@ -36,7 +36,8 @@ internal data class AppPreferences(
         .put("lyricsStage", lyricsStage).put("nowPlayingLyrics", nowPlayingLyrics).put("hotComments", hotComments)
         .put("playerStyle", playerStyle.name).put("lyricStyle", lyricStyle.name).put("stageSparks", stageSparks)
         .put("smoke", smoke).put("fog", fog).put("growFromCover", growFromCover)
-        .put("proxyHosts", proxy.hosts.joinToString("\n")).put("githubProxyRulesApplied", true).put("selectedSourceId", selectedSourceId)
+        .put("proxyHosts", proxy.hosts.joinToString("\n")).put("githubProxyRulesApplied", true)
+        .put("youtubeAccountProxyRuleApplied", true).put("selectedSourceId", selectedSourceId)
 
     companion object {
         fun parse(json: JSONObject): AppPreferences = AppPreferences(
@@ -58,9 +59,11 @@ internal data class AppPreferences(
             fog = json.optBoolean("fog"),
             growFromCover = json.optBoolean("growFromCover"),
             proxy = if (json.has("proxyHosts")) runCatching {
-                val saved = ProxyPolicy.parse(json.getString("proxyHosts"))
-                if (json.optBoolean("githubProxyRulesApplied")) saved
-                else saved.copy(hosts = (saved.hosts + ProxyPolicy.githubHosts).distinct())
+                val saved = ProxyPolicy.parse(json.getString("proxyHosts")).hosts
+                val github = if (saved.isNotEmpty() && !json.optBoolean("githubProxyRulesApplied")) ProxyPolicy.githubHosts else emptyList()
+                val youtube = if (!json.optBoolean("youtubeAccountProxyRuleApplied") && ProxyPolicy.googleTokenHost in saved)
+                    listOf(ProxyPolicy.youtubeAccountHost) else emptyList()
+                ProxyPolicy((saved + github + youtube).distinct())
             }.getOrDefault(ProxyPolicy()) else ProxyPolicy(),
         )
 

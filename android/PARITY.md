@@ -87,6 +87,17 @@
 - 适配截图：`android-adaptive-video-landscape.png`、`android-adaptive-video-portrait-large.png`（视频及字幕旋转）；`android-adaptive-player-landscape.png`、`android-adaptive-library-landscape.png`、`android-adaptive-rail.png`（大字体横屏）；`android-adaptive-tablet-portrait.png`、`android-adaptive-tablet-landscape.png`、`android-adaptive-tablet-data-zh.png`（模拟平板）。
 - 不启动 Android Studio，不弹出模拟器窗口，不使用 Computer Use 操控其它桌面应用。
 
+## 0.1.5 预览版
+
+- 系统拒绝音频焦点时，迷你和完整播放器会提示，不再无声退回暂停；重新取得焦点后可从原位置继续，队列不重建。Android 16 无窗口先确认本地 WAV 可播，再实际拒绝焦点请求，恢复后从 `14000 ms` 继续；专项连续 5 次通过。此问题与报障真机是否同源尚未确认。
+- 对齐 iOS Build 23 的默认代理域名。已有配置仅在包含 `oauth2.googleapis.com` 时迁入 `youtube.googleapis.com`，已清空的列表不变，之后手动删除不再回填。JVM 回归覆盖默认路由、迁移和备份格式往返；此改动不包含 Google OAuth 客户端配置。
+- 对齐 iOS 的扫码后台保护。收到二维码后尝试启动限时前台服务（最多 150 秒），切到其他应用仍可等待确认；登录成功、失败、取消、切换音源或超时即退出服务。请求失败不再显示旧二维码；纯网页登录不启动该服务。Android 16 无窗口回归验证退后台后收到合成账号、失败后重试和取消后丢弃迟到响应；独立临时用户上完整 49 项设备回归通过。未使用真实账号。
+- 对齐 iOS 的系统媒体控制：快进和快退均为 15 秒，不改变暂停状态；手动上下首沿队列顺序首尾相接，顺序播放的自动推进仍在末尾停止；单首电台可从系统会话继续取曲。Android 16 无窗口通过 Media3 控制器验证三项行为，并经 Android 系统媒体会话实际发送上一首验证首尾切换；完整 52 项设备回归通过，未验收真机锁屏、蓝牙或车机。
+- 对齐 iOS Build 23 的队列编辑：竖屏队列和横屏待播清单均可拖动把手排序，长队列贴近边缘自动滚动；单点把手仍可上移、下移或移除。选中行高亮，取消拖动不改队列。Android 16 无窗口验证 26 首队列跨屏拖动、当前曲和进度不中断、顺序已保存、横屏重排及移除。两项回归连续 5 轮通过；完整设备 54 项、JVM 121 项通过，Lint 0 错误、29 警告。截图：`android-queue-reorder-portrait.png`、`android-queue-reorder-dragging.png`、`android-queue-reorder-landscape.png`。
+- 系统媒体封面复用应用的网络路由和音源图片请求头；图片缩放到 384 px 以内，带请求头的图片不进图片缓存，切曲取消上一张未完成的请求。Android 16 无窗口系统媒体会话回归连续 5 次通过：带模拟授权头的封面可见，切到无封面曲目后旧请求取消、封面清空、音频能准备且保持暂停；队列不保存授权头或位图。完整设备回归 55 项通过，真机与车机显示未验收。
+- 对齐 iOS CarPlay 的「正在播放」能力：声明 Android Auto 媒体入口，通过同一播放会话显示当前曲目并按原队列、原位置续播。空队列不提供续播项；语音请求只在现有队列内匹配歌名或歌手，不检索插件目录或个人内容。Android 16 无窗口使用系统 `MediaBrowser` 和 `TransportControls` 验证根目录、续播保留 12 秒位置、按歌名和歌手切到队列内曲目，以及系统语音播放 Intent；专项连续 5 次通过，完整设备回归 56 项和 JVM 121 项通过。另一普通 UID 能发现服务但连接被拒绝；Lint 0 错误、30 警告，新增一项为车机入口需导出服务。真实 Android Auto 车机尚未验收。
+- 发布 APK 在 Android 16 无窗口环境通过 57 项设备回归（含 WebView 独立进程隔离登录和临时数据清理），JVM 121 项通过，Lint 0 错误、30 警告。APK 与 0.1.4 签名相同，APK 和 64 位原生库通过 16 KiB 对齐检查。报障手机尚未授权 ADB，未复测手机上的播放和 WebView。
+
 ## 下一阶段
 
 个人内容和评论的下拉刷新已完成代码及合成插件验证；继续验证真实账号互动、真实电台、第三方插件平台记录回读和剩余本地化。按流播方案继续验证汽水完整音源、YouTube 音视频、无损档位、音画偏差及弱网后台行为；在支持 `/v1/data` 的可信节点上验证真实账号双端同步，另验真机锁屏和蓝牙。

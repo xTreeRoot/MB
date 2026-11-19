@@ -1,0 +1,5 @@
+<resources>
+    <string name="qr_sign_in">QR sign-in</string>
+    <string name="qr_sign_in_waiting">MB is waiting for QR sign-in</string>
+    <string name="qr_sign_in_expired">Background sign-in timed out. Try signing in again.</string>
+</resources>

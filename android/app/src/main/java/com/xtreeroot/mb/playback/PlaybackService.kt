@@ -28,8 +28,11 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.source.ShuffleOrder
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
@@ -45,6 +48,7 @@ import com.xtreeroot.mb.music.PlaybackIssueException
 import com.xtreeroot.mb.music.PlaybackRecorder
 import com.xtreeroot.mb.music.PlaybackSource
 import com.xtreeroot.mb.music.StationPlaybackSource
+import com.google.common.collect.ImmutableList
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.VideoSource
 import com.xtreeroot.mb.music.activeCaption
@@ -77,7 +81,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(UnstableApi::class)
-internal class PlaybackService : MediaSessionService() {
+internal class PlaybackService : MediaLibraryService() {
     private val storage by lazy { getSharedPreferences("playback", MODE_PRIVATE) }
     private val handler = Handler(Looper.getMainLooper())
     private data class ResolvedAudio(val until: Long, val source: PlaybackSource, val quality: AudioQuality, val resource: MediaResource)
@@ -92,7 +96,7 @@ internal class PlaybackService : MediaSessionService() {
     private var reportedSelection = false
     private var currentTrack: String? = null
     private var cacheJob: Job? = null
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
     private var player: ExoPlayer? = null
     private var video: VideoPlayback? = null
     private var stations: StationPlayback? = null
@@ -150,6 +154,8 @@ internal class PlaybackService : MediaSessionService() {
         val snapshot = storage.getString("queue", null)?.let(QueueSnapshot::decode)
         val player = ExoPlayer.Builder(this, renderers)
             .setMediaSourceFactory(ProgressiveMediaSource.Factory(factory).recoverOutsideLoader())
+            .setSeekBackIncrementMs(15_000)
+            .setSeekForwardIncrementMs(15_000)
             .build().apply {
                 setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -181,6 +187,7 @@ internal class PlaybackService : MediaSessionService() {
         this.video = video
         val stations = StationPlayback(player, scope, { app.playbackSource(it) as? StationPlaybackSource }) { status ->
             app.stationStatus.value = status
+            (session?.player as? CaptionSessionPlayer)?.stationChanged()
             persist()
         }
         this.stations = stations
@@ -215,14 +222,39 @@ internal class PlaybackService : MediaSessionService() {
         val currentMedia = MutableStateFlow(player.currentMediaItem?.track())
         val openPlayer = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, sessionPlayer).setSessionActivity(openPlayer)
-            .setCallback(object : MediaSession.Callback {
+        fun resumeItem() = player.currentMediaItem?.takeIf { it.track()?.let(app::acceptsTrack) == true }?.resumeBrowserItem()
+        session = MediaLibrarySession.Builder(this, sessionPlayer,
+            object : MediaLibrarySession.Callback {
                 override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
-                    if (controller.uid != applicationInfo.uid) return super.onConnect(session, controller)
+                    if (!controller.canControlPlayback(app, session)) return MediaSession.ConnectionResult.reject()
+                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
+                        .remove(SessionCommand.COMMAND_CODE_LIBRARY_SEARCH)
+                        .remove(SessionCommand.COMMAND_CODE_LIBRARY_GET_SEARCH_RESULT)
+                    if (controller.uid == applicationInfo.uid) commands.add(enqueueTrack).add(nextStationTrack).add(leaveStation)
                     return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
-                        .setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                            .add(enqueueTrack).add(nextStationTrack).add(leaveStation).build()).build()
+                        .setAvailableSessionCommands(commands.build()).build()
                 }
+
+                override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?):
+                    ListenableFuture<LibraryResult<MediaItem>> = Futures.immediateFuture(LibraryResult.ofItem(playbackBrowseRoot, params))
+
+                override fun onGetItem(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, mediaId: String):
+                    ListenableFuture<LibraryResult<MediaItem>> {
+                    val item = when (mediaId) {
+                        playbackBrowseRootId -> playbackBrowseRoot
+                        resumeMediaId -> resumeItem()
+                        else -> null
+                    }
+                    return Futures.immediateFuture(if (item == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
+                        else LibraryResult.ofItem(item, null))
+                }
+
+                override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String,
+                                           page: Int, pageSize: Int, params: LibraryParams?):
+                    ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = Futures.immediateFuture(
+                    if (parentId != playbackBrowseRootId) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
+                    else LibraryResult.ofItemList(if (page == 0) listOfNotNull(resumeItem()) else emptyList(), params),
+                )
 
                 override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo,
                                              command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
@@ -269,20 +301,29 @@ internal class PlaybackService : MediaSessionService() {
 
                 override fun onSetMediaItems(mediaSession: MediaSession, controller: MediaSession.ControllerInfo,
                                              mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long):
-                    ListenableFuture<MediaSession.MediaItemsWithStartPosition> = Futures.transform(
-                        onAddMediaItems(mediaSession, controller, mediaItems), { canonical ->
-                            val safe = checkNotNull(canonical)
-                            val station = mediaItems.getOrNull(startIndex)?.station()?.takeIf { candidate ->
-                                app.playbackSource(candidate.sourceId) is StationPlaybackSource &&
-                                    safe.all { it.track()?.sourceId == candidate.sourceId }
-                            }
-                            val items = if (station == null) safe else safe.mapIndexed { index, item ->
-                                if (index == startIndex) item.withStation(station) else item
-                            }
-                            MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)
-                        }, MoreExecutors.directExecutor(),
-                    )
-            }).build()
+                    ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    val requested = mediaItems.singleOrNull()
+                    val query = requested?.takeIf { it.mediaId == MediaItem.DEFAULT_MEDIA_ID }?.requestMetadata?.searchQuery
+                    if ((requested?.mediaId == resumeMediaId || query != null) && controller.canControlPlayback(app, mediaSession)) {
+                        val index = player.queueSearchIndex(query.orEmpty()) { !it.isUnavailable && app.acceptsTrack(it) }
+                            ?: return Futures.immediateFailedFuture(IllegalArgumentException("No matching queued track"))
+                        if (index != player.currentMediaItemIndex) player.seekToDefaultPosition(index)
+                        val item = player.getMediaItemAt(index).resumeBrowserItem()
+                        return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(listOf(item), 0, C.TIME_UNSET))
+                    }
+                    return Futures.transform(onAddMediaItems(mediaSession, controller, mediaItems), { canonical ->
+                        val safe = checkNotNull(canonical)
+                        val station = mediaItems.getOrNull(startIndex)?.station()?.takeIf { candidate ->
+                            app.playbackSource(candidate.sourceId) is StationPlaybackSource &&
+                                safe.all { it.track()?.sourceId == candidate.sourceId }
+                        }
+                        val items = if (station == null) safe else safe.mapIndexed { index, item ->
+                            if (index == startIndex) item.withStation(station) else item
+                        }
+                        MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)
+                    }, MoreExecutors.directExecutor())
+                }
+            }).setSessionActivity(openPlayer).setBitmapLoader(SessionArtworkLoader(app, scope)).build()
         stations.set(snapshot?.station)
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
@@ -306,9 +347,17 @@ internal class PlaybackService : MediaSessionService() {
                 Log.i(playbackLogTag, "playback suppression=$playbackSuppressionReason")
             }
 
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                val blocked = !playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+                app.audioFocusBlockedTrack.value = player.currentMediaItem?.mediaId.takeIf { blocked }
+                if (blocked) Log.w(playbackLogTag, "audio focus unavailable; playback paused")
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                app.audioFocusBlockedTrack.value = app.audioFocusBlockedTrack.value?.takeIf { it == mediaItem?.mediaId }
                 recovery.reset()
                 preloader.advance(target(mediaItem).takeIf { player.playWhenReady })
+                session?.notifyChildrenChanged(playbackBrowseRootId, if (resumeItem() == null) 0 else 1, null)
             }
 
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
@@ -427,16 +476,18 @@ internal class PlaybackService : MediaSessionService() {
         handler.postDelayed(checkpoint, 5_000)
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
 
     override fun onDestroy() {
+        val app = application as MBApplication
         handler.removeCallbacks(checkpoint)
-        (application as MBApplication).videoPlayback.value = null
+        app.audioFocusBlockedTrack.value = null
+        app.videoPlayback.value = null
         video?.close()
         video = null
         scope.cancel()
         persist()
-        (application as MBApplication).stationStatus.value = StationStatus()
+        app.stationStatus.value = StationStatus()
         stations = null
         val current = session
         session = null

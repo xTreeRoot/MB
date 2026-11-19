@@ -51,13 +51,16 @@ internal data class PlaybackState(
     val station: PlaybackStation? = null,
     val seekable: Boolean = false,
     val connectionIssue: PlaybackConnectionIssue? = null,
+    val audioFocusBlocked: Boolean = false,
 ) {
     val current: Track? get() = tracks.getOrNull(index)
 }
 
 internal class PlaybackModel(application: Application) : AndroidViewModel(application) {
+    private sealed interface PlaybackRequest
     private data class Selection(val tracks: List<Track>, val track: Track, val station: PlaybackStation?,
-                                 val shuffle: Boolean, val mode: PlaybackMode)
+                                 val shuffle: Boolean, val mode: PlaybackMode) : PlaybackRequest
+    private data class QueueQuery(val query: String) : PlaybackRequest
 
     private val app = application as MBApplication
     private val state = MutableStateFlow(PlaybackState())
@@ -70,7 +73,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     private var videoJob: Job? = null
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var pendingSelection: Selection? = null
+    private var pendingRequest: PlaybackRequest? = null
     val playback = state.asStateFlow()
     val captions = captionState.asStateFlow()
 
@@ -82,6 +85,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch { app.installedPlugins.collect { publish() } }
         viewModelScope.launch { app.stationStatus.collect { publish() } }
         viewModelScope.launch { app.trackPlaybackIssues.values.collect { publish() } }
+        viewModelScope.launch { app.audioFocusBlockedTrack.collect { publish() } }
         viewModelScope.launch {
             while (true) {
                 delay(if (captionTrackId == state.value.current?.id && captionTrackId != null) 70 else 250)
@@ -122,9 +126,13 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             player.addListener(object : Player.Listener {
                 override fun onEvents(player: Player, events: Player.Events) = publish()
             })
-            val selection = pendingSelection
-            pendingSelection = null
-            if (selection != null) startSelection(player, selection)
+            val request = pendingRequest
+            pendingRequest = null
+            when (request) {
+                is Selection -> startSelection(player, request)
+                is QueueQuery -> startQueueSearch(player, request.query)
+                null -> Unit
+            }
             publish()
         }, ContextCompat.getMainExecutor(app))
     }
@@ -156,12 +164,31 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         val selection = Selection(tracks, selected, station, enableShuffle, app.settings.values.value.playbackMode)
         val player = controller
         if (player == null) {
-            pendingSelection = selection.copy(tracks = tracks.toList())
+            pendingRequest = selection.copy(tracks = tracks.toList())
             connect()
             return
         }
         startSelection(player, selection)
         publish()
+    }
+
+    fun playFromSearch(query: String) {
+        val bounded = query.take(256)
+        val player = controller
+        if (player == null) {
+            pendingRequest = QueueQuery(bounded)
+            connect()
+            return
+        }
+        startQueueSearch(player, bounded)
+        publish()
+    }
+
+    private fun startQueueSearch(player: MediaController, query: String) {
+        val index = player.queueSearchIndex(query, ::canPlay) ?: return
+        if (index != player.currentMediaItemIndex || player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition(index)
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        player.play()
     }
 
     private fun startSelection(player: MediaController, selection: Selection) {
@@ -228,13 +255,15 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     fun toggle() {
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
+        if (audioFocusBlocked(player)) { start(player); return }
         if (player.playerError == null && !player.isPlaying && stationError(player) != null) { requestStationNext(player); return }
         if (player.playWhenReady && player.playerError == null) player.pause() else start(player)
     }
 
     fun retry() {
         val player = controller ?: return connect()
-        if (player.playerError != null) player.prepare()
+        if (audioFocusBlocked(player)) start(player)
+        else if (player.playerError != null) player.prepare()
         else if (stationError(player) != null) requestStationNext(player)
     }
 
@@ -247,6 +276,9 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     private fun requestStationNext(player: MediaController) { player.sendCustomCommand(nextStationTrack, Bundle.EMPTY) }
 
     fun endStation() { controller?.sendCustomCommand(leaveStation, Bundle.EMPTY) }
+
+    private fun audioFocusBlocked(player: Player): Boolean = !player.isPlaying &&
+        app.audioFocusBlockedTrack.value?.let { it == player.currentMediaItem?.mediaId } == true
 
     private fun atStationTail(player: Player): Boolean = app.stationStatus.value.station != null &&
         player.mediaItemCount > 0 && player.currentMediaItemIndex == player.mediaItemCount - 1
@@ -275,11 +307,19 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun move(from: Int, to: Int) {
-        controller?.let { player -> if (to in 0 until player.mediaItemCount) player.moveMediaItem(from, to) }
+    fun move(from: Int, to: Int, queue: List<Track>) {
+        val player = controller ?: return
+        if (from == to || from !in queue.indices || to !in queue.indices || !player.matchesQueue(queue)) return
+        player.moveMediaItem(from, to)
     }
 
-    fun remove(index: Int) { controller?.removeMediaItem(index) }
+    fun remove(index: Int, queue: List<Track>) {
+        val player = controller ?: return
+        if (index in queue.indices && player.matchesQueue(queue)) player.removeMediaItem(index)
+    }
+
+    private fun MediaController.matchesQueue(queue: List<Track>): Boolean = mediaItemCount == queue.size &&
+        queue.indices.all { index -> getMediaItemAt(index).mediaId == queue[index].id }
     fun removeSource(sourceId: String) {
         val player = controller ?: return
         for (index in player.mediaItemCount - 1 downTo 0) {
@@ -290,7 +330,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         }
     }
     fun clear() {
-        pendingSelection = null
+        pendingRequest = null
         contentSelection = null
         controller?.clearMediaItems()
     }
@@ -308,13 +348,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     private fun step(forward: Boolean) {
         val player = controller ?: return
         if (forward && atStationTail(player)) { requestStationNext(player); return }
-        val timeline = player.currentTimeline
-        if (timeline.isEmpty) return
-        val index = player.currentMediaItemIndex
-        val shuffle = player.shuffleModeEnabled
-        val target = if (forward) timeline.getNextWindowIndex(index, Player.REPEAT_MODE_ALL, shuffle)
-        else timeline.getPreviousWindowIndex(index, Player.REPEAT_MODE_ALL, shuffle)
-        select(target)
+        select(player.manualNeighbor(forward))
     }
 
     fun shuffle() {
@@ -373,7 +407,8 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             player.repeatMode, player.shuffleModeEnabled,
             error, connected = true, playing = player.isPlaying,
             videoAvailable = capability == true, presentation = presentation, station = app.stationStatus.value.station,
-            seekable = player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || player.canPositionUnpreparedItem)
+            seekable = player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || player.canPositionUnpreparedItem,
+            audioFocusBlocked = audioFocusBlocked(player))
     }
 }
 
