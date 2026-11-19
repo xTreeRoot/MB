@@ -27,6 +27,7 @@ public protocol PlaybackSessionStore: Sendable {
 
 /// 数据仅在本 App 的沙盒，不读取桌面会话，也不保存临时播放地址。
 public actor AppPersistence: PlaybackSessionStore, PlaybackModeStore {
+    private struct ProxyHosts: Codable { let hosts: [String] }
     public static let shared = AppPersistence()
     private let directory: URL
     public init(directory: URL? = nil) {
@@ -36,8 +37,43 @@ public actor AppPersistence: PlaybackSessionStore, PlaybackModeStore {
 
     public func loadSession() throws -> PlaybackSession? { try load(PlaybackSession.self, name: "playback.json") }
     public func saveSession(_ session: PlaybackSession) throws { try save(session, name: "playback.json") }
-    public func loadProxyHosts() throws -> [String]? { try load([String].self, name: "proxy-hosts.json") }
-    public func saveProxyHosts(_ hosts: [String]) throws { try save(hosts, name: "proxy-hosts.json") }
+    public func loadProxyHosts() throws -> [String]? {
+        let file = "proxy-hosts.json"
+        do { return try load(ProxyHosts.self, name: file)?.hosts }
+        catch is DecodingError {
+            guard let legacy = try load([String].self, name: file) else { return nil }
+            let hosts = legacy.isEmpty ? legacy : legacy + ProxyPolicy.githubHosts.filter { !legacy.contains($0) }
+            try saveProxyHosts(hosts)
+            return hosts
+        }
+    }
+    public func saveProxyHosts(_ hosts: [String]) throws { try save(ProxyHosts(hosts: hosts), name: "proxy-hosts.json") }
+    func loadPlatformNode() throws -> PlatformNode? { try load(PlatformNode.self, name: "platform-node.json") }
+    func savePlatformNode(_ node: PlatformNode?) throws {
+        let name = "platform-node.json"
+        if let node { try save(node, name: name) }
+        else {
+            let file = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        }
+    }
+    func cachePlatformProfile(_ profile: PlatformProfile, for node: PlatformNode, platform: String) throws {
+        try Task.checkCancellation()
+        guard try loadPlatformNode() == node, PlatformDataCodec.identifier(platform) else { return }
+        let name = "platform-profiles.json"
+        let existing = try load(PlatformProfiles.self, name: name)
+        let space = node.grant.space
+        var profiles = existing?.origin == node.origin && existing?.space == space && existing?.key == node.grant.key ? existing?.profiles ?? [:] : [:]
+        guard profiles[platform] != profile else { return }
+        profiles[platform] = profile
+        try save(PlatformProfiles(origin: node.origin, space: space, key: node.grant.key, profiles: profiles), name: name)
+    }
+    private struct PlatformProfiles: Codable {
+        let origin: URL
+        let space: String
+        let key: String
+        let profiles: [String: PlatformProfile]
+    }
     public func loadPlaybackMode() throws -> PlaybackMode? { try load(PlaybackMode.self, name: "playback-mode.json") }
     public func savePlaybackMode(_ mode: PlaybackMode) throws { try save(mode, name: "playback-mode.json") }
     public func loadPreferences() throws -> AppPreferences? { try load(AppPreferences.self, name: "preferences.json") }

@@ -38,6 +38,7 @@ struct DownloadsView: View {
                 if let error = model.errorMessage ?? library.errorMessage { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
             }
             .modifier(MusicGroupedList())
+            .modifier(SkinSurface(list: true, base: MBTheme.grouped))
             .navigationTitle("资料库")
             .confirmationDialog("清空播放缓存？", isPresented: $clearingCache, titleVisibility: .visible) {
                 Button("清空播放缓存", role: .destructive) { Task { await model.clearCache() } }

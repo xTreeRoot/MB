@@ -6,6 +6,7 @@ public final class AccountModel {
     public private(set) var account: SourceAccount?
     public private(set) var prompt: SignInPrompt?
     public private(set) var isSigningIn = false
+    public private(set) var isSigningOut = false
     public private(set) var errorMessage: String?
     public private(set) var revision = 0
     public let available: Bool
@@ -54,6 +55,8 @@ public final class AccountModel {
 
     public func signOut() async {
         cancelSignIn()
+        isSigningOut = true
+        defer { isSigningOut = false }
         let current = generation
         do {
             try await source?.signOut()

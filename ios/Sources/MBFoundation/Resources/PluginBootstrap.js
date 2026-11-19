@@ -15,7 +15,12 @@
     const found = pending.get(id);
     if (!found) return;
     pending.delete(id);
-    if (success) found.resolve(value); else found.reject(new Error(String(value)));
+    if (success) found.resolve(value);
+    else {
+      const error = new Error(value.message);
+      if (value.code) error.code = value.code;
+      found.reject(error);
+    }
   };
   globalThis.host = Object.freeze({
     platform: "ios", arch: "arm64", dir: ".", dataDir: ".",

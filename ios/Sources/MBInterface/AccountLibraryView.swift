@@ -51,6 +51,7 @@ struct AccountLibraryView: View {
                 if account.account != nil { Section { Button("退出登录", role: .destructive) { Task { await account.signOut() } } } }
             }
             .modifier(MusicGroupedList())
+            .modifier(SkinSurface(list: true, base: MBTheme.grouped))
             // 导航容器外的迷你播放器不计入 List 的滚动内容边距。
             .contentMargins(.bottom, playback.queue.current == nil ? 0 : 76, for: .scrollContent)
             .navigationTitle("我的")
@@ -134,6 +135,7 @@ struct LibraryPageView: View {
             ForEach(Array(model.tracks.enumerated()), id: \.element.id) { index, track in
                 HStack(spacing: 4) {
                     Button { select(model.tracks, index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
+                        .modifier(TrackProblemAccessibility(track: track))
                     Menu { menu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                 }.contextMenu { menu(track) }
             }

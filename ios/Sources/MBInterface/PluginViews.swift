@@ -45,11 +45,28 @@ struct PluginsView: View {
     @State private var importing = false
     @State private var folder = false
     @State private var github = false
+    @State private var stars = false
+    @State private var starsAddress = ""
     @State private var repo = ""
     @State private var removing: InstalledPlugin?
     @State private var confirmingRemoval = false
     var body: some View {
         List {
+            Section {
+                Button("一键导入/覆盖", systemImage: "square.and.arrow.down.on.square") { stars = true }
+                    .disabled(model.busy || model.checking || model.pending != nil)
+                    .accessibilityIdentifier("plugin-import-stars")
+            }
+            if model.installed.contains(where: { $0.repository != nil }) {
+                Section("插件更新") {
+                    Button("检测更新", systemImage: "arrow.clockwise") { Task { await model.checkUpdates(force: true) } }
+                        .disabled(model.busy || model.checking)
+                    Button("全部更新", systemImage: "arrow.down.circle") { Task { await model.updateAll() } }
+                        .disabled(model.busy || model.checking)
+                    if model.checking || model.updatingAll { ProgressView(model.updatingAll ? "正在更新插件" : "正在检测插件更新") }
+                    if let status = model.updateStatus { Text(status).font(.caption).foregroundStyle(.secondary) }
+                }
+            }
             ForEach(model.installed) { plugin in
                 NavigationLink {
                     PluginSettingsView(model: model, plugin: plugin)
@@ -60,11 +77,12 @@ struct PluginsView: View {
                         Text(plugin.manifest.displayName).font(.headline)
                         Text(plugin.manifest.version ?? "").font(.caption).foregroundStyle(.secondary)
                         if let version = model.updates[plugin.id] { Text("可更新至 \(version)").font(.caption).foregroundStyle(.tint) }
+                        if let issue = model.updateIssues[plugin.id] { Text(issue).font(.caption).foregroundStyle(.secondary) }
                         Text(LocalizedStringKey(model.disabled.contains(plugin.id) ? "已停用" : "已启用")).font(.caption).foregroundStyle(.secondary)
                         }
                     }.padding(.vertical, 5)
                 }
-                .swipeActions { Button("卸载", role: .destructive) { removing = plugin; confirmingRemoval = true } }
+                .swipeActions(allowsFullSwipe: false) { Button("删除", role: .destructive) { removing = plugin; confirmingRemoval = true }.disabled(model.busy) }
             }
             Section {
                 Button("从 ZIP 安装", systemImage: "doc.zipper") { importing = true }
@@ -76,8 +94,11 @@ struct PluginsView: View {
         }
         .modifier(MusicGroupedList())
         .navigationTitle("插件")
-        .confirmationDialog("卸载插件？", isPresented: $confirmingRemoval, titleVisibility: .visible) {
-            Button("卸载", role: .destructive) { if let removing { Task { await model.remove(removing) } } }
+        .sheet(isPresented: $stars, onDismiss: { Task { await model.discardStars() } }) {
+            PluginStarsView(model: model, address: $starsAddress)
+        }
+        .confirmationDialog("删除插件？", isPresented: $confirmingRemoval, titleVisibility: .visible) {
+            Button("删除插件", role: .destructive) { if let removing { Task { await model.remove(removing) } } }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.zip]) { result in
             switch result { case .success(let url): Task { await model.prepare(url) }; case .failure(let error): model.reportError(error) }
@@ -113,10 +134,65 @@ struct PluginsView: View {
     }
 }
 
+private struct PluginStarsView: View {
+    let model: PluginModel
+    @Binding var address: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let entries = model.starsEntries {
+                    ForEach(entries, content: repositoryRow)
+                } else {
+                    TextField("GitHub 星标列表地址", text: $address)
+                        .autocorrectionDisabled().disabled(model.starsBusy)
+                        .accessibilityIdentifier("plugin-stars-address")
+                }
+                if model.starsBusy { ProgressView(model.starsEntries == nil ? "正在解析 GitHub 星标列表" : "正在导入插件") }
+                if let status = model.starsStatus { Text(status).font(.caption).foregroundStyle(.secondary) }
+            }
+            .navigationTitle("一键导入/覆盖")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.disabled(model.starsBusy) }
+                ToolbarItem(placement: .confirmationAction) { action }
+            }
+        }
+        .interactiveDismissDisabled(model.starsBusy)
+    }
+
+    @ViewBuilder private var action: some View {
+        if model.starsEntries == nil {
+            Button("解析列表") { Task { await model.reviewStars(address) } }
+                .disabled(model.starsBusy || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("plugin-stars-read")
+        } else if !model.starsFinished {
+            Button("导入/覆盖") { Task { await model.applyStars() } }
+                .disabled(model.starsBusy || model.starsEntries?.contains(where: { $0.manifest != nil }) != true)
+                .accessibilityIdentifier("plugin-stars-confirm")
+        }
+    }
+
+    private func repositoryRow(_ entry: PluginStarsEntry) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(entry.manifest?.displayName ?? entry.repository).font(.headline)
+            if let manifest = entry.manifest {
+                Text(entry.repository).font(.caption).foregroundStyle(.secondary)
+                let network = manifest.permissions?.network ?? []
+                if network.isEmpty { Text("不需要网络权限").font(.caption) }
+                else { Text(network.joined(separator: ", ")).font(.caption.monospaced()) }
+            }
+            if let issue = entry.issue { Text(issue).font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+}
+
 private struct PluginSettingsView: View {
     let model: PluginModel
     let plugin: InstalledPlugin
     @FocusState private var editing: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmingRemoval = false
     @State private var values: [String: String] = [:]
     @State private var loaded = false
     @State private var error: String?
@@ -153,7 +229,11 @@ private struct PluginSettingsView: View {
                 } footer: { if let help = setting.help { Text(help) } }
             }
             Toggle("启用音源", isOn: Binding(get: { !model.disabled.contains(plugin.id) }, set: { enabled in Task { await model.setEnabled(plugin, enabled: enabled) } }))
-            if plugin.repository != nil { Button("检查更新") { Task { await model.update(plugin) } }.disabled(model.busy) }
+                .disabled(model.busy)
+            if plugin.repository != nil {
+                Button(model.updates[plugin.id] == nil ? "检测更新" : "查看更新") { Task { await model.update(plugin) } }.disabled(model.busy || model.checking)
+                if let issue = model.updateIssues[plugin.id] { Text(issue).font(.caption).foregroundStyle(.secondary) }
+            }
             Section("网络权限") { ForEach(plugin.manifest.permissions?.network ?? [], id: \.self) { Text($0).font(.caption.monospaced()) } }
             Button("保存") {
                 editing = false; saving = true; saved = false
@@ -162,8 +242,16 @@ private struct PluginSettingsView: View {
             if saving { ProgressView() }
             if saved { Label("已保存", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
             if let error = error ?? model.errorMessage { Text(error).foregroundStyle(.red) }
+            Section {
+                Button("删除插件", systemImage: "trash", role: .destructive) { confirmingRemoval = true }
+                    .accessibilityIdentifier("delete-installed-plugin")
+                    .disabled(model.busy)
+            }
         }
         .navigationTitle(plugin.manifest.displayName)
+        .confirmationDialog("删除插件？", isPresented: $confirmingRemoval, titleVisibility: .visible) {
+            Button("删除插件", role: .destructive) { Task { if await model.remove(plugin) { dismiss() } } }
+        } message: { Text("只移除插件，设置和登录数据会保留。") }
         .task {
             do { values = try await model.settings(for: plugin); loaded = true }
             catch { self.error = error.localizedDescription }

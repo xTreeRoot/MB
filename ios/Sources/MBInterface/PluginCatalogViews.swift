@@ -23,6 +23,7 @@ struct PluginPersonalLinks: View {
 
 enum PluginPageRequest {
     case home, browse(String), collection(String, String), entity(PluginEntity), search(String, String)
+    var isHome: Bool { if case .home = self { true } else { false } }
 }
 
 struct PluginCatalogPage: View {
@@ -73,6 +74,7 @@ struct PluginCatalogPage: View {
                         ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
                             HStack {
                                 Button { play(section.tracks, index: index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
+                                    .modifier(TrackProblemAccessibility(track: track))
                                 Menu { menu(track); playlistTrackActions(track, index: index) } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                             }.contextMenu { menu(track); playlistTrackActions(track, index: index) }
                         }
@@ -114,6 +116,7 @@ struct PluginCatalogPage: View {
             if !loading && content?.sections.isEmpty != false && error == nil { ContentUnavailableView("暂无内容", systemImage: "music.note") }
         }
         .listStyle(.plain)
+        .modifier(SkinSurface(list: true, enabled: request.isHome))
         .navigationTitle(title)
         .onAppear {
             initialLoad?.cancel()

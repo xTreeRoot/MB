@@ -12,20 +12,32 @@ public enum PluginPreparation: Equatable {
     public private(set) var sources: [String: PluginSource] = [:]
     public private(set) var pending: PendingPlugin?
     public private(set) var preparation: PluginPreparation?
-    public var busy: Bool { installing || preparation == .checking }
+    public var busy: Bool { installing || updatingAll || preparation == .checking || starsBusy || starsEntries != nil }
     public private(set) var errorMessage: String?
     public private(set) var revision = 0
     public private(set) var disabled: Set<String> = []
     public private(set) var updates: [String: String] = [:]
-    @ObservationIgnored private var checking = false
+    public private(set) var checking = false
+    public private(set) var updatingAll = false
+    public private(set) var updateStatus: String?
+    public private(set) var updateIssues: [String: String] = [:]
+    public private(set) var starsEntries: [PluginStarsEntry]?
+    public private(set) var starsBusy = false
+    public private(set) var starsStatus: String?
+    public private(set) var starsFinished = false
     @ObservationIgnored private let installer: PluginInstaller
     @ObservationIgnored private let githubPreparation: (PluginInstaller, String) async throws -> PendingPlugin
+    @ObservationIgnored private let starsRepositories: (String) async throws -> [String]
     private var installing = false
     public convenience init(installer: PluginInstaller = PluginInstaller()) {
         self.init(installer: installer) { try await $0.prepareGitHub($1) }
     }
-    package init(installer: PluginInstaller, githubPreparation: @escaping (PluginInstaller, String) async throws -> PendingPlugin) {
+    package convenience init(installer: PluginInstaller, githubPreparation: @escaping (PluginInstaller, String) async throws -> PendingPlugin) {
+        self.init(installer: installer, starsRepositories: PluginStars.repositories, githubPreparation: githubPreparation)
+    }
+    init(installer: PluginInstaller, starsRepositories: @escaping (String) async throws -> [String], githubPreparation: @escaping (PluginInstaller, String) async throws -> PendingPlugin) {
         self.installer = installer; self.githubPreparation = githubPreparation
+        self.starsRepositories = starsRepositories
     }
     public func reportError(_ error: any Error) { errorMessage = error.localizedDescription }
     public func restore() async {
@@ -47,7 +59,7 @@ public enum PluginPreparation: Equatable {
     public func prepareGitHub(_ repo: String) async {
         await prepare { try await githubPreparation(installer, repo) }
     }
-    private func prepare(using operation: () async throws -> PendingPlugin) async {
+    private func prepare(using operation: () async throws -> PendingPlugin?) async {
         guard !busy, pending == nil else { return }
         preparation = .checking; errorMessage = nil
         do {
@@ -63,26 +75,159 @@ public enum PluginPreparation: Equatable {
     public func install() async {
         guard let pending, !busy else { return }; installing = true; errorMessage = nil
         defer { installing = false }
-        do { let plugin = try await installer.install(pending); if !disabled.contains(plugin.id) { sources[plugin.id] = try await source(plugin) }; self.pending = nil; await restore() }
+        do { try await apply(pending); self.pending = nil; await restore() }
         catch { errorMessage = error.localizedDescription }
     }
     public func discard() async { if let pending { await installer.discard(pending) }; pending = nil }
     public func setEnabled(_ plugin: InstalledPlugin, enabled: Bool) async {
+        guard !busy else { return }
         do { try await installer.setEnabled(plugin.id, enabled: enabled); await restore() }
         catch { errorMessage = error.localizedDescription }
     }
-    public func update(_ plugin: InstalledPlugin) async { if let repo = plugin.repository { await prepareGitHub(repo) } }
-    public func checkUpdates() async {
-        guard !checking else { return }; checking = true; defer { checking = false }
-        if let values = try? await installer.checkUpdates() {
-            updates = values.filter { id, version in
-                installed.first(where: { $0.id == id }).map { PluginInstaller.isNewer(version, than: $0.manifest.version ?? "0.0.0") } == true
+    public func update(_ plugin: InstalledPlugin) async {
+        guard !checking, plugin.repository != nil else { return }
+        let current = installed.first(where: { $0.id == plugin.id }) ?? plugin
+        await prepare {
+            let update = try await installer.prepareUpdate(current)
+            if update == nil {
+                updates[current.id] = nil
+                updateIssues[current.id] = AppLocalization.text("已是最新版本")
             }
+            return update
         }
     }
-    public func remove(_ plugin: InstalledPlugin) async {
-        do { try await installer.remove(plugin); sources[plugin.id] = nil; installed.removeAll { $0.id == plugin.id }; revision += 1 }
-        catch { errorMessage = error.localizedDescription }
+
+    public func checkUpdates(force: Bool = false) async {
+        guard !busy, !checking, pending == nil else { return }
+        checking = true; updateStatus = nil; errorMessage = nil
+        defer { checking = false }
+        do {
+            let report = try await installer.checkUpdates(force: force)
+            updates = report.versions.filter { id, version in
+                installed.contains { $0.id == id && $0.repository != nil && !($0.revision?.hasPrefix(version) ?? false) }
+            }
+            let githubIDs = Set(installed.filter { $0.repository != nil }.map(\.id))
+            updateIssues = Dictionary(uniqueKeysWithValues: report.failed.filter { githubIDs.contains($0) }.map { ($0, AppLocalization.text("检测更新失败")) })
+            if force { updateStatus = AppLocalization.text("可更新 %lld 个 · 检测失败 %lld 个", arguments: [updates.count, updateIssues.count]) }
+        } catch { if force, !Task.isCancelled { reportError(error) } }
+    }
+
+    public func updateAll() async {
+        guard !busy, !checking, pending == nil else { return }
+        let candidates = installed.filter { $0.repository != nil }
+        guard !candidates.isEmpty else { return }
+        updatingAll = true; updateStatus = nil; errorMessage = nil; updateIssues = [:]
+        defer { updatingAll = false }
+        var updated = 0, review = 0, failed = 0
+        for plugin in candidates where !Task.isCancelled {
+            do {
+                guard let next = try await installer.prepareUpdate(plugin) else { updates[plugin.id] = nil; continue }
+                if Self.needsReview(from: plugin.manifest, to: next.manifest) {
+                    updates[plugin.id] = next.manifest.version ?? next.revision.map { String($0.prefix(12)) } ?? ""
+                    updateIssues[plugin.id] = AppLocalization.text("新增权限，请单独打开此更新确认")
+                    await installer.discard(next)
+                    review += 1
+                    continue
+                }
+                do { try await apply(next) }
+                catch { await installer.discard(next); throw error }
+                updated += 1
+            } catch {
+                if Task.isCancelled { break }
+                updateIssues[plugin.id] = error.localizedDescription
+                failed += 1
+            }
+        }
+        if updated > 0 { await restore() }
+        updateStatus = AppLocalization.text("已更新 %lld 个 · 需确认权限 %lld 个 · 失败 %lld 个", arguments: [updated, review, failed])
+    }
+
+    public func reviewStars(_ address: String) async {
+        guard !busy, !checking, pending == nil else { return }
+        starsBusy = true; starsStatus = nil
+        defer { starsBusy = false }
+        var entries: [PluginStarsEntry] = []
+        do {
+            let repositories = try await starsRepositories(address)
+            let existing = try await installer.installed()
+            var claimed: Set<String> = ["bilibili", "local"]
+            for repo in repositories {
+                try Task.checkCancellation()
+                do {
+                    let pending = try await githubPreparation(installer, repo)
+                    let id = pending.manifest.id
+                    let previous = existing.first { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+                    if claimed.contains(id.lowercased()) || (previous != nil &&
+                        (previous?.id != id || previous?.repository?.caseInsensitiveCompare(repo) != .orderedSame)) {
+                        await installer.discard(pending)
+                        throw PluginFailure.invalid(AppLocalization.text("该插件 ID 已被内置插件或其他来源占用"))
+                    }
+                    claimed.insert(id.lowercased())
+                    entries.append(PluginStarsEntry(repository: repo, issue: nil, pending: pending))
+                } catch {
+                    entries.append(PluginStarsEntry(repository: repo, issue: error.localizedDescription, pending: nil))
+                }
+            }
+            try Task.checkCancellation()
+            starsEntries = entries
+            if entries.isEmpty { starsStatus = AppLocalization.text("列表里没有找到插件仓库") }
+        } catch {
+            for entry in entries { if let pending = entry.pending { await installer.discard(pending) } }
+            if !Task.isCancelled { starsStatus = error.localizedDescription }
+        }
+    }
+
+    public func applyStars() async {
+        guard !starsBusy, !starsFinished, let entries = starsEntries, entries.contains(where: { $0.pending != nil }) else { return }
+        starsBusy = true
+        defer { starsBusy = false }
+        var applied = 0
+        var issues: [PluginStarsEntry] = []
+        for entry in entries {
+            guard let pending = entry.pending else { issues.append(entry); continue }
+            do {
+                try await apply(pending, requireSameRepository: true)
+                applied += 1
+            } catch {
+                await installer.discard(pending)
+                issues.append(PluginStarsEntry(repository: entry.repository, issue: error.localizedDescription, pending: nil))
+            }
+        }
+        await restore()
+        starsEntries = issues
+        starsFinished = true
+        starsStatus = AppLocalization.text("已导入或覆盖 %lld 个 · 失败或跳过 %lld 个", arguments: [applied, issues.count])
+    }
+
+    public func discardStars() async {
+        guard !starsBusy else { return }
+        let entries = starsEntries ?? []
+        starsEntries = nil; starsStatus = nil; starsFinished = false
+        for entry in entries { if let pending = entry.pending { await installer.discard(pending) } }
+    }
+
+    static func needsReview(from installed: PluginManifest, to update: PluginManifest) -> Bool {
+        let granted = Set(installed.permissions?.network ?? [])
+        return !granted.contains("*") && !Set(update.permissions?.network ?? []).isSubset(of: granted)
+    }
+
+    private func apply(_ pending: PendingPlugin, requireSameRepository: Bool = false) async throws {
+        let plugin = try await installer.install(pending, requireSameRepository: requireSameRepository)
+        sources[plugin.id] = nil
+        if !disabled.contains(plugin.id) { sources[plugin.id] = try await source(plugin) }
+        updates[plugin.id] = nil; updateIssues[plugin.id] = nil
+    }
+
+    @discardableResult public func remove(_ plugin: InstalledPlugin) async -> Bool {
+        guard !busy, pending == nil else { return false }
+        installing = true; errorMessage = nil
+        defer { installing = false }
+        do {
+            try await installer.remove(plugin)
+            sources[plugin.id] = nil; installed.removeAll { $0.id == plugin.id }; revision += 1
+            updates[plugin.id] = nil; updateIssues[plugin.id] = nil
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
     public func settings(for plugin: InstalledPlugin) async throws -> [String: String] { try await installer.settings(for: plugin) }
     public func saveSettings(_ settings: [String: String], for plugin: InstalledPlugin) async {

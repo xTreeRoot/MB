@@ -28,10 +28,13 @@ public struct MBRootView: View {
     @State private var showingSettings = false
     @State private var showingPlugins = false
     @State private var account: AccountModel
+    @State private var accountPlatformID: String
     @State private var commentTrack: Track?
     @State private var systemPlayback = SystemPlaybackCoordinator()
     @State private var downloads: DownloadModel
     @State private var preferences = PreferencesModel()
+    @State private var skin: BackgroundSkin
+    @State private var discoveryWidth: CGFloat = 360
     @State private var localLibrary: LocalLibraryModel
     @State private var previewLibrary: DemoLibrary?
     @State private var columns: NavigationSplitViewVisibility = .all
@@ -41,6 +44,7 @@ public struct MBRootView: View {
     @State private var source: any MusicSource
     @State private var selectedSourceID: String
     @State private var plugins: PluginModel
+    @State private var platformData = PlatformDataModel()
     @State private var currentInteractions: (any InteractionSource)?
     @State private var interactionTrackID: String?
     @State private var currentLibrarySource: (any LibrarySource)?
@@ -48,6 +52,7 @@ public struct MBRootView: View {
     private let initialSource: any MusicSource
     private let initialSourceID: String
     private let demo: Bool
+    private let demoTrackProblems: Bool
     private var search: SearchModel { searchScope == .videos ? videoSearch ?? trackSearch : trackSearch }
     private var input: String {
         get { searchInputs[searchScope, default: ""] }
@@ -57,20 +62,28 @@ public struct MBRootView: View {
     public init(source: any MusicSource, sourceID: String = "demo", demo: Bool = false) {
         let preview = demo ? DemoLibrary() : nil
         let router = SourceRouter()
+        #if DEBUG
+        let demoTrackProblems = demo && ProcessInfo.processInfo.arguments.contains("--plugin-track-problems")
+        #else
+        let demoTrackProblems = false
+        #endif
+        self.demoTrackProblems = demoTrackProblems
         self.router = router
         self.initialSource = source; self.initialSourceID = sourceID
         _selectedSourceID = State(initialValue: sourceID)
         _trackSearch = State(initialValue: SearchModel(source: source))
-        _playback = State(initialValue: PlaybackModel(source: demo ? source as? any PlaybackSource : router,
+        _playback = State(initialValue: PlaybackModel(source: demo && !demoTrackProblems ? source as? any PlaybackSource : router,
                                                      engine: NativeAudioEngine(), store: demo ? nil : AppPersistence.shared, mediaLibrary: demo ? nil : MediaLibrary.shared))
         _home = State(initialValue: (source as? any DiscoverySource).map { DiscoveryModel(source: $0) })
         _video = State(initialValue: VideoModel(source: demo ? source as? any VideoSource : router, store: demo ? nil : AppPersistence.shared))
         _source = State(initialValue: source)
         self.demo = demo
         _account = State(initialValue: AccountModel(source: source as? any AccountSource))
+        _accountPlatformID = State(initialValue: sourceID)
         _downloads = State(initialValue: DownloadModel(source: demo ? source as? any PlaybackSource : router, library: preview?.media ?? .shared))
         _localLibrary = State(initialValue: LocalLibraryModel(store: preview?.store ?? .shared))
         _previewLibrary = State(initialValue: preview)
+        _skin = State(initialValue: BackgroundSkin(directory: preview?.skinDirectory))
         let installer = preview.map { PluginInstaller(directory: $0.pluginDirectory) } ?? PluginInstaller()
         #if DEBUG
         if let preview, ProcessInfo.processInfo.arguments.contains("--plugin-check-demo") {
@@ -135,10 +148,11 @@ public struct MBRootView: View {
 
     private var tabs: some View {
         tabsWithPlayer
+            .environment(\.backgroundSkinImage, skin.image)
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
             .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences, watchVideo: { video.watchCurrent() }).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
             .sheet(isPresented: $showingQueue) { QueueView(playback: playback) }
-            .sheet(isPresented: $showingAppSettings) { SettingsView(preferences: preferences, network: networkSettings, plugins: plugins) }
+            .sheet(isPresented: $showingAppSettings) { SettingsView(preferences: preferences, network: networkSettings, plugins: plugins, skin: skin, platformData: platformData, account: verifiedProfileAccount, platform: selectedSourceID) }
             .sheet(item: $commentTrack) { track in
                 if let interactions = currentInteractions { CommentsView(source: interactions, track: track).id(account.revision) }
             }
@@ -155,6 +169,11 @@ public struct MBRootView: View {
 
     private var initializedTabs: some View {
         tabs
+            .task { await skin.restore() }
+            .task { if !demo { await platformData.restore() } }
+            .task(id: "\(selectedSourceID):\(accountPlatformID):\(account.revision):\(account.isSigningIn):\(account.isSigningOut):\(platformData.revision)") {
+                if !demo { platformData.sync(verifiedProfileAccount, platform: selectedSourceID) }
+            }
             .task {
                 await router.register(initialSource, id: initialSourceID)
                 if !demo { await plugins.restore(); await registerPlugins(); Task { await plugins.checkUpdates() } }
@@ -169,7 +188,7 @@ public struct MBRootView: View {
                     await previewLibrary.prepare()
                     #if DEBUG
                     if ProcessInfo.processInfo.arguments.contains("--plugin-demo") {
-                        do { await plugins.prepare(try previewLibrary.pluginFixture()) }
+                        do { await plugins.prepare(try previewLibrary.pluginFixture(includeTrackProblems: demoTrackProblems)) }
                         catch { plugins.reportError(error) }
                     }
                     #endif
@@ -207,14 +226,15 @@ public struct MBRootView: View {
             .onChange(of: selectedSourceID) { _, id in preferences.values.selectedSourceID = id }
             .onChange(of: selectedTab) { _, _ in inputFocused = false }
             .onChange(of: preferences.values.builtInEnabled) { _, enabled in
-                if !enabled, selectedSourceID == initialSourceID, plugins.sources[initialSourceID] == nil { selectedSourceID = plugins.sources.keys.sorted().first ?? "" }
-                if enabled, selectedSourceID.isEmpty { selectedSourceID = initialSourceID }
+                if !enabled, selectedSourceID == initialSourceID, plugins.sources[initialSourceID] == nil { switchSource(plugins.sources.keys.sorted().first ?? "") }
+                if enabled, selectedSourceID.isEmpty { switchSource(initialSourceID) }
                 Task { await registerPlugins() }
             }
             .onChange(of: plugins.revision) { _, _ in Task { await registerPlugins() } }
-            .onChange(of: playback.positionMilliseconds) { _, position in
-                video.sync(positionMilliseconds: position, playing: playback.state == .playing)
-            }
+            .onChange(of: playback.positionMilliseconds) { _, _ in syncVideoClock() }
+            .onChange(of: playback.audioBuffering) { _, _ in syncVideoClock() }
+            .onChange(of: video.isLoading) { _, _ in syncVideoClock() }
+            .onChange(of: video.isBuffering) { _, _ in syncVideoClock() }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { Task { await playback.saveNow(); if !demo { await preferences.flush() } } }
                 else if !demo { Task { await plugins.checkUpdates() } }
@@ -229,7 +249,7 @@ public struct MBRootView: View {
                 for item in items { playback.updateLocalTrack(item.track) }
             }
             .onChange(of: playback.state) { _, state in
-                video.sync(positionMilliseconds: playback.positionMilliseconds, playing: state == .playing)
+                syncVideoClock()
                 if state == .playing, let track = playback.queue.current {
                     Task { await localLibrary.recordPlay(track) }
                     if recordedSelection != playback.selectionRevision {
@@ -244,6 +264,7 @@ public struct MBRootView: View {
                                       positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing)
             }
             .onChange(of: video.isVisible) { _, visible in
+                syncVideoClock()
                 if visible { showingPlayer = false; showVideo() }
                 else { path.removeAll { $0 == .video }; searchPath.removeAll { $0 == .video } }
             }
@@ -256,6 +277,11 @@ public struct MBRootView: View {
             .onChange(of: searchPath) { _, pages in
                 if selectedTab == .search, !pages.contains(.video), video.isVisible { video.browse() }
             }
+    }
+
+    private func syncVideoClock() {
+        video.sync(positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing && !playback.audioBuffering)
+        playback.holdForVideo(video.isVisible && (video.isLoading || video.isBuffering))
     }
 
     public var body: some View {
@@ -322,8 +348,18 @@ public struct MBRootView: View {
     private var navigation: some View {
         NavigationStack(path: $path) {
             browsingHome
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { discoveryWidth = $0 }
                 .navigationTitle("发现")
-                .toolbar { toolbar }
+                .toolbar {
+                    #if os(iOS)
+                    if path.isEmpty, !sourceTabs.isEmpty {
+                        ToolbarItem(placement: .topBarLeading) {
+                            SourceTabs(sources: sourceTabs, selected: selectedSourceID, width: max(48, min(440, discoveryWidth - 178)), select: switchSource)
+                        }
+                    }
+                    #endif
+                    toolbar
+                }
                 .navigationDestination(for: MBPage.self) { destination($0) }
         }
     }
@@ -401,7 +437,7 @@ public struct MBRootView: View {
                     NavigationLink("搜索音源") { PluginCatalogSearch(source: plugin, select: select, menu: trackMenu) }
                 }
             }.padding(20)
-        }.background(MBTheme.background)
+        }.modifier(SkinSurface(defaultColor: MBTheme.background))
             .scrollDismissesKeyboard(.immediately)
             .accessibilityIdentifier("search-landing")
     }
@@ -429,10 +465,6 @@ public struct MBRootView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Menu {
-                Picker("音源", selection: sourceSelection) {
-                    if preferences.values.builtInEnabled, plugins.sources[initialSourceID] == nil { Text(initialSource.displayName).tag(initialSourceID) }
-                    ForEach(plugins.installed.filter { !plugins.disabled.contains($0.id) }) { plugin in Text(plugin.manifest.displayName).tag(plugin.id) }
-                }
                 Button("听歌模式", systemImage: video.mode == .music ? "checkmark" : "music.note") { chooseMode(.music) }
                 Button("视频模式", systemImage: video.mode == .video ? "checkmark" : "play.rectangle") { chooseMode(.video) }
             } label: {
@@ -478,6 +510,7 @@ public struct MBRootView: View {
                             else { TrackRow(track: track, selected: selected) }
                         }
                             .buttonStyle(.plain).accessibilityLabel("选择 \(track.title)")
+                            .modifier(TrackProblemAccessibility(track: track, enabled: video.mode == .music))
                         Menu { trackMenu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                     }.contextMenu { trackMenu(track) }
                 }
@@ -489,7 +522,7 @@ public struct MBRootView: View {
                         if search.isLoading { ProgressView() }
                     }.frame(maxWidth: .infinity).listRowSeparator(.hidden)
                 }
-            }.listStyle(.plain)
+            }.listStyle(.plain).modifier(SkinSurface(list: true))
         }
     }
 
@@ -519,11 +552,18 @@ public struct MBRootView: View {
         await router.keep(Set(plugins.sources.keys).union(preferences.values.builtInEnabled ? [initialSourceID] : []))
         for (id, plugin) in plugins.sources { await router.register(plugin, id: id) }
     }
-    private var sourceSelection: Binding<String> {
-        Binding(get: { selectedSourceID }, set: { switchSource($0) })
+    private var sourceTabs: [SourceTab] {
+        var tabs = plugins.installed.compactMap { plugin in
+            plugins.sources[plugin.id] == nil ? nil : SourceTab(id: plugin.id, name: plugin.manifest.displayName)
+        }
+        if preferences.values.builtInEnabled, plugins.sources[initialSourceID] == nil {
+            tabs.insert(SourceTab(id: initialSourceID, name: initialSource.displayName), at: 0)
+        }
+        return tabs
     }
     private func switchSource(_ id: String) {
         guard id != selectedSourceID else { return }
+        platformData.cancelProfileSync()
         playback.clear()
         video.updateTrack(nil)
         showingPlayer = false; showingQueue = false; commentTrack = nil
@@ -536,8 +576,9 @@ public struct MBRootView: View {
         let chosen: any MusicSource
         if let plugin = plugins.sources[id] { chosen = plugin }
         else if id == initialSourceID, preferences.values.builtInEnabled { chosen = initialSource }
-        else if let fallback = plugins.sources.keys.sorted().first { selectedSourceID = fallback; return }
-        else if preferences.values.builtInEnabled { selectedSourceID = initialSourceID; return }
+        else if let fallback = plugins.sources.keys.sorted().first { switchSource(fallback); return }
+        else if preferences.values.builtInEnabled { switchSource(initialSourceID); return }
+        else if !id.isEmpty { switchSource(""); return }
         else { chosen = DisabledMusicSource() }
         account.cancelSignIn()
         let accountSource: (any AccountSource)?
@@ -556,8 +597,14 @@ public struct MBRootView: View {
         videoSearch = videoSearchSource.map { SearchModel(videoSource: $0) }
         home = (chosen as? any DiscoverySource).map { DiscoveryModel(source: $0) }
         account = AccountModel(source: accountSource)
+        accountPlatformID = id
         await account.restore()
         if let home { await home.refresh() }
+    }
+
+    private var verifiedProfileAccount: SourceAccount? {
+        guard selectedSourceID == accountPlatformID, !account.isSigningIn, !account.isSigningOut else { return nil }
+        return account.account
     }
 
     private func chooseMode(_ mode: PlaybackMode) {

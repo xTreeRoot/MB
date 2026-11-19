@@ -76,6 +76,7 @@ enum DemoCatalog {
 /// 演示资料与实际 App 沙盒资料库隔离；测试歌曲为程序生成的静音 WAV。
 @MainActor final class DemoLibrary {
     var pluginDirectory: URL { directory.appendingPathComponent("plugins") }
+    var skinDirectory: URL { directory.appendingPathComponent("background-skin") }
     let media: MediaLibrary
     let store: LocalLibraryStore
     private let directory: URL
@@ -85,15 +86,15 @@ enum DemoCatalog {
         media = MediaLibrary(directory: directory.appendingPathComponent("media"))
         store = LocalLibraryStore(directory: directory)
     }
-    func pluginFixture() throws -> URL {
+    func pluginFixture(includeTrackProblems: Bool = false) throws -> URL {
         let folder = directory.appendingPathComponent("plugin")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let manifest = #"{"id":"fixture","name":"示例插件","version":"1.0.0","minAppVersion":"0.1.0","settings":[{"key":"server","label":"服务地址","type":"text"},{"key":"enabled","label":"启用示例","type":"boolean"}],"permissions":{"network":["media.example.test"]},"navigation":[{"title":"示例分页","page":"more"}]}"#
         try manifest.write(to: folder.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
-        let script = #"""
+        let script = (includeTrackProblems ? "const extraTracks = [{id:'vip',name:'会员示例曲目',unavailableReason:'vip'}, {id:'missing',name:'无音源示例曲目'}];\n" : "const extraTracks = [];\n") + #"""
         let listName='示例歌单', listTracks=[];
         const track = {id:'sample',name:'插件示例歌曲',artists:[{id:'artist',name:'示例作者'}],album:{},duration:180000};
-        export function home(){return {title:'示例插件首页',sections:[{title:'示例曲目',tracks:[track],links:[{title:'更多示例',page:'more'}],albums:[{id:'al',name:'示例专辑'}],artists:[{id:'ar',name:'示例作者'}],playlists:[{id:'pl',name:listName,mine:true}],shows:[{id:'sh',name:'示例播客'}],stations:[{id:'st',name:'示例电台'}]}]};}
+        export function home(){return {title:'示例插件首页',sections:[{title:'示例曲目',tracks:[track,...extraTracks],links:[{title:'更多示例',page:'more'}],albums:[{id:'al',name:'示例专辑'}],artists:[{id:'ar',name:'示例作者'}],playlists:[{id:'pl',name:listName,mine:true}],shows:[{id:'sh',name:'示例播客'}],stations:[{id:'st',name:'示例电台'}]}]};}
         export function browse({page}){return {title:'示例分页',sections:[{title:'分页曲目',tracks:[track]}]};}
         export function search({query,kind}){return {tracks:kind==='tracks'?[{...track,name:query+' · 插件结果'}]:[],albums:kind==='albums'?[{id:'al',name:'示例专辑'}]:[],artists:kind==='artists'?[{id:'ar',name:'示例作者'}]:[],playlists:kind==='playlists'?[{id:'pl',name:listName,mine:true}]:[],shows:kind==='shows'?[{id:'sh',name:'示例播客'}]:[],more:false};}
         export function searchVideos({query,offset}){return offset===0?{tracks:[{...track,id:'sample-video',name:query+' · 视频结果'},{}],more:true}:offset===2?{tracks:[{...track,id:'sample-video-next',name:query+' · 更多视频'}],more:false}:{tracks:[],more:false};}
@@ -118,7 +119,7 @@ enum DemoCatalog {
         export function followArtist(){}
         export function subscribeShow(){}
         export function savePlaylist(){}
-        export function stream(){return {url:'https://media.example.test/sample.mp3',type:'mp3'};}
+        export function stream({id}){return id==='missing'?{url:''}:{url:'https://media.example.test/sample.mp3',type:'mp3'};}
         """#
         try script.write(to: folder.appendingPathComponent("index.js"), atomically: true, encoding: .utf8)
         return folder

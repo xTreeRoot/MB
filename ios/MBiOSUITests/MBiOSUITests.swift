@@ -8,10 +8,7 @@ final class MBiOSUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        let mode = app.buttons["切换播放模式"]
-        XCTAssertTrue(mode.waitForExistence(timeout: 20))
-        mode.tap()
-        let source = app.buttons["网易云音乐"]
+        let source = app.buttons.matching(NSPredicate(format: "label == %@", "网易云音乐")).firstMatch
         guard source.waitForExistence(timeout: 5) else {
             throw XCTSkip("需要预先安装 sogud/mygo-music-netease v0.1.14")
         }
@@ -331,7 +328,6 @@ final class MBiOSUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--plugin-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 15))
         selectTab("设置", app: app)
         let pluginLink = app.buttons["settings-plugins"]
         XCTAssertTrue(pluginLink.waitForExistence(timeout: 5))
@@ -359,17 +355,45 @@ final class MBiOSUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
         let oldPlayer = app.buttons["打开播放页，晚风里的片刻"]
         XCTAssertTrue(oldPlayer.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["切换播放模式"].waitForExistence(timeout: 5))
-        app.buttons["切换播放模式"].tap()
-        if app.buttons["音源"].exists { app.buttons["音源"].tap() }
-        app.buttons["示例插件"].tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        let pluginTab = app.buttons["source-tab-fixture"]
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5)); pluginTab.tap()
         XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
         XCTAssertTrue(oldPlayer.waitForNonExistence(timeout: 5), "切换平台应清除上一平台暂停中的曲目")
+        XCTAssertTrue(pluginTab.isSelected)
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].exists)
         capture("插件-首页-演示数据", app: app)
         app.buttons["更多示例"].tap()
         XCTAssertTrue(app.navigationBars["示例分页"].waitForExistence(timeout: 5))
         capture("插件-分页-演示数据", app: app)
+    }
+
+    @MainActor func testPluginTrackRowsExplainUnavailableAudio() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--plugin-demo", "--plugin-track-problems", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("设置", app: app)
+        let pluginLink = app.buttons["settings-plugins"]
+        XCTAssertTrue(pluginLink.waitForExistence(timeout: 5)); pluginLink.tap()
+        let install = app.buttons["安装"]
+        XCTAssertTrue(install.waitForExistence(timeout: 5)); install.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.waitForExistence(timeout: 5))
+        selectTab("发现", app: app)
+        let pluginTab = app.buttons["source-tab-fixture"]
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5)); pluginTab.tap()
+        XCTAssertTrue(pluginTab.isSelected)
+        XCTAssertTrue(app.buttons["播放 会员示例曲目"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["播放 会员示例曲目"].value as? String, "需要 VIP")
+        let missing = app.buttons["播放 无音源示例曲目"]
+        XCTAssertTrue(missing.exists)
+        XCTAssertNotEqual(missing.value as? String, "音源不可用")
+        missing.tap()
+        let play = app.buttons["播放"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 5)); play.tap()
+        let unavailable = expectation(for: NSPredicate(format: "value == %@", "音源不可用"), evaluatedWith: missing)
+        wait(for: [unavailable], timeout: 5)
+        capture("插件-曲目不可播原因", app: app)
     }
 
     @MainActor func testLanguageSwitchUpdatesPagesAndSettings() throws {
@@ -556,6 +580,39 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.exists)
     }
 
+    @MainActor func testPlatformNodeRequiresAddressAndPassword() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("设置", app: app)
+        let address = app.textFields["HTTPS 节点地址"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.secureTextFields["节点密码"].exists)
+        XCTAssertFalse(app.buttons["接入节点"].isEnabled)
+        capture("设置-MB-Server-未接入", app: app)
+    }
+
+    @MainActor func testPluginsStarsImportAsksForAPublicList() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("设置", app: app)
+        app.buttons["settings-plugins"].tap()
+        let open = app.buttons["plugin-import-stars"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
+        let field = app.textFields["plugin-stars-address"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText("https://example.test/list")
+        app.buttons["plugin-stars-read"].tap()
+        let problem = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "请输入公开的 GitHub 星标列表地址")).firstMatch
+        XCTAssertTrue(problem.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["plugin-stars-confirm"].exists)
+        capture("插件-星标列表导入弹窗", app: app)
+        app.buttons["关闭"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+    }
+
     @MainActor func testPluginVideoSearchKeepsMusicAndVideoResultsSeparate() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -570,9 +627,9 @@ final class MBiOSUITests: XCTestCase {
         selectTab("搜索", app: app)
         let videos = app.segmentedControls["search-scope"].buttons["视频"]
         XCTAssertFalse(videos.exists)
-        app.buttons["切换播放模式"].tap()
-        if app.buttons["音源"].exists { app.buttons["音源"].tap() }
-        app.buttons["示例插件"].tap()
+        selectTab("发现", app: app)
+        app.buttons["source-tab-fixture"].tap()
+        selectTab("搜索", app: app)
         XCTAssertTrue(videos.waitForExistence(timeout: 5))
         let field = app.textFields["搜索视频、音乐、UP 主"]
         field.tap(); field.typeText("music\n")
@@ -611,9 +668,7 @@ final class MBiOSUITests: XCTestCase {
         capture("插件-停用音源-演示数据", app: app)
         app.switches["启用音源"].tap()
         selectTab("发现", app: app)
-        app.buttons["切换播放模式"].tap()
-        if app.buttons["音源"].exists { app.buttons["音源"].tap() }
-        app.buttons["示例插件"].tap()
+        app.buttons["source-tab-fixture"].tap()
         XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
         for (title, detail) in [("示例专辑", "专辑"), ("示例作者", "作者"), ("示例播客", "播客"), ("示例电台", "电台")] {
             let link = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch

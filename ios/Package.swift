@@ -13,7 +13,7 @@ let package = Package(
     targets: [
         .target(name: "MBSignal", linkerSettings: [.linkedFramework("MediaToolbox"), .linkedFramework("AudioToolbox")]),
         .target(name: "MBJavaScript", exclude: ["UPSTREAM.md", "vendor/LICENSE"], cSettings: [.define("CONFIG_VERSION", to: "\"2026-06-04\"")]),
-        .target(name: "MBFoundation", dependencies: ["MBSignal", "MBJavaScript", .product(name: "ZIPFoundation", package: "ZIPFoundation")], resources: [.copy("Resources/PluginBootstrap.js")]),
+        .target(name: "MBFoundation", dependencies: ["MBSignal", "MBJavaScript", .product(name: "ZIPFoundation", package: "ZIPFoundation")], resources: [.copy("Resources/PluginBootstrap.js")], linkerSettings: [.linkedLibrary("xml2")]),
         .target(name: "MBBilibili", dependencies: ["MBFoundation"]),
         .target(name: "MBInterface", dependencies: ["MBFoundation"]),
         .executableTarget(name: "MBSearchProbe", dependencies: ["MBBilibili", "MBFoundation"]),

@@ -252,6 +252,38 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
     }
 }
 
+@Test func pluginMediaProblemsUseCodesAndNeverGuessFromMessages() async throws {
+    try await withPlugin("""
+    export function search() { return {tracks:[{id:'one',name:'Track',unavailableReason:'vip'}], more:false}; }
+    export async function stream({id}) {
+      switch (id) {
+        case 'one': await new Promise(resolve => setTimeout(resolve, 0)); throw Object.assign(new Error('blocked'), {code:'vip'});
+        case 'two': return {url:''};
+        case 'three': throw new Error('VIP only');
+        default: return {url:'bad-url'};
+      }
+    }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let tracks = try await source.search(query: "Track", page: 1).tracks
+        #expect(tracks.first?.declaredProblem == .vip)
+        for id in ["one", "two", "three", "four"] {
+            do {
+                _ = try await source.audio(trackID: id)
+                Issue.record("Expected resolution to fail for \(id)")
+            } catch PluginFailure.playback(let problem, _) {
+                #expect(id == "one" && problem == .vip)
+            } catch let problem as TrackProblem {
+                #expect(id == "two" && problem == .noSource)
+            } catch PluginFailure.execution {
+                #expect(id == "three" || id == "four")
+            } catch {
+                Issue.record("Unexpected media error \(error)")
+            }
+        }
+    }
+}
+
 
 @Test func pluginInterruptsInfiniteModuleInitialization() async throws {
     try await withPlugin("while(true){} export function ok(){return 42;}") { runtime, _, _ in

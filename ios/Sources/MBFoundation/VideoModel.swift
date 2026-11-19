@@ -9,10 +9,12 @@ import Observation
     func stop()
     var errorMessage: String? { get }
     var isBuffering: Bool { get }
+    var recoverable: Bool { get }
 }
 
 public extension VideoEngine {
     var isBuffering: Bool { false }
+    var recoverable: Bool { false }
     func load(resource: MediaResource, at milliseconds: Int64) async throws { try await load(url: resource.url, at: milliseconds) }
 }
 
@@ -42,6 +44,7 @@ public extension VideoEngine {
     @ObservationIgnored private var preferenceRevision = 0
     @ObservationIgnored private var position: Int64 = 0
     @ObservationIgnored private var playing = false
+    @ObservationIgnored private var refreshUsed = false
 
     public init(source: (any VideoSource)?, engine: any VideoEngine = NativeVideoEngine(), store: (any PlaybackModeStore)? = nil) {
         self.source = source
@@ -87,6 +90,7 @@ public extension VideoEngine {
 
     public func updateTrack(_ track: Track?) {
         guard self.track?.id != track?.id else { return }
+        refreshUsed = false
         release()
         self.track = track
         position = 0
@@ -96,6 +100,7 @@ public extension VideoEngine {
 
     public func handleSelection(_ track: Track?, intent: PlaybackSelectionIntent, positionMilliseconds: Int64, playing: Bool) {
         if intent == .content {
+            refreshUsed = false
             release()
             self.track = track
             position = positionMilliseconds
@@ -122,7 +127,7 @@ public extension VideoEngine {
     }
 
     public func browse() { isVisible = false; release() }
-    public func retry() { release(); load() }
+    public func retry() { refreshUsed = false; release(); load() }
 
     public func sync(positionMilliseconds: Int64, playing: Bool) {
         position = positionMilliseconds
@@ -136,7 +141,13 @@ public extension VideoEngine {
 
     private func refreshEngineStatus() {
         guard isReady else { return }
-        if let message = engine.errorMessage { release(); errorMessage = message; return }
+        if let message = engine.errorMessage {
+            let shouldRetry = engine.recoverable && !refreshUsed
+            release()
+            if shouldRetry { refreshUsed = true; load() }
+            else { errorMessage = message }
+            return
+        }
         isBuffering = engine.isBuffering
     }
 
@@ -166,6 +177,7 @@ public extension VideoEngine {
             } catch {
                 guard current == generation, !Task.isCancelled else { return }
                 release()
+                if MediaStreamingFailure.allowsRefresh(error), !refreshUsed { refreshUsed = true; load(); return }
                 errorMessage = "视频加载失败，点击重试"
             }
         }
@@ -191,9 +203,12 @@ public extension VideoEngine {
     private var itemObservation: NSKeyValueObservation?
     private var seeking = false
     private var seekGeneration = 0
+    private var seekTarget: Int64?
     private var remote: RemoteMediaAsset?
+    private var temporaryFile: URL?
     public var errorMessage: String? { player.currentItem?.error == nil ? nil : "视频读取失败，点击重试" }
-    public var isBuffering: Bool { player.currentItem?.status == .unknown || player.timeControlStatus == .waitingToPlayAtSpecifiedRate }
+    public var recoverable: Bool { remote?.lastFailure.map(MediaStreamingFailure.allowsRefresh) ?? false }
+    public var isBuffering: Bool { seeking || player.currentItem?.status == .unknown || player.timeControlStatus == .waitingToPlayAtSpecifiedRate }
     public init() {
         player.isMuted = true
         playerObservation = player.observe(\.timeControlStatus) { @Sendable [weak self] _, _ in
@@ -212,7 +227,17 @@ public extension VideoEngine {
         remote?.cancel()
         let loader = try RemoteMediaAsset(resource: resource)
         remote = loader
-        try await prepare(loader.asset, at: milliseconds)
+        do { try await prepare(loader.asset, at: milliseconds) }
+        catch {
+            try Task.checkCancellation()
+            let failure = loader.lastFailure ?? error
+            guard case MediaStreamingFailure.rangeStatus(200) = failure else { throw failure }
+            loader.cancel(); remote = nil
+            let file = try await NetworkClient.shared.download(resource, maximumBytes: 128 << 20)
+            if Task.isCancelled { try? FileManager.default.removeItem(at: file); throw CancellationError() }
+            temporaryFile = file
+            try await prepare(AVURLAsset(url: file), at: milliseconds)
+        }
     }
 
     private func prepare(_ asset: AVURLAsset, at milliseconds: Int64) async throws {
@@ -241,12 +266,16 @@ public extension VideoEngine {
         let seconds = player.currentTime().seconds
         let drift = Double(positionMilliseconds) - (seconds.isFinite ? seconds * 1_000 : 0)
         let buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-        if abs(drift) > (playing ? 600 : 80), !seeking, !buffering {
+        let newTarget = seekTarget.map { abs($0 - positionMilliseconds) > 120 } ?? false
+        if abs(drift) > (playing ? 600 : 80), newTarget || !seeking && !buffering {
             seeking = true
+            seekGeneration += 1
             let current = seekGeneration
+            seekTarget = positionMilliseconds
+            player.currentItem?.cancelPendingSeeks()
             player.seek(to: CMTime(value: max(0, positionMilliseconds), timescale: 1_000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 Task { @MainActor in
-                    if self?.seekGeneration == current { self?.seeking = false }
+                    if self?.seekGeneration == current { self?.seekTarget = nil; self?.seeking = false; self?.onUpdate?() }
                 }
             }
         }
@@ -264,5 +293,7 @@ public extension VideoEngine {
         player.pause()
         player.replaceCurrentItem(with: nil)
         seeking = false
+        seekTarget = nil
+        if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile); self.temporaryFile = nil }
     }
 }

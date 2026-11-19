@@ -18,7 +18,7 @@ public actor PluginRuntime {
     private var context: PluginContext?
     private struct Completed: Sendable { let id: Int32; let success: Bool; let value: PluginJSON }
     private var events: [Int32: Task<Void, Never>] = [:]
-    private var backgroundFailure: String?
+    private var backgroundFailure: (any Error)?
     private var loaded = false
     private var busy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -115,8 +115,8 @@ public actor PluginRuntime {
         let deadline = ContinuousClock.now + timeout
         while true {
             try Task.checkCancellation()
-            if let backgroundFailure { throw PluginFailure.execution(backgroundFailure) }
-            if status < 0 { throw PluginFailure.execution(readResult(context)) }
+            if let backgroundFailure { throw backgroundFailure }
+            if status < 0 { throw readFailure(context) }
             try scheduleEvents(context)
             if status > 0 { return try JSONDecoder().decode(PluginJSON.self, from: Data(readResult(context).utf8)) }
             guard ContinuousClock.now < deadline else { context.cancel(); throw PluginFailure.execution("Execution timed out") }
@@ -140,7 +140,10 @@ public actor PluginRuntime {
                     completed = Completed(id: Int32(id), success: true, value: value)
                 } catch {
                     await diagnostics?.record(event, result: nil, error: error)
-                    completed = Completed(id: Int32(id), success: false, value: .string(error.localizedDescription))
+                    completed = Completed(id: Int32(id), success: false, value: .object([
+                        "message": .string(error.localizedDescription),
+                        "code": TrackProblem.isConnectionError(error) ? .string("network") : .null,
+                    ]))
                 }
                 guard !Task.isCancelled else { return }
                 await self?.complete(completed, context: context)
@@ -153,9 +156,19 @@ public actor PluginRuntime {
         do {
             let json = try completed.value.encoded()
             let status = json.withCString { mbjs_settle(context.pointer, completed.id, completed.success ? 1 : 0, $0, 100) }
-            if status < 0 { backgroundFailure = readResult(context) }
+            if status < 0 { backgroundFailure = readFailure(context) }
             else { try scheduleEvents(context) }
-        } catch { backgroundFailure = error.localizedDescription }
+        } catch { backgroundFailure = error }
+    }
+    private func readFailure(_ context: PluginContext) -> any Error {
+        let message = readResult(context)
+        if let pointer = mbjs_error_code(context.pointer) {
+            defer { mbjs_free_string(pointer) }
+            let code = String(cString: pointer)
+            if let problem = TrackProblem.declared(code) { return PluginFailure.playback(problem, message) }
+            if code == "network" { return PluginFailure.playback(.network, message) }
+        }
+        return PluginFailure.execution(message)
     }
     private func readResult(_ context: PluginContext) -> String {
         guard let result = mbjs_result(context.pointer) else { return "null" }

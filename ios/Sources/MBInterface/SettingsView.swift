@@ -5,6 +5,10 @@ struct SettingsView: View {
     @Bindable var preferences: PreferencesModel
     let network: NetworkSettingsModel
     let plugins: PluginModel
+    let skin: BackgroundSkin
+    @Bindable var platformData: PlatformDataModel
+    let account: SourceAccount?
+    let platform: String
     @Environment(\.dismiss) private var dismiss
     @State private var clearingHistory = false
     var body: some View {
@@ -17,11 +21,26 @@ struct SettingsView: View {
                     Picker("外观", selection: $preferences.values.appearance) {
                         ForEach(AppAppearance.allCases) { mode in Text(LocalizedStringKey(mode.title)).tag(mode) }
                     }
+                    NavigationLink("背景皮肤") { BackgroundSkinSettings(skin: skin) }
+                        .accessibilityIdentifier("background-skin-settings")
                 }
                 Section {
                     NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
                     Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
                 } header: { Text("音源") }
+                Section("MB Server") {
+                    TextField("HTTPS 节点地址", text: $platformData.address).autocorrectionDisabled()
+                    SecureField("节点密码", text: $platformData.password)
+                    Button(platformData.linked ? "重新接入" : "接入节点") { Task { await platformData.join() } }
+                        .disabled(platformData.busy || platformData.password.isEmpty || platformData.address.isEmpty)
+                    if platformData.linked {
+                        Text(platformData.authorized ? "已绑定" : "授权已过期").foregroundStyle(.secondary)
+                        Button("同步当前平台资料") { platformData.sync(account, platform: platform, publish: true) }
+                            .disabled(platformData.busy || !platformData.authorized || account == nil)
+                        Button("解除此设备绑定", role: .destructive) { Task { await platformData.unlink() } }.disabled(platformData.busy)
+                    }
+                    if let message = platformData.message { Text(message).foregroundStyle(.secondary) }
+                }
                 Section("播放") {
                     Picker("音质", selection: $preferences.values.quality) {
                         ForEach(AudioQuality.allCases) { quality in Text(LocalizedStringKey(quality.title)).tag(quality) }

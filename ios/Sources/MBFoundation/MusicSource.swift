@@ -12,10 +12,15 @@ public struct Track: Identifiable, Equatable, Codable, Sendable {
     public var artworkHeaders: [String: String] = [:]
     public var artistID: String?
     public var unavailable: Bool?
+    public var unavailableReason: TrackProblem?
     public var localFileID: String?
     public var localMetadata: LocalAudioMetadata?
 
     public var id: String { "\(sourceID):\(sourceTrackID)" }
+
+    public var declaredProblem: TrackProblem? {
+        unavailableReason ?? (unavailable == true ? .unavailable : nil)
+    }
 
     public init(sourceID: String, sourceTrackID: String, title: String, artist: String,
                 artworkURL: URL? = nil, durationMilliseconds: Int64 = 0, pageURL: URL? = nil) {
@@ -26,6 +31,43 @@ public struct Track: Identifiable, Equatable, Codable, Sendable {
         self.artworkURL = artworkURL
         self.durationMilliseconds = max(0, durationMilliseconds)
         self.pageURL = pageURL
+    }
+}
+
+public enum TrackProblem: String, Codable, LocalizedError, Sendable {
+    case vip, noSource, signIn, unavailable, network, unknown
+
+    public var label: String {
+        switch self {
+        case .vip: AppLocalization.text("需要 VIP")
+        case .noSource: AppLocalization.text("音源不可用")
+        case .signIn: AppLocalization.text("登录后可播放")
+        case .unavailable: AppLocalization.text("此曲目暂不可播放")
+        case .network: AppLocalization.text("网络错误，可重试")
+        case .unknown: AppLocalization.text("播放失败，原因未知")
+        }
+    }
+
+    public var errorDescription: String? { label }
+
+    static func declared(_ code: String?) -> Self? {
+        switch code {
+        case "vip": .vip
+        case "noSource": .noSource
+        case "signIn": .signIn
+        case "unavailable": .unavailable
+        default: nil
+        }
+    }
+
+    static func isConnectionError(_ error: Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        switch error.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+             .dnsLookupFailed, .notConnectedToInternet, .internationalRoamingOff, .dataNotAllowed:
+            return true
+        default: return false
+        }
     }
 }
 

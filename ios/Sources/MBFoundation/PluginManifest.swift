@@ -2,10 +2,11 @@ import Foundation
 
 public enum PluginFailure: LocalizedError, Sendable {
     case invalid(String), execution(String), unavailable
+    case playback(TrackProblem, String)
     public var errorDescription: String? {
         switch self {
         case .invalid(let reason): AppLocalization.text("插件无效：%@", arguments: [reason])
-        case .execution(let reason): AppLocalization.text("插件执行失败：%@", arguments: [reason])
+        case .execution(let reason), .playback(_, let reason): AppLocalization.text("插件执行失败：%@", arguments: [reason])
         case .unavailable: AppLocalization.text("此插件需要 iOS 不提供的桌面宿主能力")
         }
     }

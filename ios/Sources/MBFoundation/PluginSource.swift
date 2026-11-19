@@ -120,6 +120,7 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
             let artists = value["artists"].array
             var track = Track(sourceID: manifest.id, sourceTrackID: id, title: title, artist: artists.compactMap { $0["name"].string }.joined(separator: ", "), artworkURL: value["album"]["imageUrl"].string.flatMap(URL.init(string:)), durationMilliseconds: Int64(value["duration"].integer ?? 0), pageURL: value["url"].string.flatMap(URL.init(string:)))
             track.unavailable = value["unavailable"] == .bool(true)
+            track.unavailableReason = TrackProblem.declared(value["unavailableReason"].string)
             track.artistID = artists.first?["id"].string
             if let url = track.artworkURL { track.artworkHeaders = try await runtime.headers(for: url, kind: "image") }
             result.append(track)
@@ -127,7 +128,8 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         return result
     }
     private func resource(_ value: PluginJSON) async throws -> MediaResource {
-        guard let address = value["url"].string, let url = URL(string: address), ["https", "http"].contains(url.scheme ?? ""), url.user == nil else { throw PluginFailure.execution("Invalid media URL") }
+        guard let address = value["url"].string, !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TrackProblem.noSource }
+        guard let url = URL(string: address), ["https", "http"].contains(url.scheme ?? ""), url.host != nil, url.user == nil else { throw PluginFailure.execution("Invalid media URL") }
         var headers = try await runtime.headers(for: url, kind: "audio")
         if case .object(let own) = value["headers"] {
             for (name, value) in own { if let text = value.string { headers = headers.filter { $0.key.lowercased() != name.lowercased() }; headers[name] = text } }

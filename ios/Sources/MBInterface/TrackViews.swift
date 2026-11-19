@@ -120,23 +120,38 @@ struct RemoteArtwork: View {
     }
 }
 
+struct TrackProblemAccessibility: ViewModifier {
+    @Environment(\.stationPlayback) private var playback
+    let track: Track
+    var enabled = true
+
+    func body(content: Content) -> some View {
+        let problem = enabled ? (playback?.trackProblem(for: track) ?? track.declaredProblem) : nil
+        content.accessibilityValue(problem?.label ?? "")
+    }
+}
+
 struct TrackRow: View {
+    @Environment(\.stationPlayback) private var playback
     let track: Track
     var selected = false
 
     var body: some View {
+        let problem = playback?.trackProblem(for: track) ?? track.declaredProblem
         HStack(spacing: 14) {
             ArtworkView(track: track)
             VStack(alignment: .leading, spacing: 5) {
                 Text(track.title).font(.body.weight(.medium)).lineLimit(2)
                     .foregroundStyle(selected ? MBTheme.accent : .primary)
                 Text(track.artist.isEmpty ? "未知作者" : track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if let problem {
+                    Text(problem.label).font(.caption.weight(.medium)).foregroundStyle(MBTheme.accent)
+                }
             }
             Spacer(minLength: 8)
             Text(TimeLabel.string(milliseconds: track.durationMilliseconds))
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .opacity(track.unavailable == true ? 0.45 : 1)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

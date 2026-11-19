@@ -57,7 +57,7 @@ struct DiscoveryHomeView: View {
                     } actions: { Button("重新加载") { Task { await model.refresh() } }.buttonStyle(.borderedProminent) }
                 }
             }.padding(.top, 12).padding(.bottom, 24)
-        }.background(MBTheme.background).refreshable { await model.refresh() }
+        }.modifier(SkinSurface(defaultColor: MBTheme.background)).refreshable { await model.refresh() }
     }
 }
 
