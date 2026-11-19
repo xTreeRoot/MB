@@ -1092,7 +1092,10 @@ extension MBiOSUITests {
         app.buttons["列表循环"].tap()
         XCTAssertTrue(app.staticTexts["已切换为单曲循环"].waitForExistence(timeout: 3))
         capture("播放器-中文模式与底部小字", app: app)
-        if app.buttons["横屏播放"].exists { app.buttons["横屏播放"].tap() }
+        // iPad 直接验证设备旋转，避免按钮强制方向掩盖窄弹层问题；iPhone 另验证主动横屏入口。
+        if UIDevice.current.userInterfaceIdiom == .phone, app.buttons["横屏播放"].exists {
+            app.buttons["横屏播放"].tap()
+        }
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["wide-player-lyrics"].waitForExistence(timeout: 8))
         for section in ["lyrics", "rhythm", "queue", "selection", "comments"] {
@@ -1112,7 +1115,9 @@ extension MBiOSUITests {
             XCTAssertTrue(app.buttons["下一首"].isHittable)
             capture("横屏播放器-" + section, app: app)
         }
-        if app.buttons["竖屏播放"].exists { app.buttons["竖屏播放"].tap() }
+        if UIDevice.current.userInterfaceIdiom == .phone, app.buttons["竖屏播放"].exists {
+            app.buttons["竖屏播放"].tap()
+        }
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.buttons["队列"].waitForExistence(timeout: 8))
         app.buttons["收起"].tap()

@@ -1,6 +1,6 @@
 # 播放器演示截图
 
-来自 iPhone/iPad 模拟器的演示数据，仅验证布局、动作与控件状态，不代表真实平台登录或视频播放。
+来自 Player21PhoneAccepted / Player21TabletAccepted 的 iPhone/iPad 模拟器演示数据，仅验证布局、动作与控件状态，不代表真实平台登录或视频播放。
 
 - [横屏播放器-comments](images/phone-01.jpg)
 - [横屏播放器-selection](images/phone-02.jpg)

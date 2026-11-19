@@ -1,8 +1,8 @@
 # 测试源码来源
 
 仓库：https://github.com/xTreeRoot/mygo-music-soda
-提交：`be2f38cb5cfa1df83469d9707e96c7ac3ac89be6`。
+提交：`216861de63b51c3e94e7c708f92feb8b43979c4b`。
 
 复制公开插件源码与说明，仅用于真实 QuickJS 合同回归；不含手机账号或会话数据。
 
-入口 SHA-256：`90f8116006918657206c71561c5601080aaadebcca1cd78f1f89e0629a46aa82`。
+入口 SHA-256：`4b4666a5cb5c080945fedf5b217d9d20f799eda0399ab404423f405de7468ac3`。

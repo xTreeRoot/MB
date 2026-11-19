@@ -1,8 +1,8 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `20`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `21`。
 
-build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号；汽水 0.3.2 支持扫码账号和个人歌单。YouTube 登录已获用户确认，汽水仍有业务拒绝，iPad 横屏回归未通过。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
+build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号，登录已获用户确认。build 21 修复 iPad 播放器窄弹层导致的横屏失效；iPhone/iPad 相关 UI 回归通过。汽水 0.3.4 对齐扫码确认参数并按平台说明提示抖音 App 验证，真实取码和等待扫码通过，完整授权及个人歌单仍待手机确认。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
 
 ## 在另一台 Mac 编译
 

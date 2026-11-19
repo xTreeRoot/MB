@@ -122,10 +122,16 @@ private actor SodaLoginRecoveryFixture {
         switch url.path {
         case "/passport/web/get_qrcode":
             qrRequests += 1
-            text = #"{"message":"success","data":{"token":"synthetic-ticket","qrcode_index_url":"https://bff-pc.qishui.com/synthetic"}}"#
+            text = #"{"message":"success","data":{"token":"synthetic-ticket","qrcode_index_url":"https://bff-pc.qishui.com/synthetic","copywriting":"请使用抖音 APP 扫码验证"}}"#
             headers["Set-Cookie"] = "passport_csrf_token=synthetic-csrf; Path=/passport; Secure"
         case "/passport/web/check_qrconnect":
             polls += 1
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            #expect(query.first(where: { $0.name == "iid" })?.value == "27960026095955")
+            #expect(query.first(where: { $0.name == "device_platform" }) == nil)
+            #expect(query.first(where: { $0.name == "account_sdk_source_info" }) == nil)
+            #expect(request.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("Mozilla/5.0 ") == true)
+            #expect(String(data: request.httpBody ?? Data(), encoding: .utf8)?.contains("is_frontier=true") == true)
             #expect(String(data: request.httpBody ?? Data(), encoding: .utf8)?.contains("token=synthetic-ticket") == true)
             #expect(request.value(forHTTPHeaderField: "Cookie") == "passport_csrf_token=synthetic-csrf")
             if polls == 1 { throw URLError(.networkConnectionLost) }
