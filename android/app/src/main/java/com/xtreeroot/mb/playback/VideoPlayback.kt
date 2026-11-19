@@ -9,6 +9,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.xtreeroot.mb.music.AudioQuality
 import com.xtreeroot.mb.music.MediaResource
@@ -155,7 +156,8 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             ensureActive()
             if (!valid(stage)) { hideIfActive(stage); return@launch }
             stage.resource = media
-            val engine = ExoPlayer.Builder(context).setMediaSourceFactory(ProgressiveMediaSource.Factory {
+            val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+            val engine = ExoPlayer.Builder(context, renderers).setMediaSourceFactory(ProgressiveMediaSource.Factory {
                 guardedMediaHttp(http).apply { media.headers.forEach(::setRequestProperty) }
             }.recoverOutsideLoader()).build()
             stage.engine = engine
@@ -178,7 +180,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
                         load(stage, audio.currentPosition, retry)
                     } else {
                         retire(stage)
-                        mutable.value = VideoFrameState(stage.track.id, loading = false, error = "视频加载失败（${error.errorCodeName}）")
+                        mutable.value = VideoFrameState(stage.track.id, loading = false, error = "视频加载失败（${error.playbackDiagnostic(error.errorCode)}）")
                     }
                 }
             })

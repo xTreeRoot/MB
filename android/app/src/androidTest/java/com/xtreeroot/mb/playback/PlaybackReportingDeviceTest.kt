@@ -2,13 +2,17 @@ package com.xtreeroot.mb.playback
 
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xtreeroot.mb.MBApplication
+import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.plugin.InstalledPlugin
 import com.xtreeroot.mb.plugin.PluginSource
@@ -30,7 +34,126 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackReportingDeviceTest {
+    @Test fun unavailableSourceDoesNotPreventAnotherSongFromPlaying() = runBlocking {
+        withFixture { player ->
+            val removed = first.copy(sourceId = "removed-fixture", title = "Removed")
+            val store = ViewModelStore()
+            val model = withContext(Dispatchers.Main) {
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            try {
+                eventually { model.playback.value.connected }
+                withContext(Dispatchers.Main) { model.play(listOf(removed, first, second), second) }
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id }
+                withContext(Dispatchers.Main) {
+                    assertEquals(listOf(first.id, second.id), model.playback.value.tracks.map(Track::id))
+                    model.play(listOf(removed, first, second), removed)
+                    assertEquals(second.id, model.playback.value.current?.id)
+                    assertEquals(PlaybackIssue.SourceUnavailable,
+                        app.trackPlaybackIssues.values.value[removed.playbackKey]?.issue)
+                    model.playGroup(listOf(removed, first, second), shuffle = false)
+                }
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == first.id }
+            } finally {
+                app.trackPlaybackIssues.playing(removed)
+                withContext(Dispatchers.Main) { store.clear() }
+            }
+        }
+    }
+
     private val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MBApplication
+
+    @Test fun selectingASongReconnectsAfterPlaybackServiceBecomesAvailable() = runBlocking {
+        val service = ComponentName(app, PlaybackService::class.java)
+        val packages = app.packageManager
+        val original = packages.getComponentEnabledSetting(service)
+        val store = ViewModelStore()
+        try {
+            val model = withContext(Dispatchers.Main) {
+                packages.setComponentEnabledSetting(service, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            eventually { model.playback.value.connectionIssue == PlaybackConnectionIssue.Unavailable && !model.playback.value.connected }
+            withContext(Dispatchers.Main) {
+                packages.setComponentEnabledSetting(service, original, PackageManager.DONT_KILL_APP)
+            }
+            withFixture { player ->
+                withContext(Dispatchers.Main) { model.play(listOf(first), first) }
+                eventually { model.playback.value.connected && model.playback.value.connectionIssue == null }
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == first.id && player.currentPosition > 0 }
+            }
+        } finally {
+            withContext(Dispatchers.Main) {
+                packages.setComponentEnabledSetting(service, original, PackageManager.DONT_KILL_APP)
+                store.clear()
+            }
+        }
+    }
+
+    @Test fun connectingPlaysOnlyTheLatestSelectionAndDiscardsAClearedSelection() = runBlocking {
+        withFixture { player ->
+            val cancelledStore = ViewModelStore()
+            val playbackStore = ViewModelStore()
+            try {
+                val factory = ViewModelProvider.AndroidViewModelFactory.getInstance(app)
+                val cancelled = withContext(Dispatchers.Main) {
+                    ViewModelProvider(cancelledStore, factory)[PlaybackModel::class.java].also { model ->
+                        assertTrue(!model.playback.value.connected)
+                        model.play(listOf(first), first)
+                        model.clear()
+                    }
+                }
+                eventually { cancelled.playback.value.connected }
+                assertTrue(cancelled.playback.value.tracks.isEmpty())
+                val model = withContext(Dispatchers.Main) {
+                    ViewModelProvider(playbackStore, factory)[PlaybackModel::class.java].also { connecting ->
+                        assertTrue(!connecting.playback.value.connected)
+                        connecting.play(listOf(first, second), first)
+                        connecting.play(listOf(first, second), second)
+                    }
+                }
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id && player.currentPosition > 0 }
+                assertEquals(second.id, model.playback.value.current?.id)
+                suspend fun reports() = source.search("reports", 1).tracks.map(Track::title)
+                withTimeout(6_000) { while (reports().isEmpty()) delay(20) }
+                assertEquals(listOf("second"), reports())
+            } finally {
+                withContext(Dispatchers.Main) { cancelledStore.clear(); playbackStore.clear() }
+            }
+        }
+    }
+
+    @Test fun scrubbingPositionsAPausedQueueBeforePreparationAndRejectsAnOldSelection() = runBlocking {
+        withFixture { player ->
+            val store = ViewModelStore()
+            val model = withContext(Dispatchers.Main) {
+                player.pause()
+                player.stop()
+                player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 0)
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            try {
+                eventually { model.playback.value.seekable && model.playback.value.current?.id == first.id }
+                withContext(Dispatchers.Main) { model.seekCurrent(first.id, 0, 20_000) }
+                eventually { player.currentPosition == 20_000L }
+                withContext(Dispatchers.Main) {
+                    assertEquals(Player.STATE_IDLE, player.playbackState)
+                    assertTrue(!player.playWhenReady)
+                    player.seekTo(1, 5_000)
+                }
+                eventually { model.playback.value.current?.id == second.id && player.currentPosition == 5_000L }
+                withContext(Dispatchers.Main) {
+                    model.seekCurrent(first.id, 0, 40_000)
+                    assertEquals(5_000L, player.currentPosition)
+                    assertEquals(5_000L, model.playback.value.positionMs)
+                    player.prepare()
+                }
+                eventually { player.playbackState == Player.STATE_READY && player.currentPosition == 5_000L }
+            } finally {
+                withContext(Dispatchers.Main) { store.clear() }
+            }
+        }
+    }
 
     @Test fun mediaTitleUsesCurrentLyricWithoutChangingQueueMetadata() = runBlocking {
         val original = app.settings.values.value.nowPlayingLyrics

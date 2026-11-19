@@ -8,10 +8,11 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.text.style.TextOverflow
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.Track
+import com.xtreeroot.mb.playback.TrackPlaybackFailure
 import com.xtreeroot.mb.playback.PlaybackTrackKey
 import com.xtreeroot.mb.playback.playbackKey
 
-internal val LocalTrackPlaybackIssues = compositionLocalOf<Map<PlaybackTrackKey, PlaybackIssue>> { emptyMap() }
+internal val LocalTrackPlaybackIssues = compositionLocalOf<Map<PlaybackTrackKey, TrackPlaybackFailure>> { emptyMap() }
 
 @Composable
 internal fun TrackSubtitle(track: Track) {
@@ -23,7 +24,7 @@ internal fun TrackSubtitle(track: Track) {
 
 @Composable
 internal fun TrackPlaybackStatus(track: Track) {
-    val issue = track.unavailableReason?.issue ?: LocalTrackPlaybackIssues.current[track.playbackKey]
+    val issue = track.unavailableReason?.issue ?: LocalTrackPlaybackIssues.current[track.playbackKey]?.issue
         ?: PlaybackIssue.Unavailable.takeIf { track.unavailable }
     val text = when (issue) {
         PlaybackIssue.Vip -> mb("需要 VIP", "VIP required")

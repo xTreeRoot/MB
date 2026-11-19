@@ -2,7 +2,7 @@ package com.xtreeroot.mb.plugin
 
 import org.json.JSONObject
 
-internal class PluginException(message: String) : Exception(message)
+internal class PluginException(message: String, val code: String? = null) : Exception(message)
 
 internal data class PluginManifest(
     val id: String,
@@ -20,7 +20,7 @@ internal data class PluginManifest(
     companion object {
         private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9_.-]*")
         private val versionPattern = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
-        private val hostVersion = listOf(0, 1, 25)
+        private val hostVersion = listOf(0, 1, 27)
 
         fun parse(json: JSONObject): PluginManifest {
             val id = json.requiredText("id")

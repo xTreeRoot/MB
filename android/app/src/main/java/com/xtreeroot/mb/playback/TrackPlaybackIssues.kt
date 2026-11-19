@@ -16,12 +16,15 @@ internal data class PlaybackTrackKey(val sourceId: String, val trackId: String)
 
 internal val Track.playbackKey: PlaybackTrackKey get() = PlaybackTrackKey(sourceId, sourceTrackId)
 
+internal data class TrackPlaybackFailure(val issue: PlaybackIssue, val code: Int?, val diagnostic: String?)
+
 internal class TrackPlaybackIssues {
-    private val mutable = MutableStateFlow(emptyMap<PlaybackTrackKey, PlaybackIssue>())
+    private val mutable = MutableStateFlow(emptyMap<PlaybackTrackKey, TrackPlaybackFailure>())
     val values = mutable.asStateFlow()
 
-    fun failed(track: Track, issue: PlaybackIssue) = mutable.update { issues ->
-        val updated = (issues - track.playbackKey) + (track.playbackKey to issue)
+    fun failed(track: Track, issue: PlaybackIssue, error: PlaybackException? = null) = mutable.update { issues ->
+        val failure = TrackPlaybackFailure(issue, error?.errorCode, error?.playbackDiagnostic(error.errorCode))
+        val updated = (issues - track.playbackKey) + (track.playbackKey to failure)
         if (updated.size <= 256) updated else updated - updated.keys.first()
     }
 

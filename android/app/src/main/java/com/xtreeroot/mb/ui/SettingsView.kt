@@ -140,14 +140,12 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
             item { SettingSwitch(mb("从封面展开", "Expand from Cover"), values.growFromCover) { value -> update { it.copy(growFromCover = value) } } }
             item { SettingSwitch(mb("歌词火花", "Lyric Sparks"), values.stageSparks) { value -> update { it.copy(stageSparks = value) } } }
             item {
-                Choice(mb("播放器样式", "Player Style"), values.playerStyle, listOf(PlayerStyle.Cover to mb("封面", "Cover"),
-                    PlayerStyle.Vinyl to mb("黑胶", "Vinyl"), PlayerStyle.Cassette to mb("磁带", "Cassette"))) { option ->
+                Choice(mb("播放器样式", "Player Style"), values.playerStyle, PlayerStyle.entries.map { it to it.label() }) { option ->
                     update { it.copy(playerStyle = option) }
                 }
             }
             item {
-                Choice(mb("歌词舞台", "Lyric Stage"), values.lyricStyle, listOf(LyricStyle.Flow to mb("Flow · 流动", "Flow"),
-                    LyricStyle.Steps to mb("Steps · 阶梯", "Steps"), LyricStyle.Tilt to mb("Tilt · 倾诉", "Tilt"))) { option ->
+                Choice(mb("歌词舞台", "Lyric Stage"), values.lyricStyle, LyricStyle.entries.map { it to it.label() }) { option ->
                     update { it.copy(lyricStyle = option) }
                 }
             }

@@ -27,8 +27,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun SourceTabs(sources: Map<String, String>, selected: String, select: (String) -> Unit) {
-    val entries = sources.entries.toList()
+internal fun MusicTabs(tabs: Map<String, String>, selected: String, select: (String) -> Unit) {
+    val entries = tabs.entries.toList()
     val index = entries.indexOfFirst { it.key == selected }
     val state = rememberLazyListState(initialFirstVisibleItemIndex = index.coerceAtLeast(0))
     LaunchedEffect(selected, entries) {

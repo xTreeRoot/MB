@@ -22,7 +22,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import kotlin.coroutines.coroutineContext
@@ -37,6 +36,7 @@ internal class PluginRuntime(
     private val transport: PluginTransport = PluginHttpTransport(),
     private val webSignIn: suspend (PluginWebSignIn) -> String = { throw PluginException("Web sign-in is unavailable") },
     private val openURL: suspend (PluginWebLink) -> Unit = { throw PluginException("Opening web links is unavailable") },
+    private val oauthSignIn: suspend (PluginOAuthRequest) -> PluginFetchRequest = { throw PluginException("OAuth is unavailable") },
 ) {
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -67,12 +67,10 @@ internal class PluginRuntime(
     }
 
     suspend fun stream(arguments: JSONObject): Any = useMachine { runtime ->
-        val response = invoke(runtime, "__mbAndroidStream", arguments, 30_000) as? JSONObject
-            ?: throw PluginException("Invalid plugin stream response")
-        val code = response.optString("code")
-        val issue = TrackUnavailableReason.fromCode(code)?.issue ?: PlaybackIssue.Network.takeIf { code == "network" }
-        if (issue != null) throw PlaybackIssueException(issue, response.optString("message").ifBlank { "Plugin stream unavailable" })
-        response.opt("value") ?: JSONObject.NULL
+        if (!runtime.context.supports("stream")) {
+            throw PlaybackIssueException(PlaybackIssue.SourceUnavailable, "Plugin does not provide audio streams")
+        }
+        invoke(runtime, "stream", arguments, 30_000)
     }
 
     suspend fun signIn(prompt: (PluginPrompt) -> Unit): Any = useMachine { runtime ->
@@ -145,27 +143,12 @@ internal class PluginRuntime(
             else -> "unknown"
         }
         withTimeout(10_000) {
-            runtime.status = runtime.context.evaluate(bootstrap.replace(platform, "platform: \"android\", arch: \"$arch\""), "host.js", false, 100)
+            val android = """platform: "android", arch: "$arch", capabilities: Object.freeze({ webSignInHTML: true }),
+                oauthSignIn: options => request({ kind: "oauthSignIn", options })"""
+            runtime.status = runtime.context.evaluate(bootstrap.replace(platform, android), "host.js", false, 100)
             finish(runtime)
             val entry = JSONObject.quote("./${manifest.entry}")
-            val bridge = """
-                import * as plugin from $entry;
-                export * from $entry;
-                const playbackCodes = ${JSONArray(TrackUnavailableReason.entries.map { it.code } + "network")};
-                export async function __mbAndroidStream(args) {
-                  const stream = plugin.stream;
-                  if (typeof stream !== "function") return {code: "noSource"};
-                  try { return {value: await stream(args)}; }
-                  catch (error) {
-                    const code = error?.code;
-                    if (playbackCodes.includes(code)) {
-                      return {code, message: typeof error.message === "string" ? error.message : ""};
-                    }
-                    throw error;
-                  }
-                }
-            """.trimIndent()
-            runtime.status = runtime.context.evaluate(bridge, ".mb-android-entry.js", true, 500)
+            runtime.status = runtime.context.evaluate("export * from $entry;", ".mb-android-entry.js", true, 500)
             finish(runtime)
         }
         return runtime
@@ -192,7 +175,14 @@ internal class PluginRuntime(
 
     private fun checkStatus(runtime: Machine) {
         if (runtime.status == -2) throw PluginException("Invalid plugin invocation input")
-        if (runtime.status < 0) throw PluginException(runtime.context.result())
+        if (runtime.status < 0) {
+            val message = runtime.context.result()
+            val code = runtime.context.errorCode()
+            val issue = code?.let { TrackUnavailableReason.fromCode(it)?.issue }
+                ?: PlaybackIssue.Network.takeIf { code == pluginNetworkCode }
+            if (issue != null) throw PlaybackIssueException(issue, message)
+            throw PluginException(message)
+        }
     }
 
     private fun schedule(runtime: Machine) {
@@ -208,7 +198,8 @@ internal class PluginRuntime(
             if (runtime.events.size >= 512) throw PluginException("Plugin host request limit exceeded")
             val id = event.getInt("id")
             if (id <= 0 || runtime.events.containsKey(id)) throw PluginException("Invalid plugin host request")
-            val webAllowed = kind == "webSignIn" && runtime.signInRequests?.add(id) == true
+            val signInAllowed = (kind == "webSignIn" || kind == "oauthSignIn") &&
+                runtime.signInRequests?.takeIf { it.isEmpty() }?.add(id) == true
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 val (success, response) = try {
                     val value = when (kind) {
@@ -218,9 +209,14 @@ internal class PluginRuntime(
                         }
                         "fetch" -> transport.fetch(PluginFetchRequest.parse(event, manifest), manifest).toJson().toString()
                         "webSignIn" -> {
-                            if (!webAllowed) throw PluginException("Web sign-in requires an active sign-in request")
+                            if (!signInAllowed) throw PluginException("Web sign-in requires an active sign-in request")
                             val cookie = webSignIn(PluginWebSignIn.parse(event, manifest))
                             JSONObject().put("cookie", cookie).toString()
+                        }
+                        "oauthSignIn" -> {
+                            if (!signInAllowed) throw PluginException("OAuth requires an active sign-in request")
+                            val exchange = oauthSignIn(PluginOAuthRequest.parse(event, manifest))
+                            oauthToken(transport.fetch(exchange, manifest)).toString()
                         }
                         "openURL" -> {
                             val address = (event.opt("url") as? String)?.let(::uri)?.takeIf(URI::isHttp)
@@ -237,13 +233,13 @@ internal class PluginRuntime(
                     if (!coroutineContext[Job]!!.isActive) return@launch
                     false to JSONObject.quote("Plugin host request timed out")
                 } catch (error: PluginException) {
-                    false to JSONObject.quote(error.message)
+                    false to JSONObject().put("message", error.message).put("code", error.code).toString()
                 } catch (_: Exception) {
                     false to JSONObject.quote("Plugin host request failed")
                 }
                 if (machine !== runtime) return@launch
                 runtime.events.remove(id)
-                if (webAllowed) runtime.signInRequests?.remove(id)
+                if (signInAllowed) runtime.signInRequests?.remove(id)
                 try {
                     runtime.status = runtime.context.settle(id, success, response)
                     checkStatus(runtime)

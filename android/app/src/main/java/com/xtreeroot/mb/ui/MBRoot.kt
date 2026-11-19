@@ -61,6 +61,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -74,6 +77,7 @@ import com.xtreeroot.mb.music.LibrarySource
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.toMetadataJson
 import com.xtreeroot.mb.music.toTrackMetadata
+import com.xtreeroot.mb.playback.PlaybackConnectionIssue
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.plugin.PluginSource
 import com.xtreeroot.mb.preferences.AppAppearance
@@ -176,6 +180,14 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val accountRoute = routes.lastOrNull().takeIf { tab == Tab.Account }
         val libraryPage by library.pages.state.collectAsStateWithLifecycle()
         val playback by player.playback.collectAsStateWithLifecycle()
+        var playerDirection by rememberSaveable(showPlayer) { mutableStateOf<PlaybackDirection?>(null) }
+        var videoFullscreen by rememberSaveable(showVideo, playback.current?.id) { mutableStateOf(false) }
+        val canRotate = applyPlaybackOrientation(when {
+            showSettings || showPlugins || playback.current == null -> null
+            showPlayer -> playerDirection
+            showVideo && videoFullscreen -> PlaybackDirection.Landscape
+            else -> null
+        })
         val focus = LocalFocusManager.current
         var seenVideoOpening by remember { mutableLongStateOf(playback.presentation.opening) }
         val user by account.account.collectAsStateWithLifecycle()
@@ -198,6 +210,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         }
         LaunchedEffect(nodeTarget) { nodeProfile.select(nodeTarget) { currentNodeTarget() == nodeTarget } }
         val webSignIn by app.pluginWebSignIn.requests.collectAsStateWithLifecycle(initialValue = null)
+        val oauthSignIn by app.pluginOAuth.requests.collectAsStateWithLifecycle(initialValue = null)
         val webLink by app.pluginWebLink.collectAsStateWithLifecycle()
         val playbackSignedIn = if (playback.current?.sourceId == app.bilibili.id) user.account != null
             else playback.current?.sourceId == pluginSource?.id && pluginUser.account != null
@@ -214,8 +227,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         LaunchedEffect(accountRoute, user.account?.id, preferences.builtInEnabled) {
             library.pages.open(accountRoute.takeIf { preferences.builtInEnabled })
         }
-        LaunchedEffect(playback.connected, playback.current?.id, playback.presentation.mode) {
-            if (playback.connected && playback.current == null) { showPlayer = false; showVideo = false }
+        LaunchedEffect(playback.connected, playback.current?.id, playback.presentation.mode, playback.connectionIssue) {
+            if ((playback.connected || playback.connectionIssue != null) && playback.current == null) { showPlayer = false; showVideo = false }
+            if (playback.connectionIssue != null) showQueue = false
             if (playback.presentation.mode == PlaybackMode.Music) showVideo = false
         }
         LaunchedEffect(playback.presentation.opening) {
@@ -228,8 +242,11 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val select: (List<Track>, Track) -> Unit = { tracks, track ->
             player.play(tracks, track)
         }
-        val selectGroup: (List<Track>, Boolean) -> Unit = { tracks, shuffle ->
-            tracks.firstOrNull { !it.isUnavailable }?.let { player.play(tracks, it, enableShuffle = shuffle) }
+        val selectGroup = player::playGroup
+        val openCategory: (DiscoveryCategory) -> Unit = { chosen ->
+            focus.clearFocus()
+            category = chosen
+            browser.open(chosen)
         }
         val showArtist: (String) -> Unit = { id ->
             showPlayer = false
@@ -290,11 +307,13 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         } else if (showPlayer && playback.current != null) {
             CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
                 NowPlaying(player, playback, preferences, saved, signedIn = playbackSignedIn, close = { showPlayer = false },
-                    showQueue = { showQueue = true }, showArtist = showArtist, openingCover = miniCover)
+                    showQueue = { showQueue = true }, showArtist = showArtist, openingCover = miniCover,
+                    rotate = if (canRotate) ({ playerDirection = it }) else null)
             }
         } else if (showVideo && playback.current != null) {
             CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
-                VideoDetailsScreen(player, playback, preferences, signedIn = playbackSignedIn,
+                VideoDetailsScreen(player, playback, preferences, signedIn = playbackSignedIn, fullScreen = videoFullscreen,
+                    setFullScreen = { videoFullscreen = it },
                     browse = { showVideo = false; player.closeVideo() },
                     openMusic = { showVideo = false; player.closeVideo(); showPlayer = true })
             }
@@ -335,7 +354,8 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     })
                 },
                 bottomBar = {
-                    if (!isWide || playback.current != null) MusicBottomDock {
+                    if (!isWide || playback.current != null || playback.connectionIssue != null) MusicBottomDock {
+                        playback.connectionIssue?.let { PlaybackConnectionNotice(it, player::retry) }
                         if (playback.current != null) {
                             MiniPlayer(playback, open = { showPlayer = true }, toggle = player::toggle,
                                 queue = { showQueue = true }, coverBounds = { miniCover = it })
@@ -359,22 +379,21 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     }
                     Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                         Column(Modifier.widthIn(max = 900.dp).fillMaxWidth().fillMaxHeight()) {
-                            if (discoverRoot && sourceId != null) SourceTabs(sourceNames, sourceId, switchSource)
+                            if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource)
                             Box(Modifier.weight(1f).fillMaxWidth()) { tabState.SaveableStateProvider(tab) {
                                 CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
                                     when {
                                         visibleCatalog != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
                                             visibleCatalog, catalog, playback.connected, select, player::play)
                                         tab != Tab.Library && sourceId == null -> EmptyMessage(mb("没有可用音源", "No available sources"))
+                                        category != null -> CategoryView(browser, checkNotNull(category), playback.connected, select)
                                         else -> when (tab) {
-                                        Tab.Discover -> if (category == null) Discover(browser, playback.connected, select) { chosen ->
-                                            category = chosen
-                                            browser.open(chosen)
-                                        } else CategoryView(browser, checkNotNull(category), playback.connected, select)
+                                        Tab.Discover -> Discover(browser, playback.connected, select, openCategory)
                                         Tab.Search -> {
                                             val id = activeSource?.id
                                             if (id != null) searchUiState.SaveableStateProvider(id) {
-                                                Search(browser, playback.connected, id, pluginSource, pluginSource?.let { catalog::search }, select)
+                                                Search(browser, playback.connected, id, pluginSource, pluginSource?.let { catalog::search },
+                                                    openCategory.takeIf { activeSource === app.bilibili }, select)
                                             }
                                             else EmptyMessage(mb("没有可用音源", "No available sources"))
                                         }
@@ -393,7 +412,14 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
             }
         }
         val webRequest = webSignIn
-        if (webRequest != null) key(webRequest.id) {
+        val oauthRequest = oauthSignIn
+        if (oauthRequest != null) key(oauthRequest.id) {
+            val cancelled = mb("已取消系统授权", "Authorization cancelled")
+            PluginOAuthDialog(oauthRequest, app.pluginOAuth) {
+                pluginAccount.cancelSignIn()
+                app.pluginOAuth.fail(oauthRequest.id, cancelled)
+            }
+        } else if (webRequest != null) key(webRequest.id) {
             PluginWebSignInView(webRequest, app.pluginWebSignIn) {
                 pluginAccount.cancelSignIn()
                 app.pluginWebSignIn.cancel(webRequest.id)
@@ -435,6 +461,19 @@ private fun DiscoverMore(refresh: (() -> Unit)?, settings: () -> Unit) {
             if (refresh != null) DropdownMenuItem(text = { Text(mb("刷新", "Refresh")) }, onClick = { expanded = false; refresh() })
             DropdownMenuItem(text = { Text(mb("设置", "Settings")) }, onClick = { expanded = false; settings() })
         }
+    }
+}
+
+@Composable
+private fun PlaybackConnectionNotice(issue: PlaybackConnectionIssue, reconnect: () -> Unit) {
+    val message = when (issue) {
+        PlaybackConnectionIssue.Unavailable -> mb("无法连接播放服务", "Can't connect to playback service")
+        PlaybackConnectionIssue.Disconnected -> mb("播放服务已断开", "Playback service disconnected")
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(message, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = reconnect) { Text(mb("重新连接", "Reconnect")) }
     }
 }
 

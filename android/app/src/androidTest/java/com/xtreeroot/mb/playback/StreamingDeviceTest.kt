@@ -22,6 +22,7 @@ import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.music.VideoSource
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +49,38 @@ import org.junit.Test
 @OptIn(UnstableApi::class)
 class StreamingDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    @Test fun exoplayerReadsAReusedPrefixAndContinuesIntoTheTail() = runBlocking {
+        val wave = wave(40)
+        val requests = CopyOnWriteArrayList<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request.header("Range").orEmpty()
+            media(request, wave)
+        }.build()
+        val resource = MediaResource("https://fixture.invalid/next.wav", emptyMap())
+        val prepared = checkNotNull(primeAudio(client, resource))
+        assertEquals(listOf("bytes=0-${audioPrefixBytes - 1}"), requests.toList())
+        val guard = MediaRangeGuard().apply { offer(prepared.prefix) }
+        val player = withContext(Dispatchers.Main) {
+            player(client, DataSource.Factory { guardedMediaHttp(client, guard) }).apply {
+                setMediaItem(MediaItem.fromUri(resource.url))
+                prepare()
+                play()
+            }
+        }
+        try {
+            eventually { player.isPlaying && player.currentPosition > 100 }
+            withContext(Dispatchers.Main) {
+                assertEquals(40_000L, player.duration)
+                assertNull(player.playerError)
+                player.seekTo(30_000)
+            }
+            eventually { player.isPlaying && player.currentPosition > 30_100 }
+            assertEquals("bytes=$audioPrefixBytes-", requests[1])
+            assertTrue(requests.drop(2).all { it.startsWith("bytes=") })
+        } finally { withContext(Dispatchers.Main) { player.release() } }
+    }
 
     @Test fun expiresAtNonzeroOffsetAndRestartsAtLatestPositionWithoutStartingPausedAudio() = runBlocking {
         val wave = wave(120)

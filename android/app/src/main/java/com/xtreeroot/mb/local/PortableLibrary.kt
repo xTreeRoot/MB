@@ -7,7 +7,9 @@ import androidx.core.content.edit
 import com.xtreeroot.mb.playback.QueueSnapshot
 import com.xtreeroot.mb.plugin.PluginInstaller
 import com.xtreeroot.mb.plugin.backupSettings
+import com.xtreeroot.mb.preferences.AppearanceBackgroundStore
 import com.xtreeroot.mb.preferences.SettingsStore
+import com.xtreeroot.mb.preferences.appearanceBackgroundByteLimit
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
@@ -41,13 +43,15 @@ internal data class PortableStatus(val linked: Boolean = false, val busy: Boolea
 @OptIn(FlowPreview::class)
 internal class PortableLibrary(private val context: Context, private val local: LocalAudioSource,
                                private val offline: OfflineMediaStore, private val playlists: LocalPlaylistStore,
-                               private val settings: SettingsStore, private val plugins: PluginInstaller) {
+                               private val settings: SettingsStore, private val plugins: PluginInstaller,
+                               private val background: AppearanceBackgroundStore) {
     private val resolver = context.contentResolver
     private val preferences = context.getSharedPreferences("portable-library", Context.MODE_PRIVATE)
     private val browse = context.getSharedPreferences("browse", Context.MODE_PRIVATE)
     private val playback = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operations = Mutex()
+    private var measuredBackground: Pair<Long, PortableAsset>? = null
     private fun linkedTree(): Uri? = preferences.getString("tree", null)?.let(Uri::parse)
     private val state = MutableStateFlow(PortableStatus(linkedTree() != null, savedAt = preferences.getLong("savedAt", 0)))
     private val changes = MutableStateFlow(0L)
@@ -59,8 +63,8 @@ internal class PortableLibrary(private val context: Context, private val local: 
         val retainedDownloads = offline.snapshot.map { saved -> saved.downloads.map(SavedAudio::fileName) to saved.limitMb }
             .distinctUntilChanged()
         scope.launch {
-            val preferencesAndPlugins = combine(settings.values, plugins.changes) { _, _ -> Unit }
-            combine(local.catalog.changes, retainedDownloads, playlists.playlists, changes, preferencesAndPlugins) { _, _, _, _, _ -> Unit }
+            val appearanceAndPlugins = combine(settings.values, plugins.changes, background.changes) { _, _, _ -> Unit }
+            combine(local.catalog.changes, retainedDownloads, playlists.playlists, changes, appearanceAndPlugins) { _, _, _, _, _ -> Unit }
                 .debounce(1200).collect { linkedTree()?.let { tree -> runOperation { checkpoint(tree) } } }
         }
     }
@@ -167,9 +171,13 @@ internal class PortableLibrary(private val context: Context, private val local: 
         fun writeAsset(file: File, name: String, size: Long, expectedDigest: String? = null): PortableAsset {
             files[name]?.let(directory::delete)
             var asset: PortableAsset? = null
-            directory.write(name, "application/octet-stream") { output ->
+            val mime = if (PortableAsset.backgroundName.matches(name)) "image/png" else "application/octet-stream"
+            directory.write(name, mime) { output ->
                 asset = file.inputStream().use { transfer(it, output, name, size, coroutine) }
-                if (expectedDigest != null && expectedDigest != asset?.digest) throw PortableFailure(PortableProblem.LocalAudioInvalid, name)
+                if (expectedDigest != null && expectedDigest != asset?.digest) {
+                    val problem = if (PortableAsset.importedName.matches(name)) PortableProblem.LocalAudioInvalid else PortableProblem.InvalidAsset
+                    throw PortableFailure(problem, name)
+                }
             }
             return checkNotNull(asset).also(writtenAssets::add)
         }
@@ -204,8 +212,16 @@ internal class PortableLibrary(private val context: Context, private val local: 
             }
             PortablePlugin(plugin.id, plugin.repository, asset, plugin.manifest.backupSettings(plugins.settings(plugin)))
         }
+        val backdrop = background.snapshot { file, revision ->
+            val size = sizeOf(file).takeIf { it <= appearanceBackgroundByteLimit }
+                ?: throw PortableFailure(PortableProblem.SourceFile, file.name)
+            val measured = measuredBackground?.takeIf { it.first == revision }?.second ?: file.inputStream().use { input ->
+                transfer(input, null, file.name, size, coroutine).let { it.copy(name = "mb-background-${it.digest}.png") }
+            }.also { measuredBackground = revision to it }
+            store(file, measured.name, measured.digest)
+        }
         val manifest = PortableManifest(imports, downloads, playlists.playlists.value, saved.limitMb, readHistory(), queue,
-            settings.values.value, packages, activity)
+            settings.values.value, packages, activity, backdrop)
         if (verifyAssets && writtenAssets.isNotEmpty()) {
             val savedFiles = directory.files()
             for (asset in writtenAssets) {
@@ -226,7 +242,7 @@ internal class PortableLibrary(private val context: Context, private val local: 
         files.values.filter { document ->
             snapshotName.matches(document.name) && document.name != previous ||
                 (PortableAsset.importedName.matches(document.name) || PortableAsset.downloadedName.matches(document.name) ||
-                    PortablePlugin.fileName.matches(document.name)) && document.name !in keep
+                    PortableAsset.backgroundName.matches(document.name) || PortablePlugin.fileName.matches(document.name)) && document.name !in keep
         }.forEach { document -> runCatching { directory.delete(document) } }
         return stamp
     }
@@ -239,11 +255,14 @@ internal class PortableLibrary(private val context: Context, private val local: 
         val downloads = manifest.downloads.filterNot { offline.hasIntactDownload(it.track.id) }
         val installed = plugins.installed().mapTo(mutableSetOf()) { it.id }
         val packages = manifest.plugins.filterNot { it.id in installed }
+        val backdrop = manifest.background?.takeIf { background.snapshot { _, _ -> true } == null }
         val files = directory.files()
         val staging = java.nio.file.Files.createTempDirectory(context.filesDir.toPath(), "mb-restore-").toFile()
         try {
             val coroutine = currentCoroutineContext()
-            for (asset in imports.map(PortableImport::asset) + downloads.map(PortableDownload::asset) + packages.map(PortablePlugin::asset)) {
+            val assets = imports.map(PortableImport::asset) + downloads.map(PortableDownload::asset) +
+                packages.map(PortablePlugin::asset) + listOfNotNull(backdrop)
+            for (asset in assets) {
                 val document = files[asset.name] ?: throw PortableFailure(PortableProblem.MissingAsset, asset.name)
                 try {
                     File(staging, asset.name).outputStream().use { output ->
@@ -251,6 +270,11 @@ internal class PortableLibrary(private val context: Context, private val local: 
                         if (asset != copied) throw PortableFailure(PortableProblem.InvalidAsset, asset.name)
                     }
                 } catch (_: AssetLengthMismatch) { throw PortableFailure(PortableProblem.InvalidAsset, asset.name) }
+            }
+            backdrop?.let { asset ->
+                try { background.restoreIfMissing(File(staging, asset.name)) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { throw PortableFailure(PortableProblem.InvalidAsset, asset.name) }
             }
             imports.asReversed().forEach { item -> local.restoreImport(File(staging, item.asset.name), item) }
             downloads.asReversed().forEach { item ->

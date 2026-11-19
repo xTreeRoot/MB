@@ -3,6 +3,7 @@ package com.xtreeroot.mb.playback
 import android.app.Application
 import android.content.ComponentName
 import android.os.Bundle
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,8 +16,10 @@ import com.xtreeroot.mb.music.CaptionLine
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.VideoSource
 import com.xtreeroot.mb.music.toMetadataJson
+import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.preferences.PlaybackMode
 import com.xtreeroot.mb.ui.LoadState
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -26,6 +29,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
+
+internal const val playbackLogTag = "MBPlayback"
+
+internal enum class PlaybackConnectionIssue { Unavailable, Disconnected }
 
 internal data class PlaybackState(
     val tracks: List<Track> = emptyList(),
@@ -42,11 +49,16 @@ internal data class PlaybackState(
     val videoAvailable: Boolean = false,
     val presentation: PlaybackPresentation = PlaybackPresentation(),
     val station: PlaybackStation? = null,
+    val seekable: Boolean = false,
+    val connectionIssue: PlaybackConnectionIssue? = null,
 ) {
     val current: Track? get() = tracks.getOrNull(index)
 }
 
 internal class PlaybackModel(application: Application) : AndroidViewModel(application) {
+    private data class Selection(val tracks: List<Track>, val track: Track, val station: PlaybackStation?,
+                                 val shuffle: Boolean, val mode: PlaybackMode)
+
     private val app = application as MBApplication
     private val state = MutableStateFlow(PlaybackState())
     private val captionState = MutableStateFlow(LoadState(emptyList<CaptionLine>()))
@@ -57,33 +69,19 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     private var videoCapability: Boolean? = false
     private var videoJob: Job? = null
     private var controller: MediaController? = null
-    private val future = MediaController.Builder(application,
-        SessionToken(application, ComponentName(application, PlaybackService::class.java)))
-        .setListener(object : MediaController.Listener {
-            override fun onDisconnected(controller: MediaController) {
-                this@PlaybackModel.controller = null
-                contentSelection = null
-                state.value = state.value.copy(connected = false, error = "播放服务已断开")
-            }
-        }).buildAsync()
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var pendingSelection: Selection? = null
     val playback = state.asStateFlow()
     val captions = captionState.asStateFlow()
 
     init {
-        future.addListener({
-            runCatching { future.get() }.onSuccess { player ->
-                controller = player
-                player.addListener(object : Player.Listener {
-                    override fun onEvents(player: Player, events: Player.Events) = publish()
-                })
-                publish()
-            }.onFailure { state.value = PlaybackState(error = "无法连接播放服务") }
-        }, ContextCompat.getMainExecutor(application))
+        connect()
         viewModelScope.launch {
             app.settings.values.map { it.builtInEnabled }.distinctUntilChanged().collect { publish() }
         }
         viewModelScope.launch { app.installedPlugins.collect { publish() } }
         viewModelScope.launch { app.stationStatus.collect { publish() } }
+        viewModelScope.launch { app.trackPlaybackIssues.values.collect { publish() } }
         viewModelScope.launch {
             while (true) {
                 delay(if (captionTrackId == state.value.current?.id && captionTrackId != null) 70 else 250)
@@ -93,26 +91,104 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    override fun onCleared() {
-        controller = null
-        MediaController.releaseFuture(future)
+    private fun connect() {
+        if (controllerFuture != null) return
+        state.value = state.value.copy(connectionIssue = null)
+        val attempt = try {
+            val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
+            MediaController.Builder(app, token).setListener(object : MediaController.Listener {
+                override fun onDisconnected(controller: MediaController) {
+                    if (this@PlaybackModel.controller === controller) connectionFailed(PlaybackConnectionIssue.Disconnected)
+                }
+            }).buildAsync()
+        } catch (failure: RuntimeException) {
+            Log.w(playbackLogTag, "session token/controller: ${failure.javaClass.simpleName}")
+            connectionFailed(PlaybackConnectionIssue.Unavailable)
+            return
+        }
+        controllerFuture = attempt
+        attempt.addListener({
+            if (controllerFuture !== attempt) return@addListener
+            val player = try { attempt.get() } catch (failure: Exception) {
+                Log.w(playbackLogTag, "controller handshake: ${(failure.cause ?: failure).javaClass.simpleName}")
+                null
+            }
+            if (player == null || !player.isConnected) {
+                connectionFailed(PlaybackConnectionIssue.Unavailable)
+                return@addListener
+            }
+            controller = player
+            Log.i(playbackLogTag, "controller connected")
+            player.addListener(object : Player.Listener {
+                override fun onEvents(player: Player, events: Player.Events) = publish()
+            })
+            val selection = pendingSelection
+            pendingSelection = null
+            if (selection != null) startSelection(player, selection)
+            publish()
+        }, ContextCompat.getMainExecutor(app))
     }
 
+    private fun connectionFailed(issue: PlaybackConnectionIssue) {
+        Log.w(playbackLogTag, "controller failed: $issue")
+        releaseController()
+        contentSelection = null
+        captionJob?.cancel()
+        captionTrackId = null
+        captionState.value = LoadState(emptyList())
+        videoJob?.cancel()
+        videoSource = null
+        videoCapability = false
+        state.value = PlaybackState(presentation = state.value.presentation.update(false), connectionIssue = issue)
+    }
+
+    private fun releaseController() {
+        val attempt = controllerFuture
+        controller = null
+        controllerFuture = null
+        if (attempt != null) MediaController.releaseFuture(attempt)
+    }
+
+    override fun onCleared() = releaseController()
+
     fun play(tracks: List<Track>, selected: Track, station: PlaybackStation? = null, enableShuffle: Boolean = false) {
-        val player = controller ?: return
-        val playable = tracks.filterNot(Track::isUnavailable)
-        val index = playable.indexOfFirst { it.id == selected.id }
-        if (index < 0) return
-        contentSelection = selected.id to app.settings.values.value.playbackMode
-        player.setMediaItems(playable.mapIndexed { position, track ->
-            val item = track.mediaItem()
-            if (position == index && station != null) item.withStation(station) else item
-        }, index, 0)
-        if (enableShuffle) player.shuffleModeEnabled = true
-        player.prepare()
-        player.play()
+        if (selected.isUnavailable) return
+        val selection = Selection(tracks, selected, station, enableShuffle, app.settings.values.value.playbackMode)
+        val player = controller
+        if (player == null) {
+            pendingSelection = selection.copy(tracks = tracks.toList())
+            connect()
+            return
+        }
+        startSelection(player, selection)
         publish()
     }
+
+    private fun startSelection(player: MediaController, selection: Selection) {
+        val selected = selection.track
+        if (!app.acceptsTrack(selected)) {
+            app.trackPlaybackIssues.failed(selected, PlaybackIssue.SourceUnavailable)
+            return
+        }
+        val playable = selection.tracks.filter(::canPlay)
+        val index = playable.indexOfFirst { it.id == selected.id }
+        if (index < 0) return
+        contentSelection = selected.id to selection.mode
+        player.setMediaItems(playable.mapIndexed { position, track ->
+            val item = track.mediaItem()
+            if (position == index && selection.station != null) item.withStation(selection.station) else item
+        }, index, 0)
+        if (selection.shuffle) player.shuffleModeEnabled = true
+        player.prepare()
+        player.play()
+    }
+
+    fun playGroup(tracks: List<Track>, shuffle: Boolean) {
+        val selected = tracks.firstOrNull(::canPlay) ?: tracks.firstOrNull { !it.isUnavailable } ?: return
+        play(tracks, selected, enableShuffle = shuffle)
+    }
+
+    private fun canPlay(track: Track): Boolean = !track.isUnavailable && app.acceptsTrack(track)
 
     fun watchCurrentVideo() {
         val previous = state.value
@@ -157,7 +233,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     }
 
     fun retry() {
-        val player = controller ?: return
+        val player = controller ?: return connect()
         if (player.playerError != null) player.prepare()
         else if (stationError(player) != null) requestStationNext(player)
     }
@@ -213,8 +289,19 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             player.removeMediaItem(index)
         }
     }
-    fun clear() { contentSelection = null; controller?.clearMediaItems() }
-    fun seek(positionMs: Long) { controller?.seekTo(positionMs) }
+    fun clear() {
+        pendingSelection = null
+        contentSelection = null
+        controller?.clearMediaItems()
+    }
+    fun seekCurrent(trackId: String, index: Int, positionMs: Long) {
+        val player = controller ?: return
+        if (player.currentMediaItemIndex != index || player.currentMediaItem?.mediaId != trackId) return
+        when {
+            player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) -> player.seekTo(positionMs)
+            player.canPositionUnpreparedItem -> player.seekTo(index, positionMs)
+        }
+    }
     fun previous() = step(forward = false)
     fun next() = step(forward = true)
 
@@ -275,11 +362,20 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             captionTrackId = null
             captionState.value = LoadState(emptyList())
         }
+        val error = player.playerError?.let { failure ->
+            val detail = current?.playbackKey?.let(app.trackPlaybackIssues.values.value::get)
+                ?.takeIf { it.code == failure.errorCode }?.diagnostic ?: failure.errorCodeName
+            "播放失败（$detail）"
+        } ?: stationError(player)
         state.value = PlaybackState(tracks, index, player.playWhenReady,
             player.playbackState == Player.STATE_BUFFERING, player.currentPosition,
             player.duration.takeUnless { it == C.TIME_UNSET } ?: current?.durationMs ?: 0,
             player.repeatMode, player.shuffleModeEnabled,
-            player.playerError?.let { "播放失败（${it.errorCodeName}）" } ?: stationError(player), connected = true, playing = player.isPlaying,
-            videoAvailable = capability == true, presentation = presentation, station = app.stationStatus.value.station)
+            error, connected = true, playing = player.isPlaying,
+            videoAvailable = capability == true, presentation = presentation, station = app.stationStatus.value.station,
+            seekable = player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || player.canPositionUnpreparedItem)
     }
 }
+
+private val Player.canPositionUnpreparedItem: Boolean
+    get() = playbackState == Player.STATE_IDLE && playerError == null && isCommandAvailable(Player.COMMAND_SEEK_TO_MEDIA_ITEM)

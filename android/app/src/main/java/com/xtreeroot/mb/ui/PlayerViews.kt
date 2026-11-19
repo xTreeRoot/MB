@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.ui
 
 import android.animation.ValueAnimator
+import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -15,12 +16,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -40,10 +43,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,10 +71,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -86,6 +95,7 @@ import com.xtreeroot.mb.music.quietCommentAt
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.preferences.AppPreferences
+import com.xtreeroot.mb.preferences.LyricStyle
 import kotlinx.coroutines.CancellationException
 
 @Composable
@@ -126,7 +136,8 @@ internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Un
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences: AppPreferences, saved: SavedLibraryModel, signedIn: Boolean,
-                        close: () -> Unit, showQueue: () -> Unit, showArtist: (String) -> Unit, openingCover: Rect?) {
+                        close: () -> Unit, showQueue: () -> Unit, showArtist: (String) -> Unit, openingCover: Rect?,
+                        rotate: ((PlaybackDirection) -> Unit)?) {
     val track = state.current ?: return
     val offline by saved.offline.collectAsStateWithLifecycle()
     val transfers by saved.transfers.collectAsStateWithLifecycle()
@@ -137,8 +148,13 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
     val source = app.playbackSource(track.sourceId)
     val supportsVideo = state.videoAvailable
     var showingCaptions by rememberSaveable { mutableStateOf(preferences.lyricsStage) }
+    var widePage by rememberSaveable { mutableStateOf(WidePlayerPage.Lyrics) }
+    val window = LocalWindowInfo.current.containerSize
+    val windowWidth = with(LocalDensity.current) { window.width.toDp() }
+    val wide = window.width > window.height && windowWidth >= 600.dp
     val enlargedText = LocalDensity.current.fontScale >= 1.5f
-    var playerMenu by remember { mutableStateOf(false) }
+    val showToolbarTitle = windowWidth >= if (enlargedText) 400.dp else 360.dp
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val animate = ValueAnimator.areAnimatorsEnabled()
     val origin = if (animate && preferences.growFromCover) openingCover else null
     var frame by remember { mutableStateOf<Rect?>(null) }
@@ -146,11 +162,12 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
     LaunchedEffect(frame != null) { if (frame != null) entrance.animateTo(1f, tween(320)) }
     val captions by model.captions.collectAsStateWithLifecycle()
     val interaction = source as? InteractionSource
-    val showHotComments = preferences.hotComments && interaction != null && showingCaptions
+    val lyricsVisible = if (wide) widePage == WidePlayerPage.Lyrics || widePage == WidePlayerPage.Rhythm else showingCaptions
+    val showHotComments = preferences.hotComments && interaction != null && !wide && showingCaptions
     var hotComments by remember(track.id, interaction, signedIn, showHotComments) { mutableStateOf(emptyList<TrackComment>()) }
     var openComments by remember(track.id, interaction, signedIn) { mutableStateOf(false) }
-    LaunchedEffect(track.id, source, showingCaptions) {
-        if (showingCaptions) model.loadCaptions(track)
+    LaunchedEffect(track.id, source, lyricsVisible) {
+        if (lyricsVisible) model.loadCaptions(track)
     }
     LaunchedEffect(track.id, interaction, signedIn, showHotComments) {
         if (showHotComments) {
@@ -183,22 +200,26 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
             }
         },
         topBar = {
-            TopAppBar(title = { Text(mb("正在播放", "Now Playing"), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) },
+            TopAppBar(title = {
+                if (showToolbarTitle) Text(mb("正在播放", "Now Playing"), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            },
                 expandedHeight = 48.dp, colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surfaceContainerLow), navigationIcon = {
                 IconButton(onClick = close) { Icon(Icons.Default.KeyboardArrowDown, mb("关闭播放器", "Close Player")) }
             }, actions = {
-                val stageLabel = if (showingCaptions) mb("封面", "Cover") else mb("歌词", "Lyrics")
-                val videoLabel = mb("观看当前视频", "Watch Current Video")
-                if (enlargedText) Box {
-                    IconButton(onClick = { playerMenu = true }) { Icon(Icons.Default.MoreVert, mb("播放器选项", "Player Options")) }
-                    DropdownMenu(playerMenu, { playerMenu = false }) {
-                        DropdownMenuItem(text = { Text(stageLabel) }, onClick = { playerMenu = false; showingCaptions = !showingCaptions })
-                        if (supportsVideo) DropdownMenuItem(text = { Text(videoLabel) }, onClick = { playerMenu = false; model.watchCurrentVideo() })
-                    }
-                } else {
-                    TextButton(onClick = { showingCaptions = !showingCaptions }) { Text(stageLabel) }
-                    if (supportsVideo) TextButton(onClick = model::watchCurrentVideo) { Text(videoLabel) }
+                if (supportsVideo) IconButton(onClick = model::watchCurrentVideo) {
+                    Icon(painterResource(R.drawable.ic_watch_video), mb("观看当前视频", "Watch Current Video"))
+                }
+                PlayerStyleMenu(preferences, if (wide) lyricsVisible else showingCaptions, chooseArtwork = { style ->
+                    app.settings.update { it.copy(playerStyle = style) }
+                    showingCaptions = false
+                }, chooseLyrics = { style ->
+                    app.settings.update { it.copy(lyricStyle = style) }
+                    showingCaptions = true
+                    if (wide) widePage = WidePlayerPage.Lyrics
+                })
+                if (rotate != null) IconButton(onClick = { rotate(if (landscape) PlaybackDirection.Portrait else PlaybackDirection.Landscape) }) {
+                    Icon(painterResource(R.drawable.ic_screen_rotate), if (landscape) mb("竖屏播放", "Portrait Player") else mb("横屏播放", "Landscape Player"))
                 }
                 AudioOutputButton(state.connected)
                 IconButton(onClick = showQueue) { Icon(Icons.AutoMirrored.Filled.List, mb("播放队列", "Queue")) }
@@ -211,6 +232,17 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                 val bass by app.bassLevel.collectAsStateWithLifecycle()
                 PlaybackFog(track, if (state.playing) bass else 0f, animate, Modifier.matchParentSize())
             }
+            val seekCurrent: (Long) -> Unit = { model.seekCurrent(track.id, state.index, it) }
+            val showLyrics: @Composable (Boolean) -> Unit = { rhythm ->
+                when {
+                    captions.loading -> Loading()
+                    captions.error != null -> Retry(checkNotNull(captions.error)) { model.loadCaptions(track) }
+                    captions.value.isEmpty() && rhythm -> PlayerArtwork(track, state, preferences.playerStyle, animate, Modifier)
+                    captions.value.isEmpty() -> EmptyMessage(mb("暂无歌词", "No Lyrics"))
+                    else -> CaptionStage(captions.value, state.positionMs, if (rhythm) LyricStyle.Tilt else preferences.lyricStyle,
+                        preferences.stageSparks, animate, seekCurrent)
+                }
+            }
             val stage: @Composable (Modifier) -> Unit = { modifier ->
                 Box(modifier.padding(horizontal = 24.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
                     when {
@@ -220,14 +252,13 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                             Text(comment.text, style = MaterialTheme.typography.titleLarge)
                             Text("${comment.author} · ${comment.likes} ${mb("赞", "likes")}", style = MaterialTheme.typography.labelMedium)
                         }
-                        showingCaptions -> when {
-                            captions.loading -> Loading()
-                            captions.error != null -> Retry(checkNotNull(captions.error)) { model.loadCaptions(track) }
-                            captions.value.isEmpty() -> EmptyMessage(mb("暂无歌词", "No Lyrics"))
-                            else -> CaptionStage(captions.value, state.positionMs, preferences.lyricStyle,
-                                preferences.stageSparks, animate, model::seek)
+                        showingCaptions -> showLyrics(false)
+                        else -> {
+                            val watch = mb("切换到实时视频", "Switch to Video")
+                            PlayerArtwork(track, state, preferences.playerStyle, animate,
+                                if (supportsVideo) Modifier.clickable(onClickLabel = watch, role = Role.Button, onClick = model::watchCurrentVideo)
+                                    .semantics { contentDescription = watch } else Modifier)
                         }
-                        else -> PlayerArtwork(track, state, preferences.playerStyle, animate, Modifier)
                     }
                 }
             }
@@ -264,12 +295,11 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                     }
                     if (state.error != null) Retry(state.error, model::retry)
                     else if (state.loading) Text(mb("正在加载…", "Loading…"), style = MaterialTheme.typography.labelMedium)
-                    PlayerProgress(state, preferences.smoke && animate, model::seek)
+                    PlayerProgress(state, preferences.smoke && animate, seekCurrent)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = model::shuffle, modifier = Modifier.weight(1f, fill = false)) {
-                            Text(if (state.shuffle) mb("随机", "Shuffle") else mb("顺序", "In Order"))
-                        }
+                        PlayerModeControl(if (state.shuffle) mb("随机", "Shuffle") else mb("顺序", "In Order"),
+                            R.drawable.ic_shuffle, state.shuffle, state.connected, model::shuffle, Modifier.weight(1f))
                         IconButton(onClick = model::previous) {
                             Icon(painterResource(R.drawable.ic_media_previous), mb("上一首", "Previous"))
                         }
@@ -277,22 +307,29 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         IconButton(onClick = model::next) {
                             Icon(painterResource(R.drawable.ic_media_next), mb("下一首", "Next"))
                         }
-                        TextButton(onClick = model::repeat, modifier = Modifier.weight(1f, fill = false)) {
-                            Text(when (state.repeatMode) {
-                                Player.REPEAT_MODE_ONE -> mb("单曲", "Repeat One")
-                                Player.REPEAT_MODE_ALL -> mb("循环", "Repeat All")
-                                else -> mb("不循环", "No Repeat")
-                            })
+                        val repeat = when (state.repeatMode) {
+                            Player.REPEAT_MODE_ONE -> mb("单曲", "Repeat One")
+                            Player.REPEAT_MODE_ALL -> mb("循环", "Repeat All")
+                            else -> mb("不循环", "Repeat Off")
                         }
+                        PlayerModeControl(repeat, if (state.repeatMode == Player.REPEAT_MODE_ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat,
+                            state.repeatMode != Player.REPEAT_MODE_OFF, state.connected, model::repeat, Modifier.weight(1f))
                     }
-                    PlayerInteractionBar(track, signedIn)
+                    PlayerInteractionBar(track, signedIn, showCommentsButton = !wide)
                 }
             }
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                if (maxWidth >= 600.dp && maxWidth > maxHeight) {
+                if (wide) {
                     Row(Modifier.widthIn(max = 1040.dp).fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                        stage(Modifier.weight(1f).fillMaxHeight())
+                        WidePlayerStage(track, state, model, widePage, { widePage = it }, interaction, signedIn, showLyrics,
+                            Modifier.weight(1.24f).fillMaxHeight())
                         controls(Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                    }
+                } else if (maxWidth >= 720.dp) {
+                    val stageHeight = minOf(540.dp, maxHeight * 0.62f)
+                    Column(Modifier.widthIn(max = 580.dp).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                        stage(Modifier.fillMaxWidth().height(stageHeight))
+                        controls(Modifier.fillMaxWidth())
                     }
                 } else if (enlargedText || maxHeight < 520.dp) {
                     val stageHeight = minOf(maxWidth, 360.dp)
@@ -313,20 +350,21 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
 }
 
 @Composable
-internal fun PlayerProgress(state: PlaybackState, smoke: Boolean, seek: (Long) -> Unit) {
-    var draft by remember(state.current?.id) { mutableStateOf<Float?>(null) }
-    val duration = state.durationMs.coerceAtLeast(0)
-    val value = (draft ?: state.positionMs.toFloat()).coerceIn(0f, duration.toFloat())
-    Box(Modifier.fillMaxWidth()) {
-        Slider(value, onValueChange = { draft = it }, onValueChangeFinished = {
-            draft?.let { seek(it.toLong()) }
-            draft = null
-        }, enabled = duration > 0, valueRange = 0f..duration.coerceAtLeast(1).toFloat())
-        if (smoke && state.playing && duration > 0) ProgressSmoke(value / duration, value.toLong(), Modifier.matchParentSize())
+private fun PlayerModeControl(label: String, icon: Int, active: Boolean, enabled: Boolean, onClick: () -> Unit,
+                              modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val tint = when {
+        !enabled -> colors.onSurfaceVariant.copy(alpha = 0.38f)
+        active -> colors.primary
+        else -> colors.onSurfaceVariant
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(timeLabel(value.toLong()), style = MaterialTheme.typography.labelMedium)
-        Text(timeLabel(duration), style = MaterialTheme.typography.labelMedium)
+    val status = if (active) mb("已开启", "On") else mb("已关闭", "Off")
+    Column(modifier.heightIn(min = 48.dp).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .semantics { stateDescription = status }.padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
+        Icon(painterResource(icon), null, Modifier.size(19.dp), tint = tint)
+        Text(label, color = tint, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -356,31 +394,39 @@ internal fun QueueSheet(model: PlaybackModel, state: PlaybackState, close: () ->
             TextButton(onClick = { confirmClear = true }, enabled = state.tracks.isNotEmpty()) { Text(mb("清空", "Clear")) }
             IconButton(onClick = close) { Icon(Icons.Default.Close, mb("关闭队列", "Close Queue")) }
         }
-        if (state.tracks.isEmpty()) EmptyMessage(mb("队列为空", "Your queue is empty"))
-        LazyColumn(contentPadding = PaddingValues(bottom = 14.dp)) {
-            itemsIndexed(state.tracks, key = { index, track -> "$index:${track.id}" }) { index, track ->
-                var menu by remember { mutableStateOf(false) }
-                ListItem(modifier = Modifier.clickable { model.select(index) },
-                    headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = if (index == state.index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-                    supportingContent = { TrackSubtitle(track) },
-                    leadingContent = { Artwork(track, Modifier.size(44.dp)) },
-                    trailingContent = {
-                        Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, mb("编辑 ${track.title}", "Edit ${track.title}")) }
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(text = { Text(mb("上移", "Move Up")) }, enabled = index > 0,
-                                    onClick = { menu = false; model.move(index, index - 1) })
-                                DropdownMenuItem(text = { Text(mb("下移", "Move Down")) }, enabled = index < state.tracks.lastIndex,
-                                    onClick = { menu = false; model.move(index, index + 1) })
-                                DropdownMenuItem(text = { Text(mb("从队列移除", "Remove from Queue")) }, onClick = { menu = false; model.remove(index) })
-                            }
-                        }
-                    })
-            }
-        }
+        QueueTracks(model, state)
     }
     if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false }, title = { Text(mb("清空播放队列？", "Clear the play queue?")) },
         confirmButton = { TextButton(onClick = { confirmClear = false; model.clear(); close() }) { Text(mb("清空", "Clear")) } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(mb("取消", "Cancel")) } })
+}
+
+@Composable
+internal fun QueueTracks(model: PlaybackModel, state: PlaybackState, modifier: Modifier = Modifier) {
+    if (state.tracks.isEmpty()) return EmptyMessage(mb("队列为空", "Your queue is empty"))
+    LazyColumn(modifier, contentPadding = PaddingValues(bottom = 14.dp)) {
+        itemsIndexed(state.tracks, key = { index, track -> "$index:${track.id}" }) { index, track ->
+            val active = index == state.index
+            var menu by remember { mutableStateOf(false) }
+            val colors = MaterialTheme.colorScheme
+            ListItem(modifier = Modifier.selectable(active, enabled = state.connected, role = Role.Button,
+                onClick = { model.select(index) }), colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = if (active) colors.primary else colors.onSurface) },
+                supportingContent = { TrackSubtitle(track) },
+                leadingContent = { Artwork(track, Modifier.size(44.dp)) },
+                trailingContent = {
+                    Box {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, mb("编辑 ${track.title}", "Edit ${track.title}")) }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text(mb("上移", "Move Up")) }, enabled = index > 0,
+                                onClick = { menu = false; model.move(index, index - 1) })
+                            DropdownMenuItem(text = { Text(mb("下移", "Move Down")) }, enabled = index < state.tracks.lastIndex,
+                                onClick = { menu = false; model.move(index, index + 1) })
+                            DropdownMenuItem(text = { Text(mb("从队列移除", "Remove from Queue")) }, onClick = { menu = false; model.remove(index) })
+                        }
+                    }
+                })
+        }
+    }
 }

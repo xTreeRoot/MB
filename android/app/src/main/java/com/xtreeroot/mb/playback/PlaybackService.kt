@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -50,6 +52,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import android.database.sqlite.SQLiteException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -66,9 +69,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 @OptIn(UnstableApi::class)
@@ -78,6 +83,7 @@ internal class PlaybackService : MediaSessionService() {
     private data class ResolvedAudio(val until: Long, val source: PlaybackSource, val quality: AudioQuality, val resource: MediaResource)
     private data class AudioLocation(val quality: AudioQuality, val file: OfflineMediaStore.Lease?)
     private data class LoudnessInput(val uri: Uri, val revision: Long)
+    private data class AudioTarget(val uri: Uri, val source: PlaybackSource, val quality: AudioQuality)
     private val resolved = mutableMapOf<Uri, ResolvedAudio>()
     private var resolutionEpoch = 0L
     private val locations = mutableMapOf<String, AudioLocation>()
@@ -100,14 +106,27 @@ internal class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val app = application as MBApplication
-        val upstream = DefaultDataSource.Factory(this) { guardedMediaHttp(app.http) }
-        val factory = DataSource.Factory {
+        val preparedLoads = ConcurrentHashMap.newKeySet<Uri>()
+        val preloader = NextAudioPreloader<AudioTarget, PreparedAudio>(scope, SystemClock::elapsedRealtime) { target ->
+            val identifier = target.uri.pathSegments.single()
+            val trackId = "${target.uri.authority}:$identifier"
+            val localCopy = withContext(Dispatchers.IO) { app.offline.store.lease(trackId)?.use { true } == true }
+            if (localCopy) null else primeAudio(app.http, target.source.audio(identifier, target.quality))
+        }
+        fun dataSourceFactory(usePrepared: Boolean) = DataSource.Factory {
             var reader: OfflineMediaStore.Lease? = null
             var pinned: Pair<Uri, MediaResource>? = null
+            val guard = MediaRangeGuard()
+            val upstream = DefaultDataSource.Factory(this) { guardedMediaHttp(app.http, guard) }
             val delegate = ResolvingDataSource.Factory(upstream) { spec ->
                 resolve(spec, { reader = it }) { uri, source, identifier, quality ->
-                    pinned?.takeIf { it.first == uri }?.second ?: resolveAudio(uri, source, identifier, quality).also {
-                        pinned = uri to it
+                    pinned?.takeIf { it.first == uri }?.second ?: run {
+                        val prepared = if (usePrepared) preloader.take(AudioTarget(uri, source, quality)) else null
+                        if (prepared != null) {
+                            preparedLoads.add(uri)
+                            if (spec.position == 0L && spec.length == C.LENGTH_UNSET.toLong()) guard.offer(prepared.prefix)
+                        }
+                        resolveAudio(uri, source, identifier, quality, prepared?.resource).also { pinned = uri to it }
                     }
                 }
             }.createDataSource()
@@ -118,13 +137,15 @@ internal class PlaybackService : MediaSessionService() {
                 }
             }
         }
-        val loudness = LoudnessController<LoudnessInput>(scope) { AndroidLoudness.measure(factory, it.uri) }
+        val factory = dataSourceFactory(usePrepared = true)
+        val measuring = dataSourceFactory(usePrepared = false)
+        val loudness = LoudnessController<LoudnessInput>(scope) { AndroidLoudness.measure(measuring, it.uri) }
         val renderers = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
                 DefaultAudioSink.Builder(context).setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
                     .setAudioProcessors(arrayOf(AudioSignalProcessor({ app.settings.values.value.normalization }, { loudness.gain },
                         { app.settings.values.value.fog }, { app.bassLevel.value = it }))).build()
-        }
+        }.setEnableDecoderFallback(true)
         val snapshot = storage.getString("queue", null)?.let(QueueSnapshot::decode)
         val player = ExoPlayer.Builder(this, renderers)
             .setMediaSourceFactory(ProgressiveMediaSource.Factory(factory).recoverOutsideLoader())
@@ -167,6 +188,30 @@ internal class PlaybackService : MediaSessionService() {
             recovery.reset()
             invalidateAddress(player.currentMediaItem)
         }
+        fun target(item: MediaItem?): AudioTarget? {
+            val track = item?.track()?.takeUnless { it.sourceId == localSourceId || it.isUnavailable } ?: return null
+            val source = app.playbackSource(track.sourceId) ?: return null
+            val uri = item.localConfiguration?.uri ?: return null
+            return AudioTarget(uri, source, app.settings.values.value.quality)
+        }
+        fun refreshPrefetch() {
+            preloader.expire()
+            if (!player.playWhenReady || video.frames.value != null) { preloader.cancel(); return }
+            val eligible = canPrefetchAudio(player.currentPosition, player.duration, player.isPlaying, videoActive = false)
+            val index = player.currentMediaItemIndex
+            val next = if (!eligible || player.currentTimeline.isEmpty ||
+                (stations.station != null && index == player.mediaItemCount - 1)) null else {
+                val nextIndex = player.currentTimeline.getNextWindowIndex(index, player.repeatMode, player.shuffleModeEnabled)
+                if (nextIndex == C.INDEX_UNSET) null else target(player.getMediaItemAt(nextIndex))
+                    ?.takeUnless { it.uri == player.currentMediaItem?.localConfiguration?.uri }
+                    ?.takeUnless { candidate -> synchronized(resolved) {
+                        resolved[candidate.uri]?.let { it.until > SystemClock.elapsedRealtime() &&
+                            it.source === candidate.source && it.quality == candidate.quality } == true
+                    } }
+            }
+            preloader.update(next)
+        }
+        var prefetchTick: Job? = null
         val currentMedia = MutableStateFlow(player.currentMediaItem?.track())
         val openPlayer = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -213,7 +258,10 @@ internal class PlaybackService : MediaSessionService() {
                     if (controller.uid != applicationInfo.uid) return Futures.immediateFailedFuture(SecurityException())
                     val canonical = mediaItems.map { item ->
                         val track = item.track()?.takeIf(app::acceptsTrack)
-                            ?: return Futures.immediateFailedFuture(IllegalArgumentException("无效曲目"))
+                            ?: run {
+                                Log.w(playbackLogTag, "session rejected unavailable queue item; count=${mediaItems.size}")
+                                return Futures.immediateFailedFuture(IllegalArgumentException("无效曲目"))
+                            }
                         track.mediaItem()
                     }
                     return Futures.immediateFuture(canonical)
@@ -238,6 +286,7 @@ internal class PlaybackService : MediaSessionService() {
         stations.set(snapshot?.station)
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                preloader.cancel()
                 val period = (error as? ExoPlaybackException)?.mediaPeriodId
                 val item = if (period == null) player.currentMediaItem else {
                     val timeline = player.currentTimeline
@@ -246,15 +295,39 @@ internal class PlaybackService : MediaSessionService() {
                 }
                 val track = item?.track()
                 val source = track?.let { app.playbackSource(it.sourceId) }
-                if (track != null && source != null && recovery.onError(error, item) { app.playbackSource(track.sourceId) === source }) return
-                track?.let { app.trackPlaybackIssues.failed(it, classifyPlaybackIssue(error, error.errorCode)) }
+                val usedPreload = item?.localConfiguration?.uri?.let(preparedLoads::remove) == true
+                if (track != null && source != null && recovery.onError(error, item, usedPreload) { app.playbackSource(track.sourceId) === source }) return
+                val issue = classifyPlaybackIssue(error, error.errorCode)
+                Log.w(playbackLogTag, "audio failed: $issue / ${error.playbackDiagnostic(error.errorCode)} / cause=${error.cause?.javaClass?.simpleName}")
+                track?.let { app.trackPlaybackIssues.failed(it, issue, error) }
+            }
+
+            override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+                Log.i(playbackLogTag, "playback suppression=$playbackSuppressionReason")
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 recovery.reset()
+                preloader.advance(target(mediaItem).takeIf { player.playWhenReady })
+            }
+
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                    preloader.cancel()
+                    preparedLoads.retainAll((0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).localConfiguration?.uri }.toSet())
+                }
             }
 
             override fun onEvents(player: Player, events: Player.Events) {
+                if (player.playbackState == Player.STATE_READY) player.currentMediaItem?.localConfiguration?.uri?.let(preparedLoads::remove)
+                if (events.containsAny(Player.EVENT_REPEAT_MODE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) preloader.cancel()
+                refreshPrefetch()
+                if (player.isPlaying && prefetchTick?.isActive != true) {
+                    prefetchTick = scope.launch {
+                        while (player.isPlaying) { delay(400); refreshPrefetch() }
+                    }
+                }
+                if (!player.isPlaying) prefetchTick?.cancel()
                 if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_PLAYBACK_STATE_CHANGED)) {
                     refreshLoudness(events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION))
                 }
@@ -327,6 +400,9 @@ internal class PlaybackService : MediaSessionService() {
         }
         scope.launch {
             app.settings.values.map { it.normalization }.distinctUntilChanged().collect { refreshLoudness() }
+        }
+        scope.launch {
+            app.settings.values.map { it.quality }.distinctUntilChanged().drop(1).collect { preloader.cancel(); refreshPrefetch() }
         }
         scope.launch {
             app.settings.values.map { it.builtInEnabled }.distinctUntilChanged().collect { enabled ->
@@ -410,17 +486,19 @@ internal class PlaybackService : MediaSessionService() {
         return spec.withUri(Uri.parse(media.url)).withAdditionalHeaders(media.headers)
     }
 
-    private fun resolveAudio(uri: Uri, source: PlaybackSource, identifier: String, quality: AudioQuality): MediaResource {
-        val time = android.os.SystemClock.elapsedRealtime()
+    private fun resolveAudio(uri: Uri, source: PlaybackSource, identifier: String, quality: AudioQuality,
+                             prepared: MediaResource? = null): MediaResource {
+        val time = SystemClock.elapsedRealtime()
         val epoch = synchronized(resolved) {
-            resolved[uri]?.takeIf { it.until > time && it.source === source && it.quality == quality }?.let { return it.resource }
+            if (prepared == null) resolved[uri]?.takeIf { it.until > time && it.source === source && it.quality == quality }
+                ?.let { return it.resource }
             resolutionEpoch
         }
-        return runBlocking { source.audio(identifier, quality) }.also { resource ->
+        return (prepared ?: runBlocking { source.audio(identifier, quality) }).also { resource ->
             synchronized(resolved) {
                 resolved.entries.removeAll { (_, entry) -> entry.until <= time }
                 if (epoch == resolutionEpoch) {
-                    resolved[uri] = ResolvedAudio(android.os.SystemClock.elapsedRealtime() + 60_000, source, quality, resource)
+                    resolved[uri] = ResolvedAudio(SystemClock.elapsedRealtime() + 60_000, source, quality, resource)
                 }
             }
         }

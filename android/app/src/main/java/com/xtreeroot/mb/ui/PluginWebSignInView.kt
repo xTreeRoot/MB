@@ -1,7 +1,13 @@
 package com.xtreeroot.mb.ui
 
+import android.app.Activity
+import android.content.Context
+import android.os.Build
+import android.util.Log
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,81 +26,175 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
+import androidx.webkit.WebViewCompat
+import com.xtreeroot.mb.plugin.CompatPluginBrowserActivity
+import com.xtreeroot.mb.plugin.PluginBrowserIssue
+import com.xtreeroot.mb.plugin.PluginBrowserPage
 import com.xtreeroot.mb.plugin.PluginBrowserSession
 import com.xtreeroot.mb.plugin.PluginWebLink
 import com.xtreeroot.mb.plugin.PluginWebSignIn
 import com.xtreeroot.mb.plugin.PluginWebSignInBroker
-import java.net.URI
+import com.xtreeroot.mb.plugin.pluginBrowserLogTag
 import kotlinx.coroutines.delay
 
 @Composable
 internal fun PluginWebSignInView(request: PluginWebSignIn, broker: PluginWebSignInBroker, cancel: () -> Unit) {
-    val unavailable = mb("无法开启隔离登录页，请更新 Android System WebView", "Could not open an isolated sign-in page. Update Android System WebView.")
-    PluginBrowserDialog(request.title, request.url, request.userAgent, mb("取消", "Cancel"), cancel, unavailable,
-        onFailure = { broker.fail(request.id, unavailable) }) { active ->
-        while (true) {
-            val completed = active.cookies(request)
-            if (completed != null) { broker.finish(request.id, completed); break }
-            delay(300)
-        }
-    }
+    val english = LocalMBEnglish.current
+    PluginBrowserDialog(PluginBrowserPage(request.title, request.url, request.id, request), mb("取消", "Cancel"), cancel,
+        onFailure = { broker.fail(request.id, it.text(english)) }, onCookies = { broker.finish(request.id, it) },
+        onDocumentError = { broker.fail(request.id, it) })
 }
 
 @Composable
 internal fun PluginWebLinkView(link: PluginWebLink, close: () -> Unit) {
-    PluginBrowserDialog(link.title, link.url, null, mb("完成", "Done"), close,
-        mb("无法开启隔离网页，请更新 Android System WebView", "Could not open an isolated web page. Update Android System WebView."))
+    PluginBrowserDialog(PluginBrowserPage(link.title, link.url, link.id), mb("完成", "Done"), close)
 }
 
 @Composable
-private fun PluginBrowserDialog(title: String, url: URI, userAgent: String?, closeLabel: String, close: () -> Unit,
-                                unavailable: String, onFailure: () -> Unit = {}, observe: suspend (PluginBrowserSession) -> Unit = {}) {
-    var session by remember { mutableStateOf<PluginBrowserSession?>(null) }
-    var failed by remember { mutableStateOf(false) }
-    var authority by remember(url) { mutableStateOf(url.rawAuthority) }
-    LaunchedEffect(session) {
-        session?.let { observe(it) }
+private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, close: () -> Unit,
+                                onFailure: (PluginBrowserIssue) -> Unit = {}, onCookies: (String) -> Unit = {},
+                                onDocumentError: (String) -> Unit = {}) {
+    val context = LocalContext.current
+    val english = LocalMBEnglish.current
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    var issue by remember { mutableStateOf<PluginBrowserIssue?>(null) }
+    var useProfiles by remember { mutableStateOf(false) }
+    var launched by rememberSaveable { mutableStateOf(false) }
+    fun fail(failure: PluginBrowserIssue) {
+        Log.w(pluginBrowserLogTag, "isolated browser failed: $failure")
+        issue = failure
+        onFailure(failure)
     }
-    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false,
-        decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.SecureOn)) {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(authority, style = MaterialTheme.typography.labelMedium)
+    val compat = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        when (result.resultCode) {
+            Activity.RESULT_OK -> result.data?.getStringExtra(CompatPluginBrowserActivity.cookieKey)?.let(onCookies) ?: close()
+            CompatPluginBrowserActivity.failed -> {
+                val pageError = result.data?.getStringExtra(CompatPluginBrowserActivity.documentErrorKey)
+                if (pageError != null) onDocumentError(pageError) else {
+                    val name = result.data?.getStringExtra(CompatPluginBrowserActivity.issueKey)
+                    fail(PluginBrowserIssue.entries.firstOrNull { it.name == name } ?: PluginBrowserIssue.Startup)
                 }
-                TextButton(onClick = { session?.view?.reload() }, enabled = session != null) { Text(mb("刷新", "Reload")) }
-                TextButton(onClick = close) { Text(closeLabel) }
             }
-            if (failed) Text(unavailable, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-            AndroidView(factory = { context ->
-                FrameLayout(context).apply {
-                    try {
-                        val browser = PluginBrowserSession.create(context, userAgent) { authority = it }.also { browser ->
-                            tag = browser
-                            addView(browser.view, MATCH_PARENT, MATCH_PARENT)
-                            browser.view.loadUrl(url.toASCIIString())
-                        }
-                        session = browser
-                    } catch (_: Exception) {
-                        failed = true
-                        onFailure()
-                    }
-                }
-            }, modifier = Modifier.fillMaxSize(), onRelease = { frame ->
-                frame.removeAllViews()
-                (frame.tag as? PluginBrowserSession)?.close()
-                session = null
-            }, update = {})
+            else -> close()
         }
     }
+    fun openCompat() {
+        useProfiles = false
+        launched = true
+        Log.i(pluginBrowserLogTag, "starting disposable browser process")
+        try { compat.launch(CompatPluginBrowserActivity.intent(context, page, english, dark)) }
+        catch (failure: Exception) {
+            Log.w(pluginBrowserLogTag, "compat activity launch: ${failure.javaClass.simpleName}")
+            fail(PluginBrowserIssue.Startup)
+        }
+    }
+    LaunchedEffect(page.id) {
+        if (launched) return@LaunchedEffect
+        val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(context) }
+        val installed = provider.getOrNull()
+        Log.i(pluginBrowserLogTag, "SDK=${Build.VERSION.SDK_INT} provider=${installed?.packageName} version=${installed?.versionName}")
+        provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
+        when {
+            provider.isFailure && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> openCompat()
+            provider.isFailure -> fail(PluginBrowserIssue.Startup)
+            installed == null -> fail(PluginBrowserIssue.MissingProvider)
+            runCatching { PluginBrowserSession.available() }.getOrDefault(false) -> useProfiles = true
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> openCompat()
+            else -> fail(PluginBrowserIssue.UnsupportedProvider)
+        }
+    }
+    if (!useProfiles && issue == null) return
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false,
+        decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.SecureOn)) {
+        PluginBrowserPanel(page, closeLabel, close, if (useProfiles) PluginBrowserSession::create else null, onFailure = { failure ->
+            if (failure == PluginBrowserIssue.Startup && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !launched) openCompat()
+            else fail(failure)
+        }, onCookies = onCookies, initialIssue = issue, onDocumentError = onDocumentError)
+    }
+}
+
+@Composable
+internal fun PluginBrowserPanel(page: PluginBrowserPage, closeLabel: String, close: () -> Unit,
+                                create: ((Context, String?, () -> Unit, (String) -> Unit) -> PluginBrowserSession)?,
+                                onFailure: (PluginBrowserIssue) -> Unit, onCookies: (String) -> Unit,
+                                initialIssue: PluginBrowserIssue? = null, onReleased: () -> Unit = {},
+                                onDocumentError: (String) -> Unit = {}) {
+    var session by remember { mutableStateOf<PluginBrowserSession?>(null) }
+    var problem by remember { mutableStateOf<PluginBrowserIssue?>(null) }
+    var documentError by remember { mutableStateOf<String?>(null) }
+    var authority by remember(page.url) { mutableStateOf(page.url.rawAuthority) }
+    val error = initialIssue ?: problem
+    val blocked = error != null || documentError != null
+    LaunchedEffect(session, blocked) {
+        if (blocked) return@LaunchedEffect
+        val signIn = page.signIn ?: return@LaunchedEffect
+        val active = session ?: return@LaunchedEffect
+        while (documentError == null && problem == null) {
+            val header = try { active.cookies(signIn) } catch (failure: Exception) {
+                Log.w(pluginBrowserLogTag, "cookie read: ${failure.javaClass.simpleName}")
+                problem = PluginBrowserIssue.Startup
+                break
+            }
+            if (header != null) { onCookies(header); break }
+            delay(300)
+        }
+    }
+    LaunchedEffect(problem) { problem?.let(onFailure) }
+    LaunchedEffect(documentError) { documentError?.let(onDocumentError) }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(page.title, style = MaterialTheme.typography.titleMedium)
+                Text(authority, style = MaterialTheme.typography.labelMedium)
+            }
+            TextButton(onClick = { session?.reload(page) }, enabled = session != null && !blocked) { Text(mb("刷新", "Reload")) }
+            TextButton(onClick = close) { Text(closeLabel) }
+        }
+        val message = documentError ?: error?.text(LocalMBEnglish.current)
+        if (message != null) Text(message, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
+        if (create != null && !blocked) AndroidView(factory = { context ->
+            FrameLayout(context).apply {
+                try {
+                    session = create(context, page.signIn?.userAgent, { problem = PluginBrowserIssue.Renderer }, { authority = it }).also { browser ->
+                        tag = browser
+                        addView(browser.view, MATCH_PARENT, MATCH_PARENT)
+                        browser.open(page) { if (documentError == null) documentError = it }
+                    }
+                } catch (failure: Exception) {
+                    Log.w(pluginBrowserLogTag, "browser startup: ${failure.javaClass.simpleName}")
+                    problem = PluginBrowserIssue.Startup
+                }
+            }
+        }, modifier = Modifier.fillMaxSize(), onRelease = { frame ->
+            frame.removeAllViews()
+            val active = frame.tag as? PluginBrowserSession
+            if (active == null) onReleased()
+            else runCatching { active.close(onReleased) }.onFailure { onReleased() }
+            session = null
+        }, update = {})
+    }
+}
+
+private fun PluginBrowserIssue.text(english: Boolean): String = if (english) when (this) {
+    PluginBrowserIssue.MissingProvider -> "No usable WebView. Enable the system WebView provider in Android settings."
+    PluginBrowserIssue.UnsupportedProvider -> "This WebView cannot isolate sign-in. Update the active WebView provider or Android."
+    PluginBrowserIssue.Startup -> "Could not start the isolated WebView. Reopen MB and retry."
+    PluginBrowserIssue.Renderer -> "The isolated WebView stopped responding. Close this page and retry."
+} else when (this) {
+    PluginBrowserIssue.MissingProvider -> "没有可用的 WebView，请在系统设置中启用 WebView 提供程序。"
+    PluginBrowserIssue.UnsupportedProvider -> "当前 WebView 不支持隔离登录，请更新系统正在使用的 WebView 或 Android。"
+    PluginBrowserIssue.Startup -> "隔离 WebView 启动失败，请重新打开 MB 后重试。"
+    PluginBrowserIssue.Renderer -> "隔离 WebView 已退出，请关闭页面后重试。"
 }

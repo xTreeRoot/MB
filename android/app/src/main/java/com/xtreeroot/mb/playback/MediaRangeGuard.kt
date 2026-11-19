@@ -4,18 +4,79 @@ import java.io.EOFException
 import java.io.IOException
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
+import okhttp3.MediaType
+import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody
 import okio.Buffer
 import okio.ForwardingSource
+import okio.Source
+import okio.Timeout
 import okio.buffer
 
 internal class MediaRangeGuard : Interceptor {
-    private data class Representation(val url: HttpUrl, val size: Long?, val etag: String?, val partial: Boolean)
+    internal data class Representation(val url: HttpUrl, val size: Long?, val etag: String?, val partial: Boolean)
+    internal data class Prefix(val origin: HttpUrl, val representation: Representation, val bytes: ByteArray, val type: MediaType?)
     private var previous: Representation? = null
+    private var prefix: Prefix? = null
+
+    fun prime(response: Response, origin: HttpUrl): Prefix? {
+        val known = previous?.takeIf { it.partial && it.size != null } ?: return null
+        val body = response.body ?: return null
+        val size = minOf(checkNotNull(known.size), audioPrefixBytes.toLong())
+        if (response.code != 206 || body.contentLength() != size) return null
+        val bytes = body.source().readByteArray(size)
+        if (!body.source().exhausted()) throw MediaFetchFailure()
+        return Prefix(origin, known, bytes, body.contentType())
+    }
+
+    fun offer(value: Prefix) { prefix = value }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val incoming = chain.request()
+        val prepared = prefix?.takeIf { it.origin == incoming.url && incoming.header("Range") == null }
+        prefix = null
+        if (prepared != null) {
+            previous = prepared.representation
+            try { return join(chain, incoming, prepared) }
+            catch (_: IOException) { previous = null }
+        }
+        return checked(chain, incoming)
+    }
+
+    private fun join(chain: Interceptor.Chain, incoming: Request, prepared: Prefix): Response {
+        val length = checkNotNull(prepared.representation.size)
+        val tail = if (length > prepared.bytes.size) {
+            checked(chain, incoming.newBuilder().header("Range", "bytes=${prepared.bytes.size}-").build()).also { response ->
+                if (response.code != 206 || response.body == null) {
+                    response.close()
+                    throw MediaFetchFailure()
+                }
+            }
+        } else null
+        val body = object : ResponseBody() {
+            private val head = Buffer().write(prepared.bytes)
+            private val rest = tail?.body?.source()
+            private val input = object : Source {
+                override fun read(sink: Buffer, byteCount: Long): Long =
+                    if (!head.exhausted()) head.read(sink, byteCount) else rest?.read(sink, byteCount) ?: -1
+                override fun timeout(): Timeout = rest?.timeout() ?: Timeout.NONE
+                override fun close() { tail?.close() }
+            }.buffer()
+            override fun source() = input
+            override fun contentLength() = length
+            override fun contentType() = prepared.type
+        }
+        val builder = tail?.newBuilder() ?: Response.Builder().protocol(Protocol.HTTP_1_1)
+        builder.request(incoming.newBuilder().url(prepared.representation.url).build())
+            .code(200).message("OK").removeHeader("Content-Range").removeHeader("Transfer-Encoding")
+            .header("Content-Length", length.toString()).body(body)
+        prepared.type?.let { builder.header("Content-Type", it.toString()) }
+        return builder.build()
+    }
+
+    private fun checked(chain: Interceptor.Chain, incoming: Request): Response {
         val range = incoming.header("Range")?.let {
             requested.matchEntire(it) ?: throw MediaFetchFailure()
         }

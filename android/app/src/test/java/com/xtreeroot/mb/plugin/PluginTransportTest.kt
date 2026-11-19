@@ -30,6 +30,15 @@ class PluginTransportTest {
         assertFalse(restricted.reaches("example.test"))
     }
 
+    @Test fun manifestAcceptsTheImplementedLoginContractsButNotFutureRequirements() {
+        for (version in listOf("0.1.26", "0.1.27")) {
+            val info = PluginManifest.parse(JSONObject().put("id", "fixture").put("minAppVersion", version))
+            assertEquals(version, info.minAppVersion)
+        }
+        val future = JSONObject().put("id", "fixture").put("minAppVersion", "0.1.28")
+        assertThrows(PluginException::class.java) { PluginManifest.parse(future) }
+    }
+
     @Test fun crossOriginRedirectStripsCredentialsAndKeepsSeparateSetCookieHeaders() = runBlocking {
         withServer { target ->
             target.enqueue(MockResponse().addHeader("Set-Cookie", "first=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT")
@@ -57,6 +66,46 @@ class PluginTransportTest {
             val error = runCatching { PluginHttpTransport().fetch(initial, manifest) }.exceptionOrNull()
             assertEquals("Request outside plugin network permissions", error?.message)
             assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun manualRedirectPreservesStatusLocationAndCookiesWithoutFollowing() = runBlocking {
+        withServer { server ->
+            server.enqueue(MockResponse().setResponseCode(302).addHeader("Location", "/next")
+                .addHeader("Set-Cookie", "session=fixture; HttpOnly"))
+            val url = uri("http://127.0.0.1:${server.port}/request")
+            val request = PluginFetchRequest(url, "POST", emptyMap(), "fixture", PluginRedirectMode.Manual)
+            val response = PluginHttpTransport().fetch(request, manifest)
+            assertEquals(302, response.status)
+            assertEquals(url, response.url)
+            assertEquals("/next", response.headers["location"])
+            assertEquals(listOf("session=fixture; HttpOnly"), response.cookies)
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun errorModeRejectsRedirectWithoutFollowing() = runBlocking {
+        withServer { server ->
+            server.enqueue(MockResponse().setResponseCode(307).addHeader("Location", "/next"))
+            val url = uri("http://127.0.0.1:${server.port}/request")
+            val request = PluginFetchRequest(url, "GET", emptyMap(), null, PluginRedirectMode.Error)
+            val result = runCatching { PluginHttpTransport().fetch(request, manifest) }
+            assertEquals("Unexpected plugin redirect", result.exceptionOrNull()?.message)
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun perRequestResponseLimitAlsoAppliesToChunkedBodies() = runBlocking {
+        withServer { server ->
+            val exact = "x".repeat(oauthResponseLimit)
+            server.enqueue(MockResponse().setChunkedBody(exact, 4096))
+            server.enqueue(MockResponse().setChunkedBody(exact + "x", 4096))
+            val url = uri("http://127.0.0.1:${server.port}/token")
+            val request = PluginFetchRequest(url, "POST", emptyMap(), "fixture", PluginRedirectMode.Error, oauthResponseLimit)
+            val client = PluginHttpTransport()
+            assertEquals(oauthResponseLimit, client.fetch(request, manifest).bytes.size)
+            val error = runCatching { client.fetch(request, manifest) }.exceptionOrNull()
+            assertEquals("Plugin response body too large", error?.message)
         }
     }
 

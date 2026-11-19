@@ -125,3 +125,10 @@ JNIEXPORT jbyteArray JNICALL JNI_METHOD(nativeRead)(JNIEnv *env, jobject owner, 
     mbjs_free_string(text);
     return value;
 }
+
+JNIEXPORT jbyteArray JNICALL JNI_METHOD(nativeErrorCode)(JNIEnv *env, jobject owner, jlong handle) {
+    char *text = mbjs_error_code(bridge_at(handle)->runtime);
+    jbyteArray value = to_java(env, text);
+    mbjs_free_string(text);
+    return value;
+}

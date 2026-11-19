@@ -27,6 +27,7 @@ internal class QuickJsContext(host: QuickJsHost) {
     fun supports(name: String) = nativeHasExport(handle, name.encodeToByteArray())
     fun event() = nativeRead(handle, event = true)?.decodeToString()
     fun result() = nativeRead(handle, event = false)?.decodeToString() ?: "null"
+    fun errorCode() = nativeErrorCode(handle)?.decodeToString()
 
     fun close() = synchronized(lifetime) {
         if (handle != 0L) {
@@ -50,6 +51,7 @@ internal class QuickJsContext(host: QuickJsHost) {
     private external fun nativeSettle(handle: Long, id: Int, success: Boolean, value: ByteArray, budget: Int): Int
     private external fun nativeHasExport(handle: Long, name: ByteArray): Boolean
     private external fun nativeRead(handle: Long, event: Boolean): ByteArray?
+    private external fun nativeErrorCode(handle: Long): ByteArray?
 
     companion object {
         private const val callBudgetMs = 100

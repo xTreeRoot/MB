@@ -1,12 +1,20 @@
 package com.xtreeroot.mb.plugin
 
+import android.content.Intent
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.webkit.CookieManager
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import java.io.File
 import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -17,6 +25,57 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PluginBrowserSessionTest {
+    @Test fun compatibilityBrowserStartsInADifferentProcessAndDiscardsPreviousAttemptData() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
+        val automation = instrumentation.uiAutomation
+        fun profiles() = File(context.applicationInfo.dataDir).listFiles { file ->
+            file.isDirectory && file.name.startsWith(compatDataDirectoryPrefix)
+        }.orEmpty()
+        val target = URI("https://example.invalid/")
+        suspend fun waitFor(condition: () -> Boolean) = withTimeout(10_000) {
+            while (!condition()) delay(50)
+        }
+        fun shell(command: String): String = automation.executeShellCommand(command)
+            .let { ParcelFileDescriptor.AutoCloseInputStream(it).bufferedReader().use { it.readText().trim() } }
+        fun processId(): String = shell("pidof ${context.packageName}:plugin_browser")
+        suspend fun open(inline: Boolean = false): File {
+            val previous = profiles().toSet()
+            val title = "Compatibility fixture"
+            val id = UUID.randomUUID()
+            val request = if (inline) PluginWebSignIn(title, target, target, setOf("session"), null, id,
+                html = """<script>setTimeout(() => { document.cookie = 'session=fixture; Secure; Path=/'; }, 1500);</script>""") else null
+            val page = PluginBrowserPage(title, target, id, request)
+            context.startActivity(CompatPluginBrowserActivity.intent(context, page, english = true, dark = false)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            var profile: File? = null
+            waitFor {
+                profile = profiles().singleOrNull()?.takeUnless { it in previous }
+                profile != null && processId().isNotEmpty() && shell("dumpsys activity activities")
+                    .lineSequence().any { "topResumedActivity=" in it && ".plugin.CompatPluginBrowserActivity" in it }
+            }
+            assertTrue(processId() != Process.myPid().toString())
+            return checkNotNull(profile)
+        }
+        suspend fun close() {
+            shell("input keyevent KEYCODE_BACK")
+            waitFor { processId().isEmpty() }
+        }
+        try {
+            val first = open()
+            File(first, "fixture").writeText("Disposable test data")
+            close()
+            val second = open(inline = true)
+            assertTrue(first != second)
+            assertTrue(!first.exists())
+            waitFor { processId().isEmpty() }
+        } finally {
+            if (processId().isNotEmpty()) shell("input keyevent KEYCODE_BACK")
+        }
+    }
+
     @Test fun browserAttemptsDoNotShareCookiesAndClosingClearsAttemptData() = runBlocking {
         withTimeout(10_000) {
             withContext(Dispatchers.Main) {
@@ -42,6 +101,41 @@ class PluginBrowserSessionTest {
                     try { assertNull(second.cookies(request)) }
                     finally { second.clear() }
                 } finally { ordinary.store(address, "session=empty; Max-Age=0") }
+            }
+        }
+    }
+
+    @Test fun inlineDocumentUsesHttpsOriginAndOnlyMainFrameCanReportFailure() = runBlocking {
+        withTimeout(10_000) {
+            withContext(Dispatchers.Main) {
+                assumeTrue(PluginBrowserSession.available())
+                assumeTrue(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+                assumeTrue(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT))
+                val context = InstrumentationRegistry.getInstrumentation().targetContext
+                val target = URI("https://${UUID.randomUUID()}.fixture.test/login")
+                val html = """
+                    <iframe srcdoc='<script>window.mbSignInAndroid?.postMessage(JSON.stringify({error:"from frame"}));</script>'></iframe>
+                    <script>
+                      document.cookie = 'session=fixture; Secure; Path=/';
+                      addEventListener('load', () => {
+                        window.webkit.messageHandlers.mbSignIn.postMessage({error: '字'.repeat(400)});
+                        window.webkit.messageHandlers.mbSignIn.postMessage({error: 'scope=' + location.origin});
+                      });
+                    </script>
+                """.trimIndent()
+                val request = PluginWebSignIn("Fixture", target, target, setOf("session"), null, html = html)
+                val page = PluginBrowserPage(request.title, target, request.id, request)
+                val messages = Channel<String>(Channel.UNLIMITED)
+                val browser = PluginBrowserSession.create(context)
+                try {
+                    browser.open(page) { messages.trySend(it) }
+                    val expected = "scope=https://${target.host}"
+                    assertEquals(expected, messages.receive())
+                    assertEquals("session=fixture", browser.cookies(request))
+                    assertNull(CookieManager.getInstance().getCookie(target.toASCIIString()))
+                    browser.reload(page)
+                    assertEquals(expected, messages.receive())
+                } finally { browser.clear() }
             }
         }
     }

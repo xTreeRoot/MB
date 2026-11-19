@@ -25,8 +25,21 @@ import okhttp3.OkHttpClient
 
 internal enum class MediaRecovery { Reopen, RefreshAddress }
 
-internal class MediaFetchFailure(val recovery: MediaRecovery? = null, status: Int? = null) :
+internal class MediaFetchFailure(val recovery: MediaRecovery? = null, val status: Int? = null) :
     IOException(if (status == null) "Invalid media response" else "Invalid media response (HTTP $status)")
+
+@OptIn(UnstableApi::class)
+internal fun Throwable.playbackDiagnostic(code: Int): String {
+    val name = PlaybackException.getErrorCodeName(code)
+    val httpStatus = mediaCauses(this).mapNotNull { failure ->
+        when (failure) {
+            is MediaFetchFailure -> failure.status
+            is HttpDataSource.InvalidResponseCodeException -> failure.responseCode
+            else -> null
+        }
+    }.firstOrNull()
+    return if (httpStatus == null) name else "$name / HTTP $httpStatus"
+}
 
 internal class MediaRecoveryBudget {
     private var reopened = 0
@@ -49,9 +62,9 @@ internal class AudioRecovery(private val scope: CoroutineScope, private val play
         budget = MediaRecoveryBudget()
     }
 
-    fun onError(error: PlaybackException, item: MediaItem?, isSourceCurrent: () -> Boolean): Boolean {
+    fun onError(error: PlaybackException, item: MediaItem?, usedPreload: Boolean = false, isSourceCurrent: () -> Boolean): Boolean {
         if (item == null || item !== player.currentMediaItem || !isSourceCurrent()) return false
-        val action = mediaRecovery(error) ?: return false
+        val action = if (usedPreload) MediaRecovery.RefreshAddress else mediaRecovery(error) ?: return false
         val wait = budget.delayFor(action) ?: return false
         job?.cancel()
         job = scope.launch {
@@ -82,9 +95,11 @@ internal fun mediaRecovery(error: Throwable): MediaRecovery? {
 }
 
 @OptIn(UnstableApi::class)
-internal fun guardedMediaHttp(client: OkHttpClient): OkHttpDataSource = OkHttpDataSource.Factory(
-    client.newBuilder().retryOnConnectionFailure(false).apply { interceptors().add(0, MediaRangeGuard()) }.build(),
-).createDataSource()
+internal fun guardedMediaHttp(client: OkHttpClient, guard: MediaRangeGuard = MediaRangeGuard()): OkHttpDataSource =
+    OkHttpDataSource.Factory(guardedMediaClient(client, guard)).createDataSource()
+
+internal fun guardedMediaClient(client: OkHttpClient, guard: MediaRangeGuard): OkHttpClient =
+    client.newBuilder().retryOnConnectionFailure(false).apply { interceptors().add(0, guard) }.build()
 
 @OptIn(UnstableApi::class)
 internal fun ProgressiveMediaSource.Factory.recoverOutsideLoader() = setLoadErrorHandlingPolicy(

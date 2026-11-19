@@ -16,15 +16,29 @@ import coil.size.Scale
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.OutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+internal const val appearanceBackgroundByteLimit = 12L * 1024 * 1024
 
 internal class AppearanceBackgroundStore(private val context: Context) {
     private val file = AtomicFile(File(context.noBackupFilesDir, "appearance-background.png"))
+    private val files = Mutex()
+    private val revision = MutableStateFlow(0L)
+    private val restoreCount = MutableStateFlow(0L)
+    val changes = revision.asStateFlow()
+    val restores = restoreCount.asStateFlow()
 
     suspend fun load(): Bitmap? = withContext(Dispatchers.IO) {
-        val input = try { file.openRead() } catch (_: FileNotFoundException) { return@withContext null }
-        input.use { BitmapFactory.decodeStream(it) ?: throw IOException("Invalid appearance background") }
+        files.withLock {
+            val input = try { file.openRead() } catch (_: FileNotFoundException) { return@withLock null }
+            input.use { BitmapFactory.decodeStream(it) ?: throw IOException("Invalid appearance background") }
+        }
     }
 
     suspend fun replace(uri: Uri): Bitmap = withContext(Dispatchers.IO) {
@@ -39,20 +53,52 @@ internal class AppearanceBackgroundStore(private val context: Context) {
         val bitmap = if (longestSide <= maxDimension) decoded else Bitmap.createScaledBitmap(decoded,
             (decoded.width.toLong() * maxDimension / longestSide).toInt().coerceAtLeast(1),
             (decoded.height.toLong() * maxDimension / longestSide).toInt().coerceAtLeast(1), true)
-        val output = file.startWrite()
-        try {
-            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("Cannot encode image")
-            file.finishWrite(output)
-        } catch (failure: Exception) {
-            file.failWrite(output)
-            throw failure
+        files.withLock {
+            write { if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) throw IOException("Cannot encode image") }
         }
         bitmap
     }
 
+    suspend fun <Value> snapshot(read: (File, Long) -> Value): Value? = files.withLock {
+        if (!exists()) null else read(file.baseFile, revision.value)
+    }
+
+    suspend fun restoreIfMissing(source: File) = withContext(Dispatchers.IO) {
+        files.withLock {
+            if (exists()) return@withLock
+            require(source.length() in 1..appearanceBackgroundByteLimit)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(source.path, bounds)
+            require(bounds.outMimeType == "image/png" && bounds.outWidth in 1..maxDimension && bounds.outHeight in 1..maxDimension)
+            val decoded = BitmapFactory.decodeFile(source.path) ?: throw IOException("Invalid appearance background")
+            decoded.recycle()
+            write { output -> source.inputStream().use { it.copyTo(output) } }
+            restoreCount.value += 1
+        }
+    }
+
+    private fun exists(): Boolean = try {
+        file.openRead().use { true }
+    } catch (_: FileNotFoundException) { false }
+
+    private fun write(action: (OutputStream) -> Unit) {
+        val output = file.startWrite()
+        try {
+            action(output)
+            file.finishWrite(output)
+            revision.value += 1
+        } catch (failure: Exception) {
+            file.failWrite(output)
+            throw failure
+        }
+    }
+
     suspend fun clear() = withContext(Dispatchers.IO) {
-        file.delete()
-        if (file.baseFile.exists()) throw IOException("Cannot remove appearance background")
+        files.withLock {
+            file.delete()
+            if (file.baseFile.exists()) throw IOException("Cannot remove appearance background")
+            revision.value += 1
+        }
     }
 
     private companion object { const val maxDimension = 1600 }

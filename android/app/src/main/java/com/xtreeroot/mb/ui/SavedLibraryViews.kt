@@ -66,8 +66,8 @@ internal fun DataLocationPage(library: PortableLibrary, back: () -> Unit) {
                         Text(mb("最近备份：$date", "Last backup: $date"))
                     } else Text(mb("选择‘文档’下的文件夹，MB 会创建 MB Data 子目录。", "Choose a folder in Documents. MB will create an MB Data subfolder."))
                 })
-            Text(mb("歌曲、歌单、歌词、本地喜欢、最近播放、队列、插件安装包和非敏感设置会备份。重装后重新选择同一目录，恢复的插件默认停用。登录凭据、插件私有存储和播放缓存不备份。",
-                "The backup keeps songs, playlists, lyrics, local likes, recent plays, your queue, plugin packages, and non-sensitive settings. After reinstalling, select the same folder to restore them. Restored plugins stay disabled until enabled. Sign-in credentials, private plugin data, and playback cache aren’t backed up."),
+            Text(mb("歌曲、歌单、歌词、本地喜欢、最近播放、队列、插件安装包、背景图片和非敏感设置会备份。重装后重新选择同一目录，恢复的插件默认停用。登录凭据、插件私有存储和播放缓存不备份。",
+                "The backup keeps songs, playlists, lyrics, local likes, recent plays, your queue, plugin packages, the background image, and non-sensitive settings. After reinstalling, select the same folder to restore them. Restored plugins stay disabled until enabled. Sign-in credentials, private plugin data, and playback cache aren’t backed up."),
                 Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium)
             FlowRow(Modifier.padding(horizontal = 8.dp)) {
                 TextButton(enabled = !status.busy, onClick = { choose.launch(null) }) {

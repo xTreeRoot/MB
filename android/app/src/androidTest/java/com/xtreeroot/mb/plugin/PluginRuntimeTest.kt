@@ -1,6 +1,9 @@
 package com.xtreeroot.mb.plugin
 
+import android.content.Intent
+import androidx.core.net.toUri
 import androidx.test.platform.app.InstrumentationRegistry
+import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.music.AudioQuality
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
@@ -8,6 +11,7 @@ import com.xtreeroot.mb.music.TrackUnavailableReason
 import com.xtreeroot.mb.music.toMetadataJson
 import com.xtreeroot.mb.music.toTrackMetadata
 import java.io.File
+import java.net.ServerSocket
 import java.net.URLDecoder
 import java.nio.file.Files
 import java.util.UUID
@@ -15,9 +19,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -70,6 +77,42 @@ class PluginRuntimeTest {
         }
         for (id in listOf("unknown", "401", "403", "VIP", "invalidUrl")) rejected { source.audio(id) }
         assertEquals("https://api.example.test/recovered.mp3", source.audio("ok").url)
+    }
+
+    @Test fun videoResolutionPreservesSynchronousAndAsynchronousPluginFailures() = fixture(
+        """
+        export function video({id}) {
+          if (id === 'signed-out') throw Object.assign(new Error('Sign in first'), {code: 'signIn'});
+          if (id === 'offline') return Promise.reject(Object.assign(new Error('Offline'), {code: 'network'}));
+          if (id === 'unknown') throw new Error('Error text says network and signIn');
+          return {url:'https://api.example.test/video.mp4'};
+        }
+        """.trimIndent(),
+    ) { runtime, _, _ ->
+        val source = PluginSource(manifest, runtime)
+        for ((id, expected) in mapOf("signed-out" to PlaybackIssue.SignIn, "offline" to PlaybackIssue.Network)) {
+            try { source.video(id); fail("Expected classified video failure for $id") }
+            catch (error: PlaybackIssueException) { assertEquals(expected, error.issue) }
+        }
+        rejected { source.video("unknown") }
+        assertEquals("https://api.example.test/video.mp4", source.video("ok").url)
+    }
+
+    @Test fun failedFetchReachesAudioAsNetworkWithoutMisclassifyingPermissionDenial() {
+        val port = ServerSocket(0).use { it.localPort }
+        val local = manifest.copy(network = listOf("127.0.0.1"))
+        fixture(
+            """
+            export async function stream({id}) {
+              await fetch(id === 'permitted' ? 'https://127.0.0.1:$port/audio' : 'https://blocked.example.invalid/audio');
+            }
+            """.trimIndent(), plugin = local, transport = PluginHttpTransport(),
+        ) { runtime, _, _ ->
+            val source = PluginSource(local, runtime)
+            try { source.audio("permitted"); fail("Expected classified connection failure") }
+            catch (error: PlaybackIssueException) { assertEquals(PlaybackIssue.Network, error.issue) }
+            rejected { source.audio("denied") }
+        }
     }
 
     @Test fun trackReasonsRoundTripWithoutInventingOneForLegacyPluginTracks() = fixture(
@@ -242,7 +285,7 @@ class PluginRuntimeTest {
         """
         export async function search() {
             const url = new URL('/find', 'https://api.example.test/root');
-            const response = await fetch(url, {method:'POST', headers:{'X-Fixture':'yes'}, body:new URLSearchParams({q:'你好 + !'})});
+            const response = await fetch(url, {method:'POST', redirect:'manual', headers:{'X-Fixture':'yes'}, body:new URLSearchParams({q:'你好 + !'})});
             setTimeout(() => { globalThis.ready = true; }, 5);
             return {status:response.status, header:response.headers.get('X-Answer'), bytes:[...new Uint8Array(await response.arrayBuffer())]};
         }
@@ -251,10 +294,12 @@ class PluginRuntimeTest {
             return true;
         }
         export async function forbidden() { return await fetch('https://other.example.test/'); }
+        export async function invalidRedirect() { return await fetch('https://api.example.test/find', {redirect:'invalid'}); }
         """.trimIndent(),
         transport = PluginTransport { request, _ ->
             assertEquals("https://api.example.test/find", request.url.toString())
             assertEquals("POST", request.method)
+            assertEquals(PluginRedirectMode.Manual, request.redirectMode)
             assertEquals("yes", request.headers["x-fixture"])
             assertEquals("application/x-www-form-urlencoded;charset=UTF-8", request.headers["content-type"])
             assertEquals("q=%E4%BD%A0%E5%A5%BD+%2B+%21", request.body)
@@ -267,6 +312,7 @@ class PluginRuntimeTest {
         assertEquals("[0,255]", result.getJSONArray("bytes").toString())
         assertEquals(true, runtime.invoke("ready"))
         rejected { runtime.invoke("forbidden") }
+        rejected { runtime.invoke("invalidRedirect") }
     }
 
     @Test fun desktopBilibiliFixtureRunsWithoutChanges() {
@@ -424,10 +470,11 @@ class PluginRuntimeTest {
         val release = CompletableDeferred<String>()
         fixture(
             """
-            const options = {url:'https://api.example.test/signin',cookiesOf:'https://api.example.test/account',until:['session']};
+            const options = {url:'https://api.example.test/signin',cookiesOf:'https://api.example.test/account',until:['session'],html:'<p>Fixture sign-in</p>'};
             export function outsideSignIn() { return host.webSignIn(options); }
             export async function signIn() {
                 host.signInPrompt({qr:'https://api.example.test/scan',text:'Scan fixture'});
+                if (host.capabilities?.webSignInHTML !== true) throw Error('missing document sign-in');
                 const {cookie} = await host.webSignIn(options);
                 if (cookie !== 'session=fixture') throw Error('wrong session');
                 host.storage.set('profile',{id:'me',name:'Fixture profile',page:'personal'});
@@ -447,6 +494,7 @@ class PluginRuntimeTest {
             val login = async { source.signIn { prompt.complete(it.message) } }
             assertEquals("Scan fixture", prompt.await())
             assertEquals(setOf("session"), requestSeen.await().until)
+            assertEquals("<p>Fixture sign-in</p>", requestSeen.await().html)
             source.configure(mapOf("quality" to "low"), "en")
             release.complete("session=fixture")
             assertEquals("Fixture profile", login.await().name)
@@ -456,12 +504,45 @@ class PluginRuntimeTest {
         }
     }
 
+    @Test fun androidCallbackCompletesOnlyTheActiveQuickJsSignIn() {
+        val broker = (app.applicationContext as MBApplication).pluginOAuth
+        val exchangeSeen = CompletableDeferred<PluginFetchRequest>()
+        fixture("""
+            const options = {authorizationEndpoint:'https://api.example.test/authorize',tokenEndpoint:'https://api.example.test/token',
+                clientID:'fixture',redirectURI:'$pluginOAuthRedirect',scopes:['profile']};
+            export function outsideSignIn() { return host.oauthSignIn(options); }
+            export async function signIn() { return await host.oauthSignIn(options); }
+        """.trimIndent(), oauthSignIn = broker::authorize, transport = PluginTransport { request, _ ->
+            check(exchangeSeen.complete(request))
+            PluginFetchResponse(200, request.url, emptyMap(), emptyList(),
+                """{"access_token":"fixture-access","token_type":"Bearer"}""".encodeToByteArray())
+        }) { runtime, _, _ ->
+            rejected { runtime.invoke("outsideSignIn") }
+            assertFalse(exchangeSeen.isCompleted)
+            val signIn = async { runtime.signIn {} }
+            val page = broker.requests.filterNotNull().first()
+            val browser = checkNotNull(broker.begin(page.id)).toASCIIString().toHttpUrl()
+            val state = checkNotNull(browser.queryParameter("state"))
+            val callback = "$pluginOAuthRedirect?code=fixture-code&state=$state"
+            app.startActivity(Intent(Intent.ACTION_VIEW, callback.toUri()).addCategory(Intent.CATEGORY_BROWSABLE)
+                .setPackage(app.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val token = signIn.await() as JSONObject
+            assertEquals("fixture-access", token.getString("access_token"))
+            val exchange = exchangeSeen.await()
+            assertEquals("https://api.example.test/token", exchange.url.toASCIIString())
+            assertEquals(PluginRedirectMode.Error, exchange.redirectMode)
+            assertTrue(exchange.body.orEmpty().split('&').contains("code=fixture-code"))
+            assertFalse(broker.callback(uri(callback)))
+        }
+    }
+
     private fun fixture(
         script: String,
         plugin: PluginManifest = manifest,
         transport: PluginTransport = PluginTransport { _, _ -> throw PluginException("Unexpected request") },
         webSignIn: suspend (PluginWebSignIn) -> String = { throw PluginException("Unexpected web sign-in") },
         openURL: suspend (PluginWebLink) -> Unit = { throw PluginException("Unexpected web link") },
+        oauthSignIn: suspend (PluginOAuthRequest) -> PluginFetchRequest = { throw PluginException("Unexpected OAuth sign-in") },
         run: suspend kotlinx.coroutines.CoroutineScope.(PluginRuntime, File, File) -> Unit,
     ) = runBlocking {
         val parent = File(app.cacheDir, "plugin-test-${UUID.randomUUID()}").apply { mkdirs() }
@@ -469,7 +550,7 @@ class PluginRuntimeTest {
         val data = File(parent, "data")
         File(root, "index.js").writeText(script)
         val runtime = PluginRuntime(app.assets, root, data, plugin, mapOf("quality" to "high"),
-            transport = transport, webSignIn = webSignIn, openURL = openURL)
+            transport = transport, webSignIn = webSignIn, openURL = openURL, oauthSignIn = oauthSignIn)
         try { withTimeout(10_000) { run(runtime, root, data) } }
         finally {
             runtime.close()

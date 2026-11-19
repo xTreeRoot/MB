@@ -17,11 +17,11 @@ class TrackPlaybackIssuesTest {
         val statuses = TrackPlaybackIssues()
         statuses.failed(first, PlaybackIssue.Network)
         statuses.failed(second, PlaybackIssue.SourceUnavailable)
-        assertEquals(PlaybackIssue.Network, statuses.values.value[first.playbackKey])
-        assertEquals(PlaybackIssue.SourceUnavailable, statuses.values.value[second.playbackKey])
+        assertEquals(PlaybackIssue.Network, statuses.values.value[first.playbackKey]?.issue)
+        assertEquals(PlaybackIssue.SourceUnavailable, statuses.values.value[second.playbackKey]?.issue)
         statuses.playing(first.copy(title = "Updated title"))
         assertNull(statuses.values.value[first.playbackKey])
-        assertEquals(PlaybackIssue.SourceUnavailable, statuses.values.value[second.playbackKey])
+        assertEquals(PlaybackIssue.SourceUnavailable, statuses.values.value[second.playbackKey]?.issue)
     }
 
     @Test fun trustsStructuredReasonsAndNetworkCodesButNotExceptionText() {
@@ -39,5 +39,12 @@ class TrackPlaybackIssuesTest {
             PlaybackIssueException(PlaybackIssue.SignIn, "Session required")), unknown))
         assertEquals(PlaybackIssue.Network, classifyPlaybackIssue(IOException(UnknownHostException()), unknown))
         assertEquals(PlaybackIssue.Network, classifyPlaybackIssue(IOException(), PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT))
+    }
+
+    @Test fun playbackDiagnosticsExposeOnlyStructuredCodes() {
+        val code = PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+        val failure = IOException("private header", MediaFetchFailure(status = 403))
+        assertEquals("ERROR_CODE_IO_UNSPECIFIED / HTTP 403", failure.playbackDiagnostic(code))
+        assertEquals("ERROR_CODE_IO_UNSPECIFIED", IOException("HTTP 403").playbackDiagnostic(code))
     }
 }

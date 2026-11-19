@@ -1,6 +1,7 @@
 package com.xtreeroot.mb
 
 import android.app.Application
+import android.content.Context
 import android.os.Build
 import androidx.core.content.edit
 import coil.ImageLoader
@@ -24,15 +25,19 @@ import com.xtreeroot.mb.playback.TrackPlaybackIssues
 import com.xtreeroot.mb.playback.StationStatus
 import com.xtreeroot.mb.playback.VideoPlayback
 import com.xtreeroot.mb.plugin.GitHubPluginPackages
+import com.xtreeroot.mb.plugin.CompatPluginBrowserActivity
 import com.xtreeroot.mb.plugin.InstalledPlugin
 import com.xtreeroot.mb.plugin.PluginHttpTransport
 import com.xtreeroot.mb.plugin.PluginInstaller
+import com.xtreeroot.mb.plugin.PluginOAuthBroker
 import com.xtreeroot.mb.plugin.PluginRuntime
 import com.xtreeroot.mb.plugin.PluginSource
 import com.xtreeroot.mb.plugin.PluginUpdateNotices
 import com.xtreeroot.mb.plugin.PluginWebSignInBroker
+import com.xtreeroot.mb.plugin.isPluginBrowserProcess
 import com.xtreeroot.mb.plugin.PluginWebLink
 import com.xtreeroot.mb.preferences.AppLanguage
+import com.xtreeroot.mb.preferences.AppearanceBackgroundStore
 import com.xtreeroot.mb.preferences.NetworkRouting
 import com.xtreeroot.mb.preferences.SettingsStore
 import java.io.File
@@ -59,6 +64,7 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     val videoPlayback = MutableStateFlow<VideoPlayback?>(null)
     val stationStatus = MutableStateFlow(StationStatus())
     val settings by lazy { SettingsStore(this) }
+    val appearanceBackground by lazy { AppearanceBackgroundStore(this) }
     val network by lazy { NetworkRouting { settings.values.value.proxy } }
     val http by lazy {
         OkHttpClient.Builder().proxySelector(network.proxySelector).followSslRedirects(false).addNetworkInterceptor { chain ->
@@ -106,9 +112,15 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     lateinit var portableLibrary: PortableLibrary
         private set
 
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        if (isPluginBrowserProcess(base.packageName)) CompatPluginBrowserActivity.prepareProcess()
+    }
+
     override fun onCreate() {
         super.onCreate()
-        portableLibrary = PortableLibrary(this, local, offline.store, playlists, settings, plugins)
+        if (isPluginBrowserProcess(packageName)) return
+        portableLibrary = PortableLibrary(this, local, offline.store, playlists, settings, plugins, appearanceBackground)
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
             val languages = settings.values.map { it.language }.distinctUntilChanged()
             combine(plugins.changes, languages) { _, _ -> Unit }.collect {
@@ -122,6 +134,7 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this).okHttpClient(http).build()
 
     val pluginWebSignIn = PluginWebSignInBroker()
+    val pluginOAuth = PluginOAuthBroker()
     private val webLink = MutableStateFlow<PluginWebLink?>(null)
     val pluginWebLink = webLink.asStateFlow()
 
@@ -151,7 +164,7 @@ internal class MBApplication : Application(), ImageLoaderFactory {
             val source = if (current == null) {
                 PluginSource(plugin.manifest, PluginRuntime(assets, plugin.directory, plugin.dataDirectory,
                     plugin.manifest, values, language, PluginHttpTransport(network.proxySelector), pluginWebSignIn::show,
-                    openURL = { link -> webLink.value = link }))
+                    openURL = { link -> webLink.value = link }, oauthSignIn = pluginOAuth::authorize))
             } else current.source.also {
                 if (current.language != language || current.values != values) it.configure(values, language)
             }

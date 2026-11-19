@@ -15,7 +15,12 @@
     const found = pending.get(id);
     if (!found) return;
     pending.delete(id);
-    if (success) found.resolve(value); else found.reject(new Error(String(value)));
+    if (success) found.resolve(value);
+    else {
+      const error = new Error(value?.message ?? String(value));
+      if (typeof value?.code === "string") error.code = value.code;
+      found.reject(error);
+    }
   };
   globalThis.host = Object.freeze({
     platform: "ios", arch: "arm64", dir: ".", dataDir: ".",
@@ -121,7 +126,9 @@
     if (body != null && typeof body !== "string") throw new TypeError("Fetch body must be text or URLSearchParams");
     options.signal?.throwIfAborted();
     let abort;
-    const event = { kind: "fetch", url: String(input), method: options.method || "GET", headers: Object.fromEntries(headers), body: body ?? null };
+    const redirect = options.redirect ?? "follow";
+    if (!["follow", "manual", "error"].includes(redirect)) throw new TypeError("Invalid fetch redirect mode");
+    const event = { kind: "fetch", url: String(input), method: options.method || "GET", headers: Object.fromEntries(headers), body: body ?? null, redirect };
     const operation = request(event);
     const cancelled = new Promise((_, reject) => { abort = () => { __request({kind:"cancel", request:event.requestID}); pending.delete(event.requestID); reject(options.signal.reason); }; options.signal?.addEventListener("abort", abort, {once:true}); });
     let result;

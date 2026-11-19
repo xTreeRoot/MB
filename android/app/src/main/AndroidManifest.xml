@@ -11,7 +11,8 @@
         android:icon="@drawable/mb_icon"
         android:label="MB"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -24,6 +25,17 @@
                 <data android:scheme="mygo-music" android:host="install-plugin" />
             </intent-filter>
         </activity>
+        <activity android:name=".plugin.PluginOAuthRedirectActivity" android:exported="true" android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.xtreeroot.mb" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".plugin.CompatPluginBrowserActivity" android:exported="false"
+            android:process=":plugin_browser" />
         <service android:name=".playback.PlaybackService"
             android:exported="false" android:foregroundServiceType="mediaPlayback">
             <intent-filter>

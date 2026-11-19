@@ -107,4 +107,17 @@ class PortableManifestTest {
         val redirected = bytes.decodeToString().replace(asset.name, "../../source.zip").encodeToByteArray()
         assertThrows(IllegalArgumentException::class.java) { PortableManifest.decode(redirected) }
     }
+
+    @Test fun backgroundIsAnOptionalContentAddressedAssetWithAnImageSizeLimit() {
+        val sha = "e".repeat(64)
+        val picture = PortableAsset("mb-background-$sha.png", 800, sha)
+        val restored = PortableManifest.decode(manifest.copy(background = picture).encode())
+        assertEquals(picture, restored.background)
+        assertEquals(manifest.assets + picture, restored.assets)
+        assertEquals(null, PortableManifest.decode(manifest.encode()).background)
+        for (invalid in listOf(picture.copy(name = "../${picture.name}"), picture.copy(digest = "f".repeat(64)),
+            picture.copy(bytes = 12 * 1024 * 1024 + 1L))) {
+            assertThrows(IllegalArgumentException::class.java) { PortableManifest.decode(manifest.copy(background = invalid).encode()) }
+        }
+    }
 }

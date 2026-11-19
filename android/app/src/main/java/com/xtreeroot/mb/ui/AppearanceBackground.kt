@@ -19,8 +19,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.xtreeroot.mb.preferences.AppearanceBackgroundStore
+import com.xtreeroot.mb.MBApplication
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -30,11 +31,19 @@ internal enum class BackgroundError { Load, Import, Clear }
 internal data class AppearanceBackgroundState(val image: Bitmap? = null, val busy: Boolean = true, val error: BackgroundError? = null)
 
 internal class AppearanceBackgroundModel(application: Application) : AndroidViewModel(application) {
-    private val store = AppearanceBackgroundStore(application)
+    private val store = (application as MBApplication).appearanceBackground
     private val current = MutableStateFlow(AppearanceBackgroundState())
     val state = current.asStateFlow()
+    private var editJob: Job? = null
 
-    init { edit(BackgroundError.Load, store::load) }
+    init {
+        viewModelScope.launch {
+            store.restores.collect {
+                while (editJob?.isActive == true) editJob?.join()
+                edit(BackgroundError.Load, store::load)
+            }
+        }
+    }
 
     fun select(uri: Uri) {
         if (!current.value.busy) edit(BackgroundError.Import) { store.replace(uri) }
@@ -47,7 +56,7 @@ internal class AppearanceBackgroundModel(application: Application) : AndroidView
     private fun edit(error: BackgroundError, action: suspend () -> Bitmap?) {
         val previous = current.value
         current.value = previous.copy(busy = true, error = null)
-        viewModelScope.launch {
+        editJob = viewModelScope.launch {
             current.value = try { AppearanceBackgroundState(action(), busy = false) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { previous.copy(busy = false, error = error) }

@@ -7,6 +7,7 @@ import com.xtreeroot.mb.playback.QueueSnapshot
 import com.xtreeroot.mb.plugin.PluginRepository
 import com.xtreeroot.mb.plugin.pluginZipLimit
 import com.xtreeroot.mb.preferences.AppPreferences
+import com.xtreeroot.mb.preferences.appearanceBackgroundByteLimit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -17,6 +18,7 @@ internal data class PortableAsset(val name: String, val bytes: Long, val digest:
         val hash = Regex("[a-f0-9]{64}")
         val importedName = Regex("mb-import-[a-f0-9]{64}\\.audio")
         val downloadedName = Regex("mb-saved-[a-f0-9-]{36}\\.[a-z0-9]{2,5}")
+        val backgroundName = Regex("mb-background-[a-f0-9]{64}\\.png")
         const val maximumBytes = 8L * 1024 * 1024 * 1024
 
         fun decode(data: JSONObject): PortableAsset = PortableAsset(data.getString("file"), data.getLong("bytes"),
@@ -41,8 +43,9 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
                                      val history: List<String> = emptyList(), val queue: QueueSnapshot? = null,
                                      val preferences: AppPreferences? = null,
                                      val plugins: List<PortablePlugin> = emptyList(),
-                                     val activity: List<LocalTrackActivity> = emptyList()) {
-    val assets get() = imports.map(PortableImport::asset) + downloads.map(PortableDownload::asset) + plugins.map(PortablePlugin::asset)
+                                     val activity: List<LocalTrackActivity> = emptyList(), val background: PortableAsset? = null) {
+    val assets get() = imports.map(PortableImport::asset) + downloads.map(PortableDownload::asset) +
+        plugins.map(PortablePlugin::asset) + listOfNotNull(background)
 
     fun encode(): ByteArray = JSONObject().put("version", 1).put("limitMb", limitMb)
         .put("imports", JSONArray(imports.map { item ->
@@ -55,6 +58,7 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
         })).put("history", JSONArray(history)).apply {
             queue?.let { put("queue", JSONObject(it.forPortableStorage().encode())) }
             preferences?.let { put("preferences", it.toJson()) }
+            background?.let { put("background", it.encode()) }
             if (plugins.isNotEmpty()) put("plugins", JSONArray(plugins.map { plugin ->
                 JSONObject().put("id", plugin.id).put("repository", plugin.repository)
                     .put("asset", plugin.asset.encode()).put("settings", JSONObject(plugin.settings))
@@ -113,7 +117,11 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
             } else imports.filter { it.favorite || it.lastPlayed > 0 }.map { item ->
                 LocalTrackActivity("$localSourceId:${item.id}", if (item.favorite) 1 else 0, item.lastPlayed)
             }
-            val result = PortableManifest(imports, downloads, playlists, root.getInt("limitMb"), history, queue, preferences, plugins, activity)
+            val background = if (root.has("background")) PortableAsset.decode(root.getJSONObject("background")).also { asset ->
+                require(asset.name == "mb-background-${asset.digest}.png" && asset.bytes <= appearanceBackgroundByteLimit)
+            } else null
+            val result = PortableManifest(imports, downloads, playlists, root.getInt("limitMb"), history, queue, preferences, plugins, activity,
+                background)
             require(result.limitMb in OfflineMediaStore.limitsMb)
             requireUnique(imports.map(PortableImport::id))
             requireUnique(downloads.map { it.track.id })

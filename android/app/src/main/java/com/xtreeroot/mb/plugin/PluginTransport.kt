@@ -18,9 +18,16 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class PluginFetchRequest(val url: URI, val method: String, val headers: Map<String, String>, val body: String?) {
+internal enum class PluginRedirectMode { Follow, Manual, Error }
+
+private val redirectStatuses = setOf(301, 302, 303, 307, 308)
+
+internal data class PluginFetchRequest(val url: URI, val method: String, val headers: Map<String, String>, val body: String?,
+                                       val redirectMode: PluginRedirectMode = PluginRedirectMode.Follow,
+                                       val maximumResponseBytes: Int = responseLimit) {
     fun redirect(status: Int, location: String?): PluginFetchRequest? {
-        if (status !in setOf(301, 302, 303, 307, 308)) return null
+        if (status !in redirectStatuses || redirectMode == PluginRedirectMode.Manual) return null
+        if (redirectMode == PluginRedirectMode.Error) throw PluginException("Unexpected plugin redirect")
         val target = url.resolve(uri(location ?: throw PluginException("Missing redirect location")))
         if (!target.isHttp() || (url.scheme.equals("https", true) && !target.scheme.equals("https", true))) {
             throw PluginException("Invalid plugin redirect")
@@ -32,7 +39,7 @@ internal data class PluginFetchRequest(val url: URI, val method: String, val hea
         val nextBody = if (preserve) body else null
         val nextHeaders = if (!sameOrigin) emptyMap() else headers.filterKeys { nextBody != null || !it.equals("content-type", true) }
         val nextMethod = if (!preserve && (status == 303 || method == "POST")) "GET" else method
-        return PluginFetchRequest(target, nextMethod, nextHeaders, nextBody)
+        return copy(url = target, method = nextMethod, headers = nextHeaders, body = nextBody)
     }
 
     companion object {
@@ -50,7 +57,13 @@ internal data class PluginFetchRequest(val url: URI, val method: String, val hea
             val body = event.opt("body") as? String
             if (body != null && body.encodeToByteArray().size > 8 * 1024 * 1024) throw PluginException("Plugin request body too large")
             val method = (event.opt("method") as? String ?: "GET").uppercase(Locale.ROOT)
-            return PluginFetchRequest(url, method, headers, body)
+            val redirectMode = when (event.opt("redirect")) {
+                null, "follow" -> PluginRedirectMode.Follow
+                "manual" -> PluginRedirectMode.Manual
+                "error" -> PluginRedirectMode.Error
+                else -> throw PluginException("Invalid fetch redirect mode")
+            }
+            return PluginFetchRequest(url, method, headers, body, redirectMode)
         }
     }
 }
@@ -74,6 +87,8 @@ internal fun interface PluginTransport {
     suspend fun fetch(request: PluginFetchRequest, manifest: PluginManifest): PluginFetchResponse
 }
 
+internal const val pluginNetworkCode = "network"
+
 internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : PluginTransport {
     private val client = OkHttpClient.Builder().let { builder ->
         if (proxySelector == null) builder.proxy(Proxy.NO_PROXY) else builder.proxySelector(proxySelector)
@@ -81,7 +96,7 @@ internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : Plugi
         .callTimeout(30, TimeUnit.SECONDS).build()
 
     override suspend fun fetch(request: PluginFetchRequest, manifest: PluginManifest): PluginFetchResponse =
-        receive(request, { manifest.reaches(it.host.orEmpty()) }) { response, url -> response.read(url) }
+        receive(request, { manifest.reaches(it.host.orEmpty()) }) { response, url -> response.read(url, request.maximumResponseBytes) }
 
     suspend fun <Value> receive(request: PluginFetchRequest, permits: (URI) -> Boolean, read: (Response, URI) -> Value): Value {
         var current = request
@@ -109,7 +124,7 @@ internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : Plugi
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                continuation.resumeWith(Result.failure(PluginException("Plugin network request failed")))
+                continuation.resumeWith(Result.failure(networkFailure()))
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -118,22 +133,26 @@ internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : Plugi
                         val redirect = current.redirect(response.code, response.header("Location"))
                         if (redirect != null) Exchange.Redirect(redirect) else Exchange.Result(read(response, current.url))
                     }
+                }.recoverCatching { failure ->
+                    throw if (failure is IOException) networkFailure() else failure
                 })
             }
         })
     }
 
-    private fun Response.read(url: URI): PluginFetchResponse {
+    private fun networkFailure() = PluginException("Plugin network request failed", pluginNetworkCode)
+
+    private fun Response.read(url: URI, maximumBytes: Int): PluginFetchResponse {
         val headers = headers.names().associate { name -> name.lowercase(Locale.ROOT) to headers(name).joinToString(", ") }
         val bytes = body?.let { incoming ->
-            if (incoming.contentLength() > responseLimit) throw PluginException("Plugin response body too large")
+            if (incoming.contentLength() > maximumBytes) throw PluginException("Plugin response body too large")
             val data = ByteArrayOutputStream()
             val buffer = ByteArray(8192)
             incoming.byteStream().use { stream ->
                 while (true) {
                     val count = stream.read(buffer)
                     if (count < 0) break
-                    if (data.size() + count > responseLimit) throw PluginException("Plugin response body too large")
+                    if (data.size() + count > maximumBytes) throw PluginException("Plugin response body too large")
                     data.write(buffer, 0, count)
                 }
             }

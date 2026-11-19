@@ -14,6 +14,7 @@ internal data class PluginWebSignIn(
     val until: Set<String>,
     val userAgent: String?,
     val id: UUID = UUID.randomUUID(),
+    val html: String? = null,
 ) {
     fun completedCookies(header: String?): String? {
         if (header.isNullOrBlank() || header.any(Char::isISOControl)) return null
@@ -25,6 +26,7 @@ internal data class PluginWebSignIn(
     }
 
     companion object {
+        const val htmlLimit = 256 * 1024
         private val cookieName = Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
         fun parse(event: JSONObject, manifest: PluginManifest): PluginWebSignIn {
@@ -42,10 +44,22 @@ internal data class PluginWebSignIn(
             if (until.isEmpty()) throw PluginException("Missing web sign-in cookie names")
             val userAgent = options.opt("userAgent") as? String
             if (userAgent?.any(Char::isISOControl) == true) throw PluginException("Invalid web sign-in user agent")
-            return PluginWebSignIn(manifest.name, target("url"), target("cookiesOf"), until, userAgent)
+            val url = target("url")
+            val cookiesOf = target("cookiesOf")
+            val html = if (options.isNull("html")) null else {
+                (options.opt("html") as? String)?.takeIf {
+                    it.isNotEmpty() && it.length <= htmlLimit && it.encodeToByteArray().size <= htmlLimit && url.sameHttpsOrigin(cookiesOf)
+                } ?: throw PluginException("Invalid sign-in document or cookie origin")
+            }
+            return PluginWebSignIn(manifest.name, url, cookiesOf, until, userAgent, html = html)
         }
     }
 }
+
+internal fun URI.sameHttpsOrigin(other: URI): Boolean = isHttp() && other.isHttp() && scheme.equals("https", true) &&
+    other.scheme.equals("https", true) && host.equals(other.host, true) && httpsPort == other.httpsPort
+
+private val URI.httpsPort get() = if (port == -1) 443 else port
 
 internal class PluginWebSignInBroker {
     private class Attempt(val request: PluginWebSignIn, val result: CompletableDeferred<String> = CompletableDeferred())

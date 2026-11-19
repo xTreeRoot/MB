@@ -23,26 +23,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,7 +44,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -62,7 +53,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -167,8 +157,8 @@ internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory, conne
 }
 
 @Composable
-internal fun Search(model: BrowseModel, connected: Boolean, activeSource: String, plugin: PluginSource?, openCatalog: (() -> Unit)?,
-                    play: (List<Track>, Track) -> Unit) {
+internal fun Search(model: BrowseModel, connected: Boolean, activeSource: String, plugin: PluginSource?,
+                    openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
     var supportsVideos by remember(plugin) { mutableStateOf(false) }
     LaunchedEffect(plugin) {
         supportsVideos = try { plugin?.catalog?.supports("searchVideos") == true }
@@ -185,24 +175,20 @@ internal fun Search(model: BrowseModel, connected: Boolean, activeSource: String
         val inactive = if (mode == SearchScope.Music) SearchScope.Video else SearchScope.Music
         model.searchPages(inactive).cancel()
     }
-    Column(Modifier.fillMaxSize()) {
-        if (showScopes) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SearchScope.entries.forEach { option ->
-                FilterChip(mode == option, onClick = { focus.clearFocus(); selected = option }, label = {
-                    Text(if (option == SearchScope.Music) mb("音乐", "Music") else mb("视频", "Videos"))
-                })
-            }
-        }
-        val state = rememberSaveableStateHolder()
-        state.SaveableStateProvider(mode.name) {
-            key(mode) { SearchResults(model, mode, connected, activeSource, plugin, openCatalog, play) }
-        }
+    val changeScope: ((SearchScope) -> Unit)? = if (showScopes) ({ option ->
+        focus.clearFocus()
+        selected = option
+    }) else null
+    val state = rememberSaveableStateHolder()
+    state.SaveableStateProvider(mode.name) {
+        SearchResults(model, mode, connected, activeSource, plugin, changeScope, openCatalog, openCategory, play)
     }
 }
 
 @Composable
 private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Boolean, activeSource: String,
-                          suggestionSource: SuggestionSource?, openCatalog: (() -> Unit)?, play: (List<Track>, Track) -> Unit) {
+                          suggestionSource: SuggestionSource?, changeScope: ((SearchScope) -> Unit)?,
+                          openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
     val pages = model.searchPages(mode)
     val result by pages.state.collectAsStateWithLifecycle()
     val history by model.history.collectAsStateWithLifecycle()
@@ -215,24 +201,9 @@ private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Bool
         focus.clearFocus()
     }
     Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(query, onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).onFocusChanged { focused = it.isFocused },
-            singleLine = true, placeholder = { Text(mb("搜索歌曲或视频", "Search songs or videos")) },
-            leadingIcon = { IconButton(onClick = { submit(query) }, enabled = query.isNotBlank()) { Icon(Icons.Default.Search, mb("搜索", "Search")) } },
-            trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (query.isNotEmpty()) IconButton(onClick = { submit("") }) {
-                        Icon(Icons.Default.Close, mb("清空搜索", "Clear Search"))
-                    }
-                    if (focused) TextButton(onClick = { focus.clearFocus() }) { Text(mb("完成", "Done")) }
-                }
-            },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) submit(query) }))
+        SearchField(query, { query = it }, focused, { focused = it }, { focus.clearFocus() }, submit)
+        if (changeScope != null) SearchScopePicker(mode, changeScope)
         SearchSuggestions(suggestionSource, query, focused, submit)
-        if (openCatalog != null) TextButton(modifier = Modifier.padding(start = 12.dp), onClick = openCatalog) {
-            Text(mb("分类搜索", "Search by Type"))
-        }
         LazyColumn(Modifier.fillMaxSize().pointerInput(focus) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
@@ -240,14 +211,13 @@ private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Bool
                 focus.clearFocus()
             }
         }) {
-            if (result.value.query.isEmpty() && history.isNotEmpty()) {
-                item {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(mb("搜索记录", "Search History"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = model::clearHistory) { Text(mb("清空", "Clear")) }
-                    }
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(history) { term -> FilterChip(false, { submit(term) }, label = { Text(term) }) }
+            if (result.value.query.isEmpty()) {
+                if (history.isNotEmpty()) item("recent-searches") { RecentSearches(history, model::clearHistory, submit) }
+                if (openCategory != null) item("browse-music") { BrowseMusicCategories(openCategory) }
+                if (openCatalog != null) item("search-source") {
+                    TextButton(modifier = Modifier.padding(start = 12.dp), onClick = openCatalog) {
+                        Text(mb("搜索音源", "Search Source"))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp))
                     }
                 }
             }

@@ -14,7 +14,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class PluginWebSignInTest {
-    private val manifest = PluginManifest.parse(JSONObject("""{"id":"fixture","permissions":{"network":["login.example.test"]}}"""))
+    private val manifest = PluginManifest.parse(JSONObject(
+        """{"id":"fixture","permissions":{"network":["login.example.test","elsewhere.example.test"]}}"""))
 
     @Test fun bothTargetsRequireAuthorizedHttpsAndValidCookieNames() {
         val request = parse()
@@ -27,6 +28,19 @@ class PluginWebSignInTest {
         assertThrows(PluginException::class.java) { parse(target = "https://outside.example.test/") }
         assertThrows(PluginException::class.java) { parse(url = "https://someone@login.example.test/") }
         assertThrows(PluginException::class.java) { parse(names = "[\"session=\"]") }
+    }
+
+    @Test fun inlineDocumentRequiresAuthorizedSameOriginAndBoundedUtf8() {
+        val html = "<p>登录</p>"
+        assertNull(parse().html)
+        assertNull(parse(html = JSONObject.NULL).html)
+        assertEquals(html, parse(html = html).html)
+        assertEquals(html, parse(target = "https://LOGIN.example.test:443/other", html = html).html)
+        assertThrows(PluginException::class.java) { parse(html = "") }
+        assertThrows(PluginException::class.java) { parse(html = 42) }
+        assertThrows(PluginException::class.java) { parse(html = "字".repeat(PluginWebSignIn.htmlLimit / 3 + 1)) }
+        assertThrows(PluginException::class.java) { parse(target = "https://elsewhere.example.test/", html = html) }
+        assertThrows(PluginException::class.java) { parse(target = "https://login.example.test:8443/", html = html) }
     }
 
     @Test fun cancellationAndRequestIdentityRejectLateOrIncompleteHeaders() = runBlocking {
@@ -49,6 +63,8 @@ class PluginWebSignInTest {
     }
 
     private fun parse(url: String = "https://login.example.test/login", target: String = "https://login.example.test/account",
-                      names: String = "[\"session\",\"verified\"]") = PluginWebSignIn.parse(JSONObject(
-        """{"options":{"url":"$url","cookiesOf":"$target","until":$names}}"""), manifest)
+                      names: String = "[\"session\",\"verified\"]", html: Any? = null) = PluginWebSignIn.parse(JSONObject(
+        """{"options":{"url":"$url","cookiesOf":"$target","until":$names}}""").apply {
+        getJSONObject("options").put("html", html)
+    }, manifest)
 }

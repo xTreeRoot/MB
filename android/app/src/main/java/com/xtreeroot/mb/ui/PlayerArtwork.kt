@@ -159,7 +159,7 @@ private fun TapeReel(fill: Float, turn: Float, modifier: Modifier) {
 internal fun ProgressSmoke(progress: Float, position: Long, modifier: Modifier) {
     val accent = MaterialTheme.colorScheme.primary
     Canvas(modifier) {
-        val inset = 14.dp.toPx()
+        val inset = 6.dp.toPx()
         val head = progress * (size.width - 2 * inset).coerceAtLeast(0f) + inset
         repeat(24) { particle ->
             val age = particle / 24f
