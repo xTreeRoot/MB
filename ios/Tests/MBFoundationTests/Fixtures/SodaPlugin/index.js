@@ -1,3 +1,5 @@
+import { loginHTML } from './login-page.js';
+
 const API = 'https://beta-luna.douyin.com';
 const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 const pendingDetails = new Map();
@@ -5,6 +7,10 @@ const lyricsCache = new Map();
 const ACCOUNT_API = 'https://api.qishui.com';
 const QR_ORIGIN = 'https://bff-pc.qishui.com';
 const APP_ID = '386088';
+const CLIENT_VERSION = '3.7.0';
+const DEVICE_PATH = '/service/2/desktop/device_register/';
+const DEVICE_KEY = 'qishuiDevice';
+const LOGIN_NEXT = ACCOUNT_API;
 const LOGIN_PAGE = 'my-library';
 const SESSION_KEY = 'qishuiAccount';
 const SESSION_COOKIES = new Set(['sessionid', 'sessionid_ss', 'sid_guard', 'sid_tt']);
@@ -45,7 +51,7 @@ function parseAccountJSON(text) {
 }
 
 function authTarget(address) {
-  if (typeof address !== 'string' || address.length > 16384 || !/^https:\/\/(api|bff-pc)\.qishui\.com(?:\/|\?|$)/.test(address) || /[\\\s\u0000-\u001f\u007f]/.test(address)) {
+  if (typeof address !== 'string' || address.length > 16384 || !/^https:\/\/(?:api|bff-pc)\.qishui\.com(?:\/|\?|$)/.test(address) || /[\\\s\u0000-\u001f\u007f]/.test(address)) {
     throw fail('汽水音乐登录地址无效');
   }
   return new URL(address);
@@ -142,7 +148,7 @@ async function accountRequest(path, query, jar, options) {
   if (codes.includes(7)) throw accountError('rateLimit', '汽水请求过于频繁，请稍后重试');
   if (path.startsWith('/passport/') && codes.includes(2)) throw accountError('expired', '汽水二维码已过期，请重新扫码');
   if (codes.some(code => Number.isFinite(code) && code !== 0) || (path.startsWith('/passport/') && data.message !== 'success')) {
-    const stage = path === ACCOUNT_PATH ? '账号验证' : path.endsWith('check_qrconnect/') ? '扫码确认' : path.endsWith('get_qrcode/') ? '二维码' : '个人库';
+    const stage = path === DEVICE_PATH ? '设备初始化' : path === ACCOUNT_PATH ? '账号验证' : path.endsWith('check_qrconnect/') ? '扫码确认' : path.endsWith('get_qrcode/') ? '二维码' : '个人库';
     const safeCodes = [...new Set(codes.filter(code => Number.isSafeInteger(code) && Math.abs(code) <= 2147483647))];
     throw fail(`汽水音乐拒绝了本次请求（${stage}，错误码：${safeCodes.join('/') || '未提供'}）`);
   }
@@ -207,9 +213,40 @@ async function readLogin(attempt, read, recover = () => {}) {
   }
 }
 
-// 对齐 qishui-api 的汽水 Passport 合同，避免混入其他客户端的设备与 SDK 参数。
-function passportQuery() {
-  return { aid: APP_ID, passport_jssdk_version: '2.4.13', passport_jssdk_type: 'normal', is_from_ttaccountsdk: '1' };
+// 设备注册合同来自公开汽水插件，已用全新匿名实例核对；不读取真实硬件序列号。
+async function loginDevice(attempt, jar) {
+  const saved = host.storage.get(DEVICE_KEY);
+  if (saved?.version === 1 && saved.clientVersion === CLIENT_VERSION && accountID(saved.id) && accountID(saved.install)) return saved;
+  const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, part => {
+    const digit = Math.floor(Math.random() * 16);
+    return (part === 'x' ? digit : (digit & 3) | 8).toString(16);
+  });
+  const common = { aid: APP_ID, channel: 'official', os: 'Windows', os_version: 'Windows 10: 10.0', device_platform: 'PC', app_version: CLIENT_VERSION };
+  const header = {
+    ...common, aid: Number(APP_ID), device_id: '', install_id: '', sdk_version: '1.0', sdk_version_code: 1,
+    mc: '00:00:00:00:00:00', package: 'com.soda.music', language: 'zh-CN', device_model: 'no detected',
+    time_zone: 'Asia/Shanghai', tz_name: 'Asia/Shanghai', tz_offset: 0, resolution: 'no detected',
+    app_region: 'cn', app_language: 'zh-CN', display_name: '汽水音乐', pc_uuid: uuid, pc_serial: '',
+  };
+  const data = await accountRequest(DEVICE_PATH, common, jar, {
+    signal: attempt.controller.signal, body: JSON.stringify({ header, gen_time: Date.now(), magic_tag: 'ss_app_log' }),
+    headers: { 'User-Agent': `LunaPC/${CLIENT_VERSION}(official)`, 'Content-Type': 'application/json' },
+  });
+  checkLogin(attempt);
+  const id = accountID(data.device_id_str), install = accountID(data.install_id_str);
+  if (!id || !install) throw fail('汽水音乐未返回有效的登录设备信息');
+  const device = { version: 1, clientVersion: CLIENT_VERSION, id, install };
+  host.storage.set(DEVICE_KEY, device);
+  return device;
+}
+
+// 官方 3.7.0 登录组件使用同一次注册得到的四个设备字段；整个扫码流程保持一致。
+function passportQuery(device) {
+  return {
+    aid: APP_ID, passport_jssdk_version: '2.4.13', passport_jssdk_type: 'normal', is_from_ttaccountsdk: '1', account_sdk_source: 'web',
+    language: 'zh', device_platform: 'PC', version_code: CLIENT_VERSION, is_new_login: '1', is_from_iesaccountsaas: '1',
+    device_id: device.id, did: device.id, install_id: device.install, iid: device.install,
+  };
 }
 
 async function completeRedirect(address, jar, signal) {
@@ -223,12 +260,24 @@ async function completeRedirect(address, jar, signal) {
 
 async function scanQR(attempt, jar) {
   const { signal } = attempt.controller;
-  const extra = { next: ACCOUNT_API, need_logo: 'false', need_short_url: 'false', is_new_login: '1' };
-  const requestQR = (path, body) => {
-    const query = passportQuery();
-    const headers = body == null ? {} : { 'Content-Type': 'application/x-www-form-urlencoded' };
-    if (body != null) query.iid = '27960026095955';
-    return accountRequest(path, body == null ? { ...query, ...extra } : query, jar, { signal, body, headers });
+  host.signInPrompt({ text: '正在初始化汽水音乐登录…' });
+  const device = await loginDevice(attempt, jar);
+  if (globalThis.host?.capabilities?.webSignInHTML === true) {
+    const result = await host.webSignIn({ url: ACCOUNT_API + '/passport/', cookiesOf: ACCOUNT_API + '/', until: ['sessionid'], userAgent: WEB_UA, html: loginHTML(device) });
+    checkLogin(attempt);
+    if (typeof result?.cookie !== 'string' || result.cookie.length > 65536 || /[\r\n]/.test(result.cookie)) throw loginRequired();
+    updateCookies(jar, result.cookie.split(';').map(pair => pair.trim() + '; Path=/; Secure'), new URL(ACCOUNT_API));
+    if (!sessionPresent(jar)) throw loginRequired();
+    return;
+  }
+  const requestQR = (path, extra = {}, confirm = false) => {
+    const csrf = ['passport_csrf_token', 'passport_csrf_token_default'].map(name =>
+      jar.find(cookie => cookie.name === name && cookieApplies(cookie, path))).find(Boolean);
+    const fields = { next: LOGIN_NEXT, need_logo: 'false', need_short_url: 'false', is_new_login: '1', ...extra };
+    return accountRequest(path, { ...passportQuery(device), ...(confirm ? {} : fields) }, jar, {
+      signal, ...(confirm ? { body: String(new URLSearchParams(fields)) } : {}),
+      headers: { 'x-tt-passport-csrf-token': csrf?.value || '', ...(confirm ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
+    });
   };
   host.signInPrompt({ text: '正在生成汽水音乐登录二维码…' });
   const { data: qr } = await requestQR('/passport/web/get_qrcode/');
@@ -236,19 +285,19 @@ async function scanQR(attempt, jar) {
   if (typeof qr?.token !== 'string' || !qr.token || qr.token.length > 8192 || authTarget(qr.qrcode_index_url).origin !== QR_ORIGIN) {
     throw fail('汽水音乐未返回可用的二维码');
   }
-  // 汽水的 Passport 二维码可能指定抖音验证，必须遵循平台返回的扫码应用。
-  let instruction = typeof qr.copywriting === 'string' ? qr.copywriting.slice(0, 8192) : '';
-  try { instruction = JSON.parse(instruction).desc || instruction; } catch { /* 平台也可能直接返回普通文本。 */ }
-  const scanApp = typeof instruction === 'string' && instruction.includes('抖音') ? '抖音 App' :
-    typeof instruction === 'string' && instruction.includes('汽水') ? '汽水音乐 App' : '二维码指定的官方 App';
-  const prompt = text => host.signInPrompt({ qr: qr.qrcode_index_url, text });
-  prompt(`请用${scanApp}扫码，再在手机上确认`);
+  // 官方汽水客户端使用扫码专用入口；展示通用 SDK 地址会进入另一条授权流程。
+  const scanToken = new URL(qr.qrcode_index_url).searchParams.get('token');
+  if (!scanToken || scanToken.length > 8192) throw fail('汽水音乐未返回可用的扫码凭据');
+  const scanURL = QR_ORIGIN + '/light/invoke/scan_login?' + String(new URLSearchParams({
+    token: scanToken, os: 'Windows', computer_name: globalThis.host?.platform === 'ios' ? 'MB iOS' : 'MB',
+  })).replace(/\+/g, '%20');
+  const prompt = text => host.signInPrompt({ qr: scanURL, text });
+  prompt('请用汽水音乐 App 扫码，再在手机上确认');
   const until = Date.now() + LOGIN_MS;
-  const form = String(new URLSearchParams({ ...extra, token: qr.token, is_frontier: 'true' }));
   while (Date.now() < until) {
     await pollDelay(signal);
     checkLogin(attempt);
-    const { data } = await readLogin(attempt, () => requestQR('/passport/web/check_qrconnect/', form),
+    const { data } = await readLogin(attempt, () => requestQR('/passport/web/check_qrconnect/', { token: qr.token, is_frontier: 'true' }, true),
       () => prompt('网络连接已中断，正在恢复登录…'));
     checkLogin(attempt);
     const status = String(data?.status).trim().toLowerCase();

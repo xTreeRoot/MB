@@ -383,3 +383,36 @@ private actor PluginRedirectFixture {
         #expect(await fixture.paths == ["/start", "/start", "/done", "/start", "/outside"] + Array(repeating: "/loop", count: 10))
     }
 }
+
+@Test func pluginWebSignInDocumentUsesPermittedOriginAndRejectsInvalidDocuments() async throws {
+    try await withPlugin("""
+    export const supported=()=>host.capabilities.webSignInHTML;
+    const options={url:'https://api.example.test/passport/',cookiesOf:'https://api.example.test/',until:['session'],html:'<!doctype html><meta charset="utf-8"><p>登录</p>'};
+    export const signIn=()=>host.webSignIn(options);
+    export const wrongPort=()=>host.webSignIn({...options,cookiesOf:'https://api.example.test:8443/'});
+    export const oversized=()=>host.webSignIn({...options,html:'x'.repeat(262145)});
+    export const wrongType=()=>host.webSignIn({...options,html:42});
+    """) { _, root, manifest in
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, webSignIn: { request in
+            #expect(request.url.absoluteString == "https://api.example.test/passport/")
+            #expect(request.html?.contains("登录") == true)
+            return .object(["cookie": .string("session=fixture")])
+        })
+        #expect(try await runtime.invoke("supported") == .bool(true))
+        #expect(try await runtime.invoke("signIn")["cookie"] == .string("session=fixture"))
+        for method in ["wrongPort", "oversized", "wrongType"] {
+            await #expect(throws: PluginFailure.self) { try await runtime.invoke(method) }
+        }
+    }
+}
+
+@Test @MainActor func pluginWebSignInBrokerRejectsLateCookiesAfterPageFailure() async throws {
+    let service = PluginUIService()
+    let request = PluginWebSignIn(title: "Fixture", url: URL(string: "https://example.test")!, cookiesOf: URL(string: "https://example.test")!, until: ["session"], userAgent: nil, html: "<p>Fixture</p>")
+    let task = Task { try await service.show(request) }
+    while service.signIn == nil { await Task.yield() }
+    service.fail(request.id, message: "平台拒绝（7）")
+    service.finish(request.id, cookie: "session=late")
+    await #expect(throws: PluginFailure.self) { try await task.value }
+    #expect(service.signIn == nil)
+}

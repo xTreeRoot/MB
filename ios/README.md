@@ -1,8 +1,8 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `22`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `23`。
 
-build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号，登录已获用户确认。build 21 修复 iPad 播放器窄弹层导致的横屏失效；iPhone/iPad 相关 UI 回归通过。汽水 0.3.4 对齐扫码确认参数并按平台说明提示抖音 App 验证。build 22 补齐插件 fetch 的手动跳转和逐跳网络权限检查，并为扫码登录申请短时后台执行；真实取码和等待扫码通过，完整授权及个人歌单仍待手机确认。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
+build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号，登录已获用户确认。build 21 修复 iPad 播放器窄弹层导致的横屏失效；iPhone/iPad 相关 UI 回归通过。build 22 补齐插件 fetch 的手动跳转和逐跳网络权限检查，并为扫码登录申请短时后台执行。汽水 0.3.5 改用官方汽水专用扫码入口后仍返回 2156，0.3.6 增加本机匿名设备注册后仍返回 7。build 23 与汽水 0.4.0 使用隔离 WebKit 网页加载官方安全 SDK，并由同一浏览器会话取码和确认；2026-11-20 已装手机，用户确认授权登录成功并显示个人歌单。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
 
 ## 在另一台 Mac 编译
 
@@ -38,7 +38,7 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 浏览页模式只影响主动点选的资源，不打开当前曲目，也不受播放、暂停或队列推进影响。要看正在听的曲目，可在音频播放页点“观看当前视频”或封面，进入同一播放会话的视频详情。视频静音跟随同一音频时钟，保留曲目、进度和暂停状态；切回听歌取消视频加载并隔离迟到响应。没有视频能力的音源显示明确状态，本地纯音频保持听歌界面。重启恢复和返回浏览不会自行打开视频。
 
-[YouTube Music 兼容插件 0.1.2](https://github.com/xTreeRoot/mygo-music-youtube-music) 使用原生 AAC 直链，已验证真实首页、搜索和完整音频可播放；设备网络仍需能访问 YouTube，Google 登录未验收。[汽水音乐兼容插件 0.2.1](https://github.com/xTreeRoot/mygo-music-soda) 提供公开推荐歌单、分类和可用完整 AAC，不声明搜索、私有歌单或会员能力。两个插件均不启动桌面辅助进程。
+[YouTube Music 兼容插件 0.1.6](https://github.com/xTreeRoot/mygo-music-youtube-music) 使用原生 AAC 直链，已验证真实首页、搜索和完整音频可播放；设备网络仍需能访问 YouTube，授权登录已获用户确认。[汽水音乐兼容插件 0.4.0](https://github.com/xTreeRoot/mygo-music-soda) 提供公开推荐歌单、分类和可用完整 AAC；账号及个人歌单已有合同回归，用户已在真机确认扫码登录成功、显示个人歌单，不声明搜索或会员专属取流。两个插件均不启动桌面辅助进程。
 
 ## CarPlay 系统正在播放与逐句歌词
 
@@ -48,7 +48,11 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 手机锁屏和控制中心也会使用同一份文字。系统决定刷新速度、截断与文字滚动，此功能不提供自定义滚动歌词界面。真实 CarPlay 尚未实测，不能将元数据回归或设置截图当成车机显示验收。
 
-## 插件系统 OAuth（宿主兼容版本 0.1.26）
+## 插件登录（宿主兼容版本 0.1.27）
+
+`host.capabilities.webSignInHTML` 为真时，`host.webSignIn({url, cookiesOf, until, userAgent, html})` 可在独立临时 WKWebView 中加载插件提供的登录文档。`html` 必须为非空字符串、UTF-8 不超过 256 KiB，页面与 Cookie 目标须使用 HTTPS、同域名及端口，并通过插件网络权限检查；省略 `html` 保留原有加载远程网页登录方式。页面使用自己的浏览器网络栈和非持久 Cookie 库，达到 `until` 中的 Cookie 条件后把匹配目标路径的 Cookie 交给插件，是否保存由插件在线验证决定。
+
+HTML 页面可通过 `window.webkit.messageHandlers.mbSignIn.postMessage({error: message})` 报告失败；宿主只接受初始 HTTPS 同源顶层页面、长度受限的错误。失败、取消和旧页面迟到的 Cookie 不会完成后续登录，WebKit 进程终止会正常结束本次登录。汽水 0.4.0 在此页面加载平台安全 SDK、初始化浏览器会话、显示专用二维码并等待确认，切到后台暂停轮询，回前台恢复；平台错误不自动重试。用户已在真机确认官方 App 扫码后登录成功并显示个人歌单；平台额外安全验证 2046 尚未实现交互处理。
 
 `host.oauthSignIn({authorizationEndpoint, tokenEndpoint, clientID, redirectURI, scopes})` 返回授权服务器的 token JSON。两个服务端点必须使用 HTTPS 并在插件 `permissions.network` 内；`redirectURI` 必须为 App 已注册的自定义回调 scheme。宿主通过 `ASWebAuthenticationSession` 打开系统授权页面，每次生成独立 state 和 PKCE S256，校验回调后用 POST 交换一次性授权码，禁止 token 请求自动重定向。取消会关闭当前授权，迟到回调不能完成后续请求。
 

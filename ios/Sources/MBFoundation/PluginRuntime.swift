@@ -203,7 +203,12 @@ public actor PluginRuntime {
                   let permissions, permissions.reaches(url.host ?? ""), permissions.reaches(target.host ?? "") else { throw PluginFailure.invalid("Sign-in page outside plugin network permissions") }
             let until = value["until"].array.compactMap(\.string)
             guard !until.isEmpty, until.allSatisfy({ !$0.isEmpty && !$0.contains(where: { "=;\r\n".contains($0) }) }) else { throw PluginFailure.invalid("Sign-in requires completion cookie names") }
-            return try await webSignIn(PluginWebSignIn(title: name, url: url, cookiesOf: target, until: until, userAgent: value["userAgent"].string))
+            let html = value["html"].string
+            if value["html"] != .null {
+                guard let html, !html.isEmpty, html.utf8.count <= 256 * 1_024,
+                      url.host == target.host, url.port == target.port else { throw PluginFailure.invalid("Invalid sign-in document or cookie origin") }
+            }
+            return try await webSignIn(PluginWebSignIn(title: name, url: url, cookiesOf: target, until: until, userAgent: value["userAgent"].string, html: html))
         }
         if event["kind"].string == "timer" {
             try await Task.sleep(for: .milliseconds(min(300_000, max(0, event["delay"].integer ?? 0)))); return .null

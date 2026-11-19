@@ -110,55 +110,56 @@ import Testing
     #expect(try await runtime.invoke("account") == .null)
 }
 
-private actor SodaLoginRecoveryFixture {
-    private(set) var polls = 0
+private actor SodaBrowserLoginFixture {
+    private(set) var devices = 0
     private(set) var profiles = 0
-    private(set) var qrRequests = 0
+    private(set) var pages = 0
+    func page(_ request: PluginWebSignIn) -> PluginJSON {
+        pages += 1
+        #expect(request.url.absoluteString == "https://api.qishui.com/passport/")
+        #expect(request.cookiesOf.absoluteString == "https://api.qishui.com/")
+        #expect(request.until == ["sessionid"])
+        #expect(request.html?.contains("9012345678901234564") == true)
+        #expect(request.html?.contains("9012345678901234565") == true)
+        #expect((request.html?.utf8.count ?? 0) < 256 * 1_024)
+        return .object(["cookie": .string("sessionid=synthetic-browser-session")])
+    }
     func response(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
         let url = try #require(request.url)
         #expect(url.host == "api.qishui.com")
         let text: String
-        var headers: [String: String] = [:]
         switch url.path {
-        case "/passport/web/get_qrcode":
-            qrRequests += 1
-            text = #"{"message":"success","data":{"token":"synthetic-ticket","qrcode_index_url":"https://bff-pc.qishui.com/synthetic","copywriting":"请使用抖音 APP 扫码验证"}}"#
-            headers["Set-Cookie"] = "passport_csrf_token=synthetic-csrf; Path=/passport; Secure"
-        case "/passport/web/check_qrconnect":
-            polls += 1
-            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            #expect(query.first(where: { $0.name == "iid" })?.value == "27960026095955")
-            #expect(query.first(where: { $0.name == "device_platform" }) == nil)
-            #expect(query.first(where: { $0.name == "account_sdk_source_info" }) == nil)
-            #expect(request.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("Mozilla/5.0 ") == true)
-            #expect(String(data: request.httpBody ?? Data(), encoding: .utf8)?.contains("is_frontier=true") == true)
-            #expect(String(data: request.httpBody ?? Data(), encoding: .utf8)?.contains("token=synthetic-ticket") == true)
-            #expect(request.value(forHTTPHeaderField: "Cookie") == "passport_csrf_token=synthetic-csrf")
-            if polls == 1 { throw URLError(.networkConnectionLost) }
-            text = #"{"message":"success","data":{"status":"confirmed"}}"#
-            headers["Set-Cookie"] = "sessionid=synthetic-session; Path=/; Secure; HttpOnly"
+        case "/service/2/desktop/device_register":
+            devices += 1
+            #expect(request.httpMethod == "POST")
+            let body = try JSONDecoder().decode(PluginJSON.self, from: #require(request.httpBody))
+            #expect(body["header"]["app_version"] == .string("3.7.0"))
+            #expect(body["header"]["pc_serial"] == .string(""))
+            text = #"{"device_id_str":"9012345678901234564","install_id_str":"9012345678901234565"}"#
         case "/luna/pc/me":
             profiles += 1
-            #expect(request.value(forHTTPHeaderField: "Cookie") == "sessionid=synthetic-session")
+            #expect(request.value(forHTTPHeaderField: "Cookie") == "sessionid=synthetic-browser-session")
             if profiles == 1 { throw URLError(.networkConnectionLost) }
             text = #"{"my_info":{"id":"77","nickname":"汽水回归账号"}}"#
         default: throw NetworkFailure.response
         }
-        return (Data(text.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: headers)))
+        return (Data(text.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
     }
 }
 
-@Test func sodaIOSLoginRecoversAppSwitchDisconnectsWithoutRegeneratingQR() async throws {
+@Test func sodaIOSBrowserLoginKeepsBrowserCookiesAndRecoversProfileDisconnectWithoutReopeningLogin() async throws {
     let root = try #require(Bundle.module.url(forResource: "Fixtures/SodaPlugin", withExtension: nil))
     let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: root.appendingPathComponent("plugin.json")))
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: folder) }
-    let fixture = SodaLoginRecoveryFixture()
-    let runtime = try PluginRuntime(directory: root, dataDirectory: folder, manifest: manifest, transport: { request, _ in
+    let fixture = SodaBrowserLoginFixture()
+    let runtime = try PluginRuntime(directory: root, dataDirectory: folder, manifest: manifest, webSignIn: { request in
+        await fixture.page(request)
+    }, transport: { request, _ in
         try await fixture.response(request)
     })
     #expect(try await runtime.invoke("signIn")["name"] == .string("汽水回归账号"))
-    #expect(await fixture.qrRequests == 1)
-    #expect(await fixture.polls == 2)
+    #expect(await fixture.devices == 1)
+    #expect(await fixture.pages == 1)
     #expect(await fixture.profiles == 2)
 }
