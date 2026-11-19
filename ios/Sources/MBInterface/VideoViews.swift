@@ -9,6 +9,7 @@ struct VideoPageView: View {
     let accountRevision: Int
     let openMusic: () -> Void
     @State private var fullScreen = false
+    @State private var chrome = VideoChromeState()
 
     var body: some View {
         GeometryReader { geometry in
@@ -20,7 +21,7 @@ struct VideoPageView: View {
                     VideoDetailsView(track: track, video: video, playback: playback, interactionSource: interactionSource)
                         .id("\(track.id):\(accountRevision)")
                 }
-            }
+            }.accessibilityHidden(fullScreen)
         }.background(MBTheme.background)
         #if os(iOS)
         .fullScreenCover(isPresented: $fullScreen) { VideoFullscreenView(video: video, playback: playback) }
@@ -31,9 +32,10 @@ struct VideoPageView: View {
 
     private var picture: some View {
         VideoScreen(video: video, pictureVisible: !fullScreen)
+            .modifier(VideoTapControls(chrome: chrome, playback: playback))
             .aspectRatio(16 / 9, contentMode: .fit)
             .overlay(alignment: .top) {
-                HStack {
+                if chrome.visible { HStack {
                     Button { video.browse() } label: {
                         Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle())
                     }.accessibilityLabel("返回浏览")
@@ -44,11 +46,12 @@ struct VideoPageView: View {
                 }
                 .buttonStyle(.plain).font(.subheadline.weight(.semibold)).imageScale(.large)
                 .foregroundStyle(.white).padding(.horizontal, 4)
-                .background(alignment: .top) { LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom).allowsHitTesting(false) }
+                .background(alignment: .top) { LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom).allowsHitTesting(false) } }
             }
             .overlay(alignment: .bottom) {
-                VideoTransport(playback: playback, fullscreen: { fullScreen = true })
-                    .background(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom))
+                if chrome.visible { VideoTransport(playback: playback, fullscreen: { fullScreen = true }, editing: chrome.editing)
+                    .accessibilityIdentifier("video-transport")
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom)) }
             }
     }
 }
@@ -168,12 +171,12 @@ private struct VideoFullscreenView: View {
     let video: VideoModel
     let playback: PlaybackModel
     @Environment(\.dismiss) private var dismiss
-    @State private var controlsVisible = true
+    @State private var chrome = VideoChromeState()
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            VideoScreen(video: video).ignoresSafeArea().onTapGesture { controlsVisible.toggle() }
-            if controlsVisible {
+            VideoScreen(video: video).ignoresSafeArea().modifier(VideoTapControls(chrome: chrome, playback: playback))
+            if chrome.visible {
                 VStack {
                     HStack {
                         Button("退出全屏", systemImage: "chevron.left") { dismiss() }
@@ -182,10 +185,11 @@ private struct VideoFullscreenView: View {
                     }
                     .padding().background(.black.opacity(0.6))
                     Spacer()
-                    VideoTransport(playback: playback).background(.black.opacity(0.6))
+                    VideoTransport(playback: playback, editing: chrome.editing).accessibilityIdentifier("video-transport").background(.black.opacity(0.6))
                 }.foregroundStyle(.white)
             }
         }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("fullscreen-video")
         .tint(MBTheme.accent)
         #if os(iOS)
         .statusBarHidden()
@@ -199,6 +203,7 @@ private struct VideoFullscreenView: View {
 private struct VideoTransport: View {
     let playback: PlaybackModel
     var fullscreen: (() -> Void)? = nil
+    var editing: (Bool) -> Void = { _ in }
     @State private var preview = 0.0
     @State private var scrubbing = false
     @State private var selection: Int?
@@ -208,13 +213,13 @@ private struct VideoTransport: View {
                 Image(systemName: playback.state == .playing ? "pause.fill" : "play.fill")
                     .frame(width: 44, height: 44).contentShape(Rectangle())
             }.accessibilityLabel(LocalizedStringKey(playback.state == .playing ? "暂停" : "播放"))
-            Slider(value: Binding(get: { min(max(0, scrubbing ? preview : Double(playback.positionMilliseconds)), Double(max(1, playback.durationMilliseconds))) }, set: { preview = $0 }),
+            PlaybackSeekBar(value: Binding(get: { min(max(0, scrubbing ? preview : Double(playback.positionMilliseconds)), Double(max(1, playback.durationMilliseconds))) }, set: { preview = $0 }),
                    in: 0...Double(max(1, playback.durationMilliseconds))) { editing in
                 scrubbing = editing
+                self.editing(editing)
                 if editing { selection = playback.selectionRevision; preview = Double(playback.positionMilliseconds) }
                 else { if selection == playback.selectionRevision { playback.seek(to: Int64(preview)) }; selection = nil }
             }
-                .background { Capsule().fill(.white.opacity(0.25)).frame(height: 3).padding(.horizontal, 4) }
                 .accessibilityLabel("视频播放进度")
             HStack(spacing: 2) {
                 Text(TimeLabel.string(milliseconds: playback.positionMilliseconds))
@@ -226,6 +231,7 @@ private struct VideoTransport: View {
                 }.accessibilityLabel("全屏播放")
             }
         }.labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.white).tint(MBTheme.accent)
+            .accessibilityElement(children: .contain)
             .padding(.horizontal, 8)
             .onChange(of: playback.selectionRevision) { _, _ in scrubbing = false; selection = nil }
     }

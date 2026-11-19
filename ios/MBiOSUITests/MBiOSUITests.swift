@@ -1063,3 +1063,97 @@ final class MBiOSUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 }
+
+extension MBiOSUITests {
+    @MainActor func testPlayerModeLabelsAndLandscapeDesktopStages() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-account", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+            app.buttons["为你推荐"].firstMatch.tap()
+        } else {
+            XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+            app.buttons["查看更多为你推荐"].tap()
+        }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        let open = app.buttons["打开播放页，晚风里的片刻"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5)); open.tap()
+        XCTAssertTrue(app.buttons["队列"].waitForExistence(timeout: 5))
+        for title in ["歌词", "评论点赞", "音频输出", "待播清单"] { XCTAssertTrue(app.staticTexts[title].exists, "底部小字：\(title)") }
+        app.buttons["随机播放"].tap()
+        XCTAssertTrue(app.staticTexts["已切换为随机播放"].waitForExistence(timeout: 3))
+        app.buttons["随机播放"].tap()
+        XCTAssertTrue(app.staticTexts["已切换为顺序播放"].waitForExistence(timeout: 3))
+        app.buttons["顺序播放"].tap()
+        XCTAssertTrue(app.staticTexts["已切换为列表循环"].waitForExistence(timeout: 3))
+        app.buttons["列表循环"].tap()
+        XCTAssertTrue(app.staticTexts["已切换为单曲循环"].waitForExistence(timeout: 3))
+        capture("播放器-中文模式与底部小字", app: app)
+        if app.buttons["横屏播放"].exists { app.buttons["横屏播放"].tap() }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["wide-player-lyrics"].waitForExistence(timeout: 8))
+        for section in ["lyrics", "rhythm", "queue", "selection", "comments"] {
+            let tab = app.buttons["wide-player-" + section]
+            XCTAssertTrue(tab.isHittable); tab.tap()
+            if section == "lyrics" { XCTAssertTrue(app.buttons["跳转到 让晚风经过耳边"].waitForExistence(timeout: 5)) }
+            if section == "queue" { XCTAssertTrue(app.buttons["队列选择 城市慢下来"].waitForExistence(timeout: 5)) }
+            if section == "selection" {
+                XCTAssertTrue(app.buttons["选歌 城市慢下来"].waitForExistence(timeout: 5))
+                app.buttons["选歌 城市慢下来"].tap()
+                XCTAssertTrue(app.staticTexts["城市慢下来"].exists)
+            }
+            if section == "comments" {
+                let comment = app.staticTexts["慢下来，听见晚风里的片刻。"]
+                XCTAssertTrue(comment.waitForExistence(timeout: 5)); XCTAssertTrue(comment.isHittable)
+            }
+            XCTAssertTrue(app.buttons["下一首"].isHittable)
+            capture("横屏播放器-" + section, app: app)
+        }
+        if app.buttons["竖屏播放"].exists { app.buttons["竖屏播放"].tap() }
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["队列"].waitForExistence(timeout: 8))
+        app.buttons["收起"].tap()
+        XCTAssertTrue(app.buttons["打开播放页，城市慢下来"].waitForExistence(timeout: 5))
+    }
+}
+
+extension MBiOSUITests {
+    @MainActor func testVideoSingleTapHidesControlsDoubleTapKeepsChromeAndSmallSeekWorks() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+        } else {
+            XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+            app.buttons["查看更多为你推荐"].tap()
+        }
+        chooseMode("视频模式", app: app)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        let seek = app.sliders["视频播放进度"]
+        XCTAssertTrue(seek.waitForExistence(timeout: 5)); XCTAssertTrue(seek.isHittable)
+        seek.adjust(toNormalizedSliderPosition: 0.4)
+        capture("视频-细进度条", app: app)
+        let tap = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: seek.frame.midX, dy: seek.frame.minY - 40))
+        tap.tap(); XCTAssertTrue(seek.waitForNonExistence(timeout: 4))
+        tap.doubleTap(); XCTAssertFalse(seek.exists, "双击不应同时触发单击唤出控制条")
+        tap.tap(); XCTAssertTrue(seek.waitForExistence(timeout: 4))
+        app.buttons["全屏播放"].tap()
+        XCTAssertTrue(app.buttons["退出全屏"].waitForExistence(timeout: 5))
+        let fullscreenSeek = app.otherElements["fullscreen-video"].sliders["视频播放进度"]
+        XCTAssertTrue(fullscreenSeek.waitForExistence(timeout: 5))
+        let centre = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        centre.tap(); XCTAssertTrue(fullscreenSeek.waitForNonExistence(timeout: 4))
+        capture("视频-全屏单击隐藏控制条", app: app)
+        centre.doubleTap(); XCTAssertFalse(fullscreenSeek.exists)
+        centre.tap(); XCTAssertTrue(fullscreenSeek.waitForExistence(timeout: 4))
+        capture("视频-全屏单击唤出控制条", app: app)
+        app.buttons["退出全屏"].tap()
+        XCUIDevice.shared.orientation = .portrait
+    }
+}

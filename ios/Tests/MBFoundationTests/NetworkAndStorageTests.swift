@@ -61,3 +61,16 @@ func proxyRejectsInvalidDomains(_ value: String) {
     #expect(try NetworkClient.redirect(request, response: get)?.httpMethod == "GET")
     #expect(try NetworkClient.redirect(request, response: get)?.httpBody == nil)
 }
+
+@Test func existingOAuthProxyPolicyAddsOfficialAccountDomainOnceAndRespectsLaterEdits() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try Data(#"{"hosts":["oauth2.googleapis.com","*.youtube.com"]}"#.utf8).write(to: directory.appendingPathComponent("proxy-hosts.json"))
+    let store = AppPersistence(directory: directory)
+    #expect(try await store.loadProxyHosts() == ["oauth2.googleapis.com", "*.youtube.com", "youtube.googleapis.com"])
+    try await store.saveProxyHosts(["oauth2.googleapis.com"])
+    #expect(try await store.loadProxyHosts() == ["oauth2.googleapis.com"])
+    try await store.saveProxyHosts([])
+    #expect(try await store.loadProxyHosts() == [])
+}

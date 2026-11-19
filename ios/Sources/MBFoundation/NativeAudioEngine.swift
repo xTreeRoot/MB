@@ -40,7 +40,7 @@ public struct AudioEngineSnapshot: Sendable {
 }
 
 /// 使用公开 AVFoundation API 播放本地缓存文件；请求头和代理由下载层统一处理。
-@MainActor public final class NativeAudioEngine: NSObject, AudioEngine, AudioEngineEvents, AudioEngineVolume, AudioEngineStreaming, AudioEngineNormalization {
+@MainActor public final class NativeAudioEngine: NSObject, AudioEngine, AudioEngineEvents, AudioEngineVolume, AudioEnginePreloading, AudioEngineNormalization {
     private let player = AVPlayer()
     private var duration: Int64 = 0
     private var ended = false
@@ -79,6 +79,18 @@ public struct AudioEngineSnapshot: Sendable {
         remote?.cancel()
         let loader = try RemoteMediaAsset(resource: resource)
         remote = loader
+        do { try await prepare(loader.asset, at: milliseconds) }
+        catch { throw loader.lastFailure ?? error }
+    }
+
+    public func prepare(resource: MediaResource) async throws -> any PreparedAudio {
+        let loader = try RemoteMediaAsset(resource: resource)
+        do { try await loader.prime(); return NativePreparedAudio(loader) }
+        catch { loader.cancel(); throw error }
+    }
+    public func load(prepared: any PreparedAudio, at milliseconds: Int64) async throws {
+        guard let token = prepared as? NativePreparedAudio, let loader = token.take() else { throw MediaStreamingFailure.unplayable }
+        remote?.cancel(); remote = loader
         do { try await prepare(loader.asset, at: milliseconds) }
         catch { throw loader.lastFailure ?? error }
     }
@@ -181,4 +193,12 @@ public struct AudioEngineSnapshot: Sendable {
         NotificationCenter.default.removeObserver(self)
         if let timeObserver { player.removeTimeObserver(timeObserver) }
     }
+}
+
+/// 消费后移交所有权，清理旧队列预备令牌不会取消当前播放。
+@MainActor private final class NativePreparedAudio: PreparedAudio {
+    private var loader: RemoteMediaAsset?
+    init(_ loader: RemoteMediaAsset) { self.loader = loader }
+    func take() -> RemoteMediaAsset? { defer { loader = nil }; return loader }
+    func cancel() { loader?.cancel(); loader = nil }
 }

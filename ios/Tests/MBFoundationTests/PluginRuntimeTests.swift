@@ -157,12 +157,13 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
 
 @Test func pluginBackgroundTimersSurviveFunctionReturnAndURLMutationsStaySynchronized() async throws {
     try await withPlugin("""
-    let count = 0, timer;
-    export function start() { timer=setInterval(()=>count++,5); return 1; }
+    let count = 0, timer, wake;
+    export function start() { timer=setInterval(()=>{count++; if(wake) wake(true)},5); return 1; }
+    export function waitTick() { return count > 0 ? true : new Promise(resolve=>wake=resolve); }
     export function read() { clearInterval(timer); const u=new URL('https://api.example.test/a');u.searchParams.set('q','hello'); const href=u.href;u.search='x=2';return {count,href,search:u.searchParams.get('x')}; }
     """) { runtime, _, _ in
         #expect(try await runtime.invoke("start") == .number(1))
-        try await Task.sleep(for: .milliseconds(80))
+        #expect(try await runtime.invoke("waitTick") == .bool(true))
         let value = try await runtime.invoke("read")
         #expect((value["count"].integer ?? 0) > 0)
         #expect(value["href"].string == "https://api.example.test/a?q=hello")
@@ -274,6 +275,25 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
         #expect(report["entries"].array.first?["errorCode"].integer == URLError.networkConnectionLost.rawValue)
         #expect(report["entries"].array.first?["pathHash"].string == PluginSignInDiagnostics.pathHash("/login/private-key"))
         for secret in ["private-key", "private-token", "private-cookie", "Cookie", "/login"] { #expect(!text.contains(secret)) }
+    }
+}
+
+@Test func signInDiagnosticsKeepOnlyBoundedServiceCodesFromResponse() async throws {
+    try await withPlugin("""
+    export async function signIn() {
+      await fetch('https://api.example.test/login'); return true;
+    }
+    """) { _, root, manifest in
+        let directory = root.appendingPathComponent("data")
+        let runtime = try PluginRuntime(directory: root, dataDirectory: directory, manifest: manifest, transport: { request, _ in
+            let text = #"{"code":0,"status_code":"2046","error_code":9876543211234567,"data":{"error_code":1105,"cookie":"response-secret"},"message":"private-message","account":"private-account"}"#
+            return (Data(text.utf8), try #require(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])))
+        })
+        #expect(try await runtime.invoke("signIn") == .bool(true))
+        let text = try String(contentsOf: directory.appendingPathComponent("sign-in-diagnostics.json"), encoding: .utf8)
+        let report = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
+        #expect(report["entries"].array.first?["serviceCodes"].array.compactMap(\.integer) == [0, 1105, 2046])
+        for secret in ["response-secret", "private-message", "private-account", "9876543211234567"] { #expect(!text.contains(secret)) }
     }
 }
 

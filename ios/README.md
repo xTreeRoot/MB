@@ -1,6 +1,8 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `18`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `20`。
+
+build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号；汽水 0.3.2 支持扫码账号和个人歌单。YouTube 登录已获用户确认，汽水仍有业务拒绝，iPad 横屏回归未通过。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
 
 ## 在另一台 Mac 编译
 
@@ -50,13 +52,13 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 `host.oauthSignIn({authorizationEndpoint, tokenEndpoint, clientID, redirectURI, scopes})` 返回授权服务器的 token JSON。两个服务端点必须使用 HTTPS 并在插件 `permissions.network` 内；`redirectURI` 必须为 App 已注册的自定义回调 scheme。宿主通过 `ASWebAuthenticationSession` 打开系统授权页面，每次生成独立 state 和 PKCE S256，校验回调后用 POST 交换一次性授权码，禁止 token 请求自动重定向。取消会关闭当前授权，迟到回调不能完成后续请求。
 
-YouTube Music 0.1.5 使用 MB 自己的公开 iOS OAuth 客户端和 YouTube 权限；当前 Google Cloud 为外部测试模式，已加入的测试用户可以登录。测试模式下 Google 刷新令牌通常 7 天失效，需要再次授权。插件把会话保存在现有私有数据目录，退出仅停用，重新登录先验证后复用；候选授权验证通过才替换旧会话。源码仅包含公开客户端 ID 和回调 scheme。系统授权页面遵循系统网络设置，MB 的 URLSession 代理白名单不控制系统浏览器。
+YouTube Music 0.1.6 使用 MB 自己的公开 iOS OAuth 客户端和 YouTube 权限；当前 Google Cloud 为外部测试模式，已加入的测试用户可以登录。测试模式下 Google 刷新令牌通常 7 天失效，需要再次授权。插件把会话保存在现有私有数据目录，退出仅停用，重新登录先验证后复用；候选授权验证通过才替换旧会话。源码仅包含公开客户端 ID 和回调 scheme。系统授权页面遵循系统网络设置，MB 的 URLSession 代理白名单不控制系统浏览器。
 
 ## 流式播放检查（2026-11-19）
 
 音频、视频均通过 AVFoundation 和 HTTP Range 播放。插件 `stream()` 负责解析直链和请求头，宿主按需请求 256 KiB 块，内存保留 16 块，可直接请求 seek 所在区间。并非先下载整首，也不是 HLS/DASH 自适应直播。服务端不支持 Range 等特定错误会退回整文件下载，下载完成后开始播放。
 
-本次使用隔离游客会话检查星标插件最新 main：网易云 0.1.17、喜马拉雅 0.1.7、汽水 0.3.0 和内置哔哩哔哩的真实媒体开头/中段均返回 HTTP 206，AVFoundation 在未读完整文件前获取到可播元信息。YouTube 0.1.4 媒体解析超时，模板 0.1.0 的示例 WAV 请求遇到 TLS 错误，仅能确认代码合同，未完成本次真实流播验证。开启播放缓存后，当前实现会在开始流播 8 秒后另行全量下载缓存，存在重复流量；本轮未修改这项策略。
+本次使用隔离游客会话检查星标插件最新 main：网易云 0.1.17、喜马拉雅 0.1.7、汽水 0.3.2 和内置哔哩哔哩的真实媒体开头/中段均返回 HTTP 206，AVFoundation 在未读完整文件前获取到可播元信息。YouTube 0.1.4 媒体解析超时，模板 0.1.0 的示例 WAV 请求遇到 TLS 错误，仅能确认代码合同，未完成本次真实流播验证。开启播放缓存后，当前实现会在开始流播 8 秒后另行全量下载缓存，存在重复流量；本轮未修改这项策略。
 
 ## 模块与数据
 

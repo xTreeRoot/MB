@@ -27,7 +27,7 @@ public protocol PlaybackSessionStore: Sendable {
 
 /// 数据仅在本 App 的沙盒，不读取桌面会话，也不保存临时播放地址。
 public actor AppPersistence: PlaybackSessionStore, PlaybackModeStore {
-    private struct ProxyHosts: Codable { let hosts: [String] }
+    private struct ProxyHosts: Codable { let hosts: [String]; let version: Int? }
     public static let shared = AppPersistence()
     private let directory: URL
     public init(directory: URL? = nil) {
@@ -39,15 +39,25 @@ public actor AppPersistence: PlaybackSessionStore, PlaybackModeStore {
     public func saveSession(_ session: PlaybackSession) throws { try save(session, name: "playback.json") }
     public func loadProxyHosts() throws -> [String]? {
         let file = "proxy-hosts.json"
-        do { return try load(ProxyHosts.self, name: file)?.hosts }
+        do {
+            guard let saved = try load(ProxyHosts.self, name: file) else { return nil }
+            guard saved.version == nil else { return saved.hosts }
+            let hosts = upgradedOAuthHosts(saved.hosts)
+            try saveProxyHosts(hosts)
+            return hosts
+        }
         catch is DecodingError {
             guard let legacy = try load([String].self, name: file) else { return nil }
-            let hosts = legacy.isEmpty ? legacy : legacy + ProxyPolicy.githubHosts.filter { !legacy.contains($0) }
+            let hosts = upgradedOAuthHosts(legacy.isEmpty ? legacy : legacy + ProxyPolicy.githubHosts.filter { !legacy.contains($0) })
             try saveProxyHosts(hosts)
             return hosts
         }
     }
-    public func saveProxyHosts(_ hosts: [String]) throws { try save(ProxyHosts(hosts: hosts), name: "proxy-hosts.json") }
+    public func saveProxyHosts(_ hosts: [String]) throws { try save(ProxyHosts(hosts: hosts, version: 1), name: "proxy-hosts.json") }
+    /// 只给旧 Google OAuth 白名单补充新账号接口；后续手动删掉时不再补回。
+    private func upgradedOAuthHosts(_ hosts: [String]) -> [String] {
+        hosts.contains("oauth2.googleapis.com") && !hosts.contains("youtube.googleapis.com") ? hosts + ["youtube.googleapis.com"] : hosts
+    }
     func loadPlatformNode() throws -> PlatformNode? { try load(PlatformNode.self, name: "platform-node.json") }
     func savePlatformNode(_ node: PlatformNode?) throws {
         let name = "platform-node.json"

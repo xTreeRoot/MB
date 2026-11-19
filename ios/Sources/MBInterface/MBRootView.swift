@@ -149,7 +149,7 @@ public struct MBRootView: View {
         tabsWithPlayer
             .environment(\.backgroundSkinImage, skin.image)
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
-            .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences, watchVideo: { video.watchCurrent() }).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
+            .playerPresentation(isPresented: $showingPlayer) { NowPlayingView(playback: playback, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences, watchVideo: { video.watchCurrent() }).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
             .sheet(isPresented: $showingQueue) { QueueView(playback: playback) }
             .sheet(isPresented: $showingAppSettings) { SettingsView(preferences: preferences, network: networkSettings, plugins: plugins, skin: skin, platformData: platformData, account: verifiedProfileAccount, platform: selectedSourceID) }
             .sheet(item: $commentTrack) { track in
@@ -240,8 +240,11 @@ public struct MBRootView: View {
             }
             .onChange(of: preferences.values) { _, _ in
                 AppLocalization.use(preferences.values.language)
-                Task { await router.setQuality(preferences.values.quality) }
                 if !demo { preferences.save(); playback.setVolume(preferences.values.volume); playback.setNormalization(preferences.values.normalization); systemPlayback.setLyricsEnabled(preferences.values.nowPlayingLyrics) }
+            }
+            .onChange(of: preferences.values.quality) { _, quality in
+                playback.invalidatePreparedAudio()
+                Task { await router.setQuality(quality); playback.invalidatePreparedAudio() }
             }
             .onChange(of: downloads.items) { _, items in
                 localLibrary.updateTracks(items)

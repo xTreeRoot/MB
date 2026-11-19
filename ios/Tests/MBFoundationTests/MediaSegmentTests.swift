@@ -34,3 +34,13 @@ private actor SegmentFixture {
     await fixture.mutate()
     await #expect(throws: (any Error).self) { try await reader.read(offset: 5 * MediaSegmentReader.block, end: target) }
 }
+
+@Test @MainActor func preloadedPrefixIsReusedWithoutAnotherRangeRequest() async throws {
+    let fixture = SegmentFixture()
+    let resource = MediaResource(url: URL(string: "https://fixture.test/next.m4a")!, headers: [:], fileExtension: "m4a")
+    let reader = MediaSegmentReader(resource: resource, transport: { try await fixture.read($0) })
+    #expect(try await reader.read(offset: 0, end: MediaSegmentReader.block).count == 262_144)
+    #expect(try await reader.read(offset: 0, end: 2).count == 2)
+    #expect(try await reader.read(offset: 90_000, end: 100_000).count == 10_000)
+    #expect(await fixture.ranges == ["bytes=0-262143"])
+}

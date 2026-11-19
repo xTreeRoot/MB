@@ -157,6 +157,13 @@ struct MediaByteRange {
         tasks.removeValue(forKey: ObjectIdentifier(request))?.cancel()
     }
 
+    func prime() async throws {
+        guard !cancelled else { throw CancellationError() }
+        _ = try await reader.read(offset: 0, end: MediaSegmentReader.block)
+        try Task.checkCancellation()
+        guard !cancelled else { throw CancellationError() }
+    }
+
     func cancel() {
         cancelled = true
         asset.cancelLoading()

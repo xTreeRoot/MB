@@ -59,7 +59,7 @@ struct CoverTransitionDestination: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         #if os(iOS)
-        if #available(iOS 18, *), enabled && !reduceMotion { content.navigationTransition(.zoom(sourceID: "player-cover", in: namespace)) }
+        if #available(iOS 18, *), enabled && !reduceMotion && UIDevice.current.userInterfaceIdiom == .phone { content.navigationTransition(.zoom(sourceID: "player-cover", in: namespace)) }
         else { content }
         #else
         content
