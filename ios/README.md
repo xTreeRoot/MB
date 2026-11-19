@@ -1,13 +1,13 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `main` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `14`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `16`。
 
 ## 在另一台 Mac 编译
 
 安装完整 Xcode，首次打开并完成组件安装。终端执行：
 
 ```bash
-git clone --branch main --single-branch https://github.com/xTreeRoot/MB.git
+git clone --branch ios --single-branch https://github.com/xTreeRoot/MB.git
 cd MB/ios
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift package resolve

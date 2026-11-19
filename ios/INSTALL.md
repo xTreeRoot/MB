@@ -4,7 +4,7 @@
 
 ## 用 Xcode 直接安装
 
-1. 下载仓库 `main` 分支，打开 `ios/MBiOS.xcodeproj`。顶部 scheme 选 `MBiOS`。
+1. 下载仓库 `ios` 分支，打开 `ios/MBiOS.xcodeproj`。顶部 scheme 选 `MBiOS`。
 2. Xcode → Settings → Apple Accounts（旧版叫 Accounts）登录自己的 Apple 账号。
 3. 数据线连接手机，解锁并在手机点“信任此电脑”。
 4. Xcode 左侧点蓝色工程图标，中间 TARGETS 选 `MBiOS`，再点 `Signing & Capabilities`。勾上 `Automatically manage signing`，`Team` 下拉选择“你的名字 (Personal Team)”。这就是让 Xcode 用你自己的账号给 App 签名。
