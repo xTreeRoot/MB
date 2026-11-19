@@ -8,7 +8,6 @@ struct SourceTab: Identifiable {
 struct SourceTabs: View {
     let sources: [SourceTab]
     let selected: String
-    let width: CGFloat
     let select: (String) -> Void
 
     var body: some View {
@@ -24,7 +23,7 @@ struct SourceTabs: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 7)
                                 .frame(minHeight: 44)
-                                .frame(maxWidth: width)
+                                .fixedSize(horizontal: true, vertical: false)
                                 .contentShape(Rectangle())
                                 .overlay(alignment: .bottom) {
                                     if active { Capsule().fill(MBTheme.accent).frame(height: 3).padding(.horizontal, 7).padding(.bottom, 4) }
@@ -35,14 +34,28 @@ struct SourceTabs: View {
                         .accessibilityIdentifier("source-tab-\(source.id)")
                         .id(source.id)
                     }
-                }
+                }.padding(.horizontal, 12)
             }
             .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .accessibilityIdentifier("source-tabs")
             .onChange(of: [selected] + sources.map(\.id), initial: true) { _, _ in
                 proxy.scrollTo(selected)
             }
         }
-        .frame(width: width)
+        .frame(maxWidth: .infinity)
+        .frame(height: 48)
+        .background(.bar)
+    }
+}
+
+/// 根页面保留操作栏并取消大标题占位；下级页面继续使用自己的导航标题。
+struct CompactRootNavigation: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.navigationBarTitleDisplayMode(.inline)
+        #else
+        content
+        #endif
     }
 }

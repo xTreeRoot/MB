@@ -39,7 +39,8 @@ struct DownloadsView: View {
             }
             .modifier(MusicGroupedList())
             .modifier(SkinSurface(list: true, base: MBTheme.grouped))
-            .navigationTitle("资料库")
+            .navigationTitle("")
+            .modifier(CompactRootNavigation())
             .confirmationDialog("清空播放缓存？", isPresented: $clearingCache, titleVisibility: .visible) {
                 Button("清空播放缓存", role: .destructive) { Task { await model.clearCache() } }
             } message: { Text("已下载和导入的音频会保留。") }

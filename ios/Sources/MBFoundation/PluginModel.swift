@@ -236,6 +236,6 @@ public enum PluginPreparation: Equatable {
     }
     private func source(_ plugin: InstalledPlugin) async throws -> PluginSource {
         let settings = try await installer.settings(for: plugin)
-        return PluginSource(manifest: plugin.manifest, runtime: try PluginRuntime(directory: plugin.directory, dataDirectory: plugin.dataDirectory, manifest: plugin.manifest, settings: settings, webSignIn: { [ui] request in try await ui.show(request) }, openURL: { [ui] url, title in await ui.open(url, title: title) }))
+        return PluginSource(manifest: plugin.manifest, runtime: try PluginRuntime(directory: plugin.directory, dataDirectory: plugin.dataDirectory, manifest: plugin.manifest, settings: settings, webSignIn: { [ui] request in try await ui.show(request) }, oauthSignIn: { [ui] request in try await ui.authorize(request) }, openURL: { [ui] url, title in await ui.open(url, title: title) }))
     }
 }

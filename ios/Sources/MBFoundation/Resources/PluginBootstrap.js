@@ -33,6 +33,7 @@
     spawn: () => { throw new Error("iOS does not provide external processes"); },
     waitForRedirect: () => { throw new Error("This sign-in callback needs a desktop host"); },
     webSignIn: options => request({ kind: "webSignIn", options }),
+    oauthSignIn: options => request({ kind: "oauthSignIn", options }),
     removeDataDir: path => call("removeDataDir", path),
   });
   globalThis.console = Object.freeze(Object.fromEntries(["log", "info", "warn", "error", "debug"].map(name => [name, (...args) => call("console")])));

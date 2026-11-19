@@ -2,7 +2,7 @@ import Foundation
 
 public struct ProxyPolicy: Sendable, Equatable {
     static let githubHosts = ["github.com", "api.github.com", "codeload.github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "raw.githubusercontent.com"]
-    public static let defaults = ["*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com", "*.googleusercontent.com", "api.betterlyrics.org"] + githubHosts
+    public static let defaults = ["*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com", "*.googleusercontent.com", "accounts.google.com", "oauth2.googleapis.com", "api.betterlyrics.org"] + githubHosts
     public let hosts: [String]
 
     public init() { hosts = Self.defaults }

@@ -54,7 +54,8 @@ struct AccountLibraryView: View {
             .modifier(SkinSurface(list: true, base: MBTheme.grouped))
             // 导航容器外的迷你播放器不计入 List 的滚动内容边距。
             .contentMargins(.bottom, playback.queue.current == nil ? 0 : 76, for: .scrollContent)
-            .navigationTitle("我的")
+            .navigationTitle("")
+            .modifier(CompactRootNavigation())
             .toolbar { ToolbarItem(placement: .primaryAction) { Button("设置", systemImage: "gearshape") { openSettings() }.labelStyle(.iconOnly).accessibilityIdentifier("open-settings") } }
             .navigationDestination(for: LibraryRoute.self) { route in
                 if let source {

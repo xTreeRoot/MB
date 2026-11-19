@@ -202,9 +202,12 @@ final class MBiOSUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         app.launch()
         selectTab("设置", app: app)
-        let row = app.switches["在歌手栏显示当前歌词"].firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
-        if !row.isHittable { app.swipeUp() }
+        let row = app.switches["在主标题显示当前歌词"].firstMatch
+        for _ in 0..<5 {
+            if row.exists && row.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(row.exists && row.isHittable)
         XCTAssertEqual(row.value as? String, "1")
         capture("CarPlay-逐句歌词开启-演示设置", app: app)
         let control = row.switches.firstMatch
@@ -347,8 +350,16 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(location.waitForExistence(timeout: 5))
         XCTAssertTrue(location.label.hasSuffix("/installed/fixture"))
         server.tap(); server.typeText("https://media.example.test")
+        let hideKeyboard = app.buttons["隐藏键盘"]
+        if hideKeyboard.exists && hideKeyboard.isHittable { hideKeyboard.tap() }
         app.switches["启用示例"].tap()
-        app.buttons["保存"].tap()
+        let save = app.buttons["保存"]
+        for _ in 0..<3 {
+            if save.exists && save.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(save.exists && save.isHittable)
+        save.tap()
         capture("插件-设置-演示数据", app: app)
         selectTab("发现", app: app)
         app.buttons["查看更多为你推荐"].tap()
@@ -357,7 +368,15 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(oldPlayer.waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let pluginTab = app.buttons["source-tab-fixture"]
-        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5)); pluginTab.tap()
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5))
+        let builtInTab = app.buttons["source-tab-demo"]
+        let sources = app.scrollViews["source-tabs"]
+        let mode = app.buttons["切换播放模式"]
+        XCTAssertTrue(builtInTab.isHittable && pluginTab.isHittable, "空间足够时两个音源都可直接点击")
+        XCTAssertGreaterThanOrEqual(sources.frame.width, app.navigationBars.firstMatch.frame.width - 32, "音源切换占满内容区域的一整行")
+        XCTAssertGreaterThanOrEqual(pluginTab.frame.minY, mode.frame.maxY, "音源与模式操作分行显示")
+        capture("插件-音源独占整行-演示数据", app: app)
+        pluginTab.tap()
         XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
         XCTAssertTrue(oldPlayer.waitForNonExistence(timeout: 5), "切换平台应清除上一平台暂停中的曲目")
         XCTAssertTrue(pluginTab.isSelected)
@@ -366,6 +385,26 @@ final class MBiOSUITests: XCTestCase {
         app.buttons["更多示例"].tap()
         XCTAssertTrue(app.navigationBars["示例分页"].waitForExistence(timeout: 5))
         capture("插件-分页-演示数据", app: app)
+    }
+
+    @MainActor func testCompactRootPagesKeepContentAndActionsVisible() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 10))
+        capture("紧凑首页-发现", app: app)
+        app.buttons["搜索"].firstMatch.tap()
+        let search = app.textFields["搜索视频、音乐、UP 主"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5) && search.isHittable)
+        capture("紧凑首页-搜索", app: app)
+        selectTab("资料库", app: app)
+        XCTAssertTrue(app.buttons["添加到资料库"].waitForExistence(timeout: 5))
+        capture("紧凑首页-资料库", app: app)
+        selectTab("我的", app: app)
+        XCTAssertTrue(app.buttons["open-settings"].waitForExistence(timeout: 5))
+        capture("紧凑首页-我的", app: app)
     }
 
     @MainActor func testPluginTrackRowsExplainUnavailableAudio() {

@@ -1,6 +1,6 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `16`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `18`。
 
 ## 在另一台 Mac 编译
 
@@ -42,9 +42,21 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 继续使用 AltStore 个人签名。先在手机打开 MB 开始播放，连接 CarPlay 后打开车机自带的“正在播放”，可使用系统播放/暂停、上下曲与进度控制；实际显示和可用按钮由车机决定。无需为这条路径增加 CarPlay 专属 entitlement，App 没有独立的车机图标或歌单页面。
 
-默认开启「设置 → CarPlay 与锁屏 → 在歌手栏显示当前歌词」：歌名保留，歌手字段按音频播放时间替换为当前句；前奏、间奏、无歌词或空白歌词行恢复原歌手。暂停时保留对应句，拖动、切曲、歌词迟到及开关变更立即刷新；普通进度按秒更新，句子变化不受整秒节流限制。关闭开关立即恢复正常歌手信息，选择会保存。
+默认开启「设置 → CarPlay 与锁屏 → 在主标题显示当前歌词」：歌曲名放入副标题（系统 artist 字段），主标题按音频播放时间替换为当前句；前奏、间奏、无歌词或空白歌词行回退到歌曲名。暂停时保留对应句，拖动、切曲、歌词迟到及开关变更立即刷新；普通进度按秒更新，句子变化不受整秒节流限制。关闭开关立即恢复正常的歌曲名和歌手信息，选择会保存。
 
 手机锁屏和控制中心也会使用同一份文字。系统决定刷新速度、截断与文字滚动，此功能不提供自定义滚动歌词界面。真实 CarPlay 尚未实测，不能将元数据回归或设置截图当成车机显示验收。
+
+## 插件系统 OAuth（宿主兼容版本 0.1.26）
+
+`host.oauthSignIn({authorizationEndpoint, tokenEndpoint, clientID, redirectURI, scopes})` 返回授权服务器的 token JSON。两个服务端点必须使用 HTTPS 并在插件 `permissions.network` 内；`redirectURI` 必须为 App 已注册的自定义回调 scheme。宿主通过 `ASWebAuthenticationSession` 打开系统授权页面，每次生成独立 state 和 PKCE S256，校验回调后用 POST 交换一次性授权码，禁止 token 请求自动重定向。取消会关闭当前授权，迟到回调不能完成后续请求。
+
+YouTube Music 0.1.5 使用 MB 自己的公开 iOS OAuth 客户端和 YouTube 权限；当前 Google Cloud 为外部测试模式，已加入的测试用户可以登录。测试模式下 Google 刷新令牌通常 7 天失效，需要再次授权。插件把会话保存在现有私有数据目录，退出仅停用，重新登录先验证后复用；候选授权验证通过才替换旧会话。源码仅包含公开客户端 ID 和回调 scheme。系统授权页面遵循系统网络设置，MB 的 URLSession 代理白名单不控制系统浏览器。
+
+## 流式播放检查（2026-11-19）
+
+音频、视频均通过 AVFoundation 和 HTTP Range 播放。插件 `stream()` 负责解析直链和请求头，宿主按需请求 256 KiB 块，内存保留 16 块，可直接请求 seek 所在区间。并非先下载整首，也不是 HLS/DASH 自适应直播。服务端不支持 Range 等特定错误会退回整文件下载，下载完成后开始播放。
+
+本次使用隔离游客会话检查星标插件最新 main：网易云 0.1.17、喜马拉雅 0.1.7、汽水 0.3.0 和内置哔哩哔哩的真实媒体开头/中段均返回 HTTP 206，AVFoundation 在未读完整文件前获取到可播元信息。YouTube 0.1.4 媒体解析超时，模板 0.1.0 的示例 WAV 请求遇到 TLS 错误，仅能确认代码合同，未完成本次真实流播验证。开启播放缓存后，当前实现会在开始流播 8 秒后另行全量下载缓存，存在重复流量；本轮未修改这项策略。
 
 ## 模块与数据
 
@@ -62,6 +74,8 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 数据位于 App 沙盒 `Application Support/MBMobile`。Cookie 与设置留在沙盒文件，退出仅停用；不读取桌面账号，不保存临时媒体 URL，不把证书、账号或沙盒资料提交 Git。文件写入采用原子提交，iOS 文件保护允许首次解锁后后台播放。
 
 ## 验证与打包
+
+本轮四页紧凑布局、音源栏、系统 OAuth、CarPlay 元数据与流播检查的测试结果、26 张截图和真机未验收范围见 [验证记录](Review/CompactOAuth/README.md)。
 
 在本目录运行：
 

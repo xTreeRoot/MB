@@ -52,11 +52,11 @@ struct SettingsView: View {
                     HStack { Text("应用音量"); Spacer(); Text("\(Int(preferences.values.volume * 100))%").monospacedDigit().foregroundStyle(.secondary) }
                 }
                 Section {
-                    Toggle("在歌手栏显示当前歌词", isOn: $preferences.values.nowPlayingLyrics)
+                    Toggle("在主标题显示当前歌词", isOn: $preferences.values.nowPlayingLyrics)
                 } header: {
                     Text("CarPlay 与锁屏")
                 } footer: {
-                    Text("保留歌名，按播放时间逐句更新歌词；无歌词时显示歌手。")
+                    Text("主标题按播放时间逐句更新歌词，副标题显示歌名；无歌词时主标题显示歌名。")
                 }
                 Section("缓存") {
                     Picker("缓存上限", selection: $preferences.values.cacheMegabytes) {

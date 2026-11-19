@@ -1,8 +1,9 @@
 # 测试源码来源
 
 仓库：https://github.com/xTreeRoot/mygo-music-youtube-music
-提交：`e6193887ec201c3128740590c2cbcc12c0fb8a50`。
+对应 095e24d0795037997e8629c8e31ba1124500325e 的 0.1.5 OAuth 适配，代码已推送，尚未发布 Release。
 
-复制公开的插件入口、清单、语言文件和说明，仅用于真实 QuickJS 合同回归。没有手机账号或会话数据。
+复制公开插件入口、OAuth 模块、清单、语言文件与说明，用于真实 QuickJS 合同回归，没有手机账号或会话数据。
 
-入口 SHA-256：`ee550a09cf5a94110a933501d4ffb09fb66e414b8d4ccbb83d71e7f210f9a4dd`。
+index.js SHA-256：`af66e921c3a5e9740d7a51ea941e4bf88df535dcfcb34aa9253bf0842c83b65a`
+oauth.js SHA-256：`54c3690eb22f3fb21583c364f10ac1763879b79210e70a2f029e501f9354e3c4`

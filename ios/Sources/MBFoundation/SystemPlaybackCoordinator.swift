@@ -119,18 +119,19 @@ import AppKit
                 }
             }
         }
-        var artist = track.artist
+        var title = track.title
+        let artist = lyricsEnabled ? track.title : track.artist
         if lyricsEnabled, let index = playback.timeline.activeIndex(at: playback.positionMilliseconds) {
             let line = playback.timeline.lines[index].text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            if !line.isEmpty { artist = line }
+            if !line.isEmpty { title = line }
         }
         // 普通进度每秒更新；同一秒内换句、拖动、切曲或修改设置立即更新。
-        let key = InfoKey(trackID: track.id, title: track.title, artist: artist,
+        let key = InfoKey(trackID: track.id, title: title, artist: artist,
                           second: playback.positionMilliseconds / 1_000, duration: playback.durationMilliseconds,
                           controlRevision: playback.controlRevision, playing: playback.state == .playing, artwork: artwork != nil)
         guard key != infoKey else { return }; infoKey = key
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: track.title, MPMediaItemPropertyArtist: artist,
+            MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPlaybackDuration: Double(playback.durationMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(playback.positionMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyPlaybackRate: playback.state == .playing ? 1.0 : 0.0,

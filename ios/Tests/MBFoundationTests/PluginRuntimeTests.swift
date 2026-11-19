@@ -231,6 +231,31 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
     }
 }
 
+@Test func pluginOAuthBridgeChecksPermissionsAndCancelsPendingAuthorization() async throws {
+    try await withPlugin("""
+    const options = {authorizationEndpoint:'https://api.example.test/authorize', tokenEndpoint:'https://api.example.test/token', clientID:'public-client', redirectURI:'mb-fixture:/oauthredirect', scopes:['library']};
+    export async function signIn(){return await host.oauthSignIn(options)}
+    export async function forbidden(){return await host.oauthSignIn({...options,tokenEndpoint:'https://other.test/token'})}
+    export function ok(){return 1}
+    """) { _, root, manifest in
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, oauthSignIn: { request in
+            #expect(request.clientID == "public-client" && request.scopes == ["library"])
+            return .object(["access_token": .string("synthetic-token")])
+        })
+        #expect(try await runtime.invoke("signIn")["access_token"] == .string("synthetic-token"))
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("forbidden") }
+        let pending = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("pending"), manifest: manifest, oauthSignIn: { _ in
+            try await Task.sleep(for: .seconds(60))
+            return .null
+        })
+        let task = Task { try await pending.invoke("signIn", timeout: .seconds(90)) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try await pending.invoke("ok") == .number(1))
+    }
+}
+
 @Test func signInDiagnosticsKeepFailureCodesWithoutRequestOrAccountSecrets() async throws {
     try await withPlugin("""
     export async function signIn() {

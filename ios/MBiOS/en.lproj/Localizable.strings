@@ -237,8 +237,8 @@
 
 "默认打开歌词" = "Show lyrics by default";
 "CarPlay 与锁屏" = "CarPlay & Lock Screen";
-"在歌手栏显示当前歌词" = "Show current lyrics as artist";
-"保留歌名，按播放时间逐句更新歌词；无歌词时显示歌手。" = "Keep the song title and update lyrics with playback. Show the artist when no lyric is active.";
+"在主标题显示当前歌词" = "Show current lyrics as title";
+"主标题按播放时间逐句更新歌词，副标题显示歌名；无歌词时主标题显示歌名。" = "Update the title with timed lyrics and show the song name below. Without lyrics, the title shows the song name.";
 "歌词火花" = "Lyric sparks";
 "间奏显示热评" = "Top comments in quiet parts";
 "进度条烟雾" = "Progress smoke";

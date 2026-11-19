@@ -24,9 +24,11 @@ public actor PluginRuntime {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private let transport: Transport
     private let webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON
+    private let oauthSignIn: @Sendable (PluginOAuthRequest) async throws -> PluginJSON
     private let openURL: @Sendable (URL, String) async throws -> Void
     public init(directory: URL, dataDirectory: URL, manifest: PluginManifest, settings: [String: String] = [:],
                 webSignIn: @escaping @Sendable (PluginWebSignIn) async throws -> PluginJSON = { _ in throw PluginFailure.unavailable },
+                oauthSignIn: @escaping @Sendable (PluginOAuthRequest) async throws -> PluginJSON = { _ in throw PluginFailure.unavailable },
                 openURL: @escaping @Sendable (URL, String) async throws -> Void = { _, _ in throw PluginFailure.unavailable },
                 transport: @escaping Transport = { request, permissions in
                     let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 16 * 1_024 * 1_024, permitting: { url in
@@ -37,7 +39,7 @@ public actor PluginRuntime {
                 }) throws {
         try manifest.validate()
         host = try PluginHostState(root: directory, data: dataDirectory, manifest: manifest, settings: settings)
-        self.transport = transport; self.webSignIn = webSignIn; self.openURL = openURL
+        self.transport = transport; self.webSignIn = webSignIn; self.oauthSignIn = oauthSignIn; self.openURL = openURL
     }
     deinit { for task in events.values { task.cancel() } }
     public func headers(for url: URL, kind: String) throws -> [String: String] { try host.headers(for: url, kind: kind) }
@@ -131,11 +133,11 @@ public actor PluginRuntime {
             let event = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
             if event["kind"].string == "cancel", let id = event["request"].integer { events.removeValue(forKey: Int32(id))?.cancel(); continue }
             guard let id = event["id"].integer, events.count < 512 else { throw PluginFailure.execution("Host request limit exceeded") }
-            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, openURL = openURL, name = host.manifest.displayName, diagnostics = signInDiagnostics
+            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, oauthSignIn = oauthSignIn, openURL = openURL, name = host.manifest.displayName, diagnostics = signInDiagnostics
             events[Int32(id)] = Task { [weak self] in
                 let completed: Completed
                 do {
-                    let value = try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, openURL: openURL, transport: transport)
+                    let value = try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, oauthSignIn: oauthSignIn, openURL: openURL, transport: transport)
                     await diagnostics?.record(event, result: value, error: nil)
                     completed = Completed(id: Int32(id), success: true, value: value)
                 } catch {
@@ -185,7 +187,10 @@ public actor PluginRuntime {
         }
         result.append(header[start...].trimmingCharacters(in: .whitespaces)); return result
     }
-    private nonisolated static func process(_ event: PluginJSON, permissions: PluginManifest.Permissions?, name: String, webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON, openURL: @Sendable (URL, String) async throws -> Void, transport: Transport) async throws -> PluginJSON {
+    private nonisolated static func process(_ event: PluginJSON, permissions: PluginManifest.Permissions?, name: String, webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON, oauthSignIn: @Sendable (PluginOAuthRequest) async throws -> PluginJSON, openURL: @Sendable (URL, String) async throws -> Void, transport: Transport) async throws -> PluginJSON {
+        if event["kind"].string == "oauthSignIn" {
+            return try await oauthSignIn(PluginOAuthRequest(event["options"], permissions: permissions))
+        }
         if event["kind"].string == "openURL" {
             guard let address = event["url"].string, let url = URL(string: address), ["http", "https"].contains(url.scheme ?? ""), url.user == nil, url.host != nil else { throw PluginFailure.invalid("Not a web address") }
             try await openURL(url, name); return .null

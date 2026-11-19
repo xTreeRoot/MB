@@ -34,7 +34,6 @@ public struct MBRootView: View {
     @State private var downloads: DownloadModel
     @State private var preferences = PreferencesModel()
     @State private var skin: BackgroundSkin
-    @State private var discoveryWidth: CGFloat = 360
     @State private var localLibrary: LocalLibraryModel
     @State private var previewLibrary: DemoLibrary?
     @State private var columns: NavigationSplitViewVisibility = .all
@@ -222,7 +221,7 @@ public struct MBRootView: View {
     }
 
     private var observedTabs: some View {
-        initializedTabs
+        AnyView(initializedTabs)
             .onChange(of: selectedSourceID) { _, id in preferences.values.selectedSourceID = id }
             .onChange(of: selectedTab) { _, _ in inputFocused = false }
             .onChange(of: preferences.values.builtInEnabled) { _, enabled in
@@ -248,6 +247,10 @@ public struct MBRootView: View {
                 localLibrary.updateTracks(items)
                 for item in items { playback.updateLocalTrack(item.track) }
             }
+    }
+
+    private var playbackObservedTabs: some View {
+        AnyView(observedTabs)
             .onChange(of: playback.state) { _, state in
                 syncVideoClock()
                 if state == .playing, let track = playback.queue.current {
@@ -285,7 +288,7 @@ public struct MBRootView: View {
     }
 
     public var body: some View {
-        observedTabs
+        AnyView(playbackObservedTabs)
             .task(id: input + ":" + selectedSourceID + ":" + String(describing: searchScope)) { await updateSuggestions() }
             .task(id: request?.id) { [request] in
                 guard let request, !Task.isCancelled else { return }
@@ -348,18 +351,14 @@ public struct MBRootView: View {
     private var navigation: some View {
         NavigationStack(path: $path) {
             browsingHome
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { discoveryWidth = $0 }
-                .navigationTitle("发现")
-                .toolbar {
-                    #if os(iOS)
-                    if path.isEmpty, !sourceTabs.isEmpty {
-                        ToolbarItem(placement: .topBarLeading) {
-                            SourceTabs(sources: sourceTabs, selected: selectedSourceID, width: max(48, min(440, discoveryWidth - 178)), select: switchSource)
-                        }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if !sourceTabs.isEmpty {
+                        SourceTabs(sources: sourceTabs, selected: selectedSourceID, select: switchSource)
                     }
-                    #endif
-                    toolbar
                 }
+                .navigationTitle("")
+                .modifier(CompactRootNavigation())
+                .toolbar { toolbar }
                 .navigationDestination(for: MBPage.self) { destination($0) }
         }
     }
@@ -369,7 +368,7 @@ public struct MBRootView: View {
             VStack(spacing: 0) {
                 searchBar
                 if video.mode == .video, videoSearch != nil {
-                    Picker("搜索类型", selection: Binding(get: { searchScope }, set: changeSearchScope)) {
+                    Picker("搜索类型", selection: Binding(get: { searchScope }, set: { scope in changeSearchScope(scope) })) {
                         Text("音乐").tag(SearchScope.tracks)
                         Text("视频").tag(SearchScope.videos)
                     }
@@ -395,7 +394,8 @@ public struct MBRootView: View {
             .defaultFocus($inputFocused, false)
             .onAppear { inputFocused = false }
             .onDisappear { inputFocused = false }
-            .navigationTitle("搜索")
+            .navigationTitle("")
+            .modifier(CompactRootNavigation())
             .toolbar { toolbar }
             .navigationDestination(for: MBPage.self) { destination($0) }
         }
