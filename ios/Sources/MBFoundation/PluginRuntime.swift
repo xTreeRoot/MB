@@ -12,6 +12,7 @@ private final class PluginContext: @unchecked Sendable {
 
 /// QuickJS 仅在本 actor 串行执行。长请求异步离开解释器，取消可直接中断同步 JS 循环。
 public actor PluginRuntime {
+    /// 单跳网络传输；由运行时执行 fetch 的重定向模式和逐跳权限检查。
     public typealias Transport = @Sendable (URLRequest, PluginManifest.Permissions) async throws -> (Data, HTTPURLResponse)
     private let host: PluginHostState
     private var signInDiagnostics: PluginSignInDiagnostics?
@@ -31,7 +32,7 @@ public actor PluginRuntime {
                 oauthSignIn: @escaping @Sendable (PluginOAuthRequest) async throws -> PluginJSON = { _ in throw PluginFailure.unavailable },
                 openURL: @escaping @Sendable (URL, String) async throws -> Void = { _, _ in throw PluginFailure.unavailable },
                 transport: @escaping Transport = { request, permissions in
-                    let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 16 * 1_024 * 1_024, permitting: { url in
+                    let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 16 * 1_024 * 1_024, followRedirects: false, permitting: { url in
                         ["http", "https"].contains(url.scheme ?? "") && url.user == nil && permissions.reaches(url.host ?? "")
                     })
                     guard let response = response as? HTTPURLResponse else { throw NetworkFailure.response }
@@ -219,12 +220,26 @@ public actor PluginRuntime {
         }
         request.httpBody = event["body"].string.map { Data($0.utf8) }
         guard (request.httpBody?.count ?? 0) <= 8 * 1_024 * 1_024 else { throw PluginFailure.invalid("Request body too large") }
-        let (data, response) = try await transport(request, permissions)
-        guard data.count <= 16 * 1_024 * 1_024 else { throw PluginFailure.invalid("Response body too large") }
-        let headers = Dictionary(uniqueKeysWithValues: response.allHeaderFields.compactMap { key, value -> (String, PluginJSON)? in
-            guard let key = key as? String else { return nil }; return (key.lowercased(), .string(String(describing: value)))
-        })
-        let cookies = response.value(forHTTPHeaderField: "Set-Cookie").map(Self.setCookies) ?? []
-        return .object(["setCookies": .array(cookies.map(PluginJSON.string)), "status": .number(Double(response.statusCode)), "url": .string(response.url?.absoluteString ?? url.absoluteString), "headers": .object(headers), "body": .string(String(decoding: data, as: UTF8.self)), "base64": .string(data.base64EncodedString())])
+        let redirect = event["redirect"].string ?? "follow"
+        guard ["follow", "manual", "error"].contains(redirect) else { throw PluginFailure.invalid("Invalid fetch redirect mode") }
+        // transport 只执行单跳，先让插件决定是否消费 3xx 和其中的会话响应头。
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard let target = request.url, ["http", "https"].contains(target.scheme ?? ""),
+                  target.user == nil, permissions.reaches(target.host ?? "") else { throw PluginFailure.invalid("Request outside plugin network permissions") }
+            let (data, response) = try await transport(request, permissions)
+            guard data.count <= 16 * 1_024 * 1_024 else { throw PluginFailure.invalid("Response body too large") }
+            if redirect != "manual", [301, 302, 303, 307, 308].contains(response.statusCode) {
+                guard redirect == "follow", let next = try NetworkClient.redirect(request, response: response) else { throw NetworkFailure.redirect }
+                request = next
+                continue
+            }
+            let headers = Dictionary(uniqueKeysWithValues: response.allHeaderFields.compactMap { key, value -> (String, PluginJSON)? in
+                guard let key = key as? String else { return nil }; return (key.lowercased(), .string(String(describing: value)))
+            })
+            let cookies = response.value(forHTTPHeaderField: "Set-Cookie").map(Self.setCookies) ?? []
+            return .object(["setCookies": .array(cookies.map(PluginJSON.string)), "status": .number(Double(response.statusCode)), "url": .string(response.url?.absoluteString ?? target.absoluteString), "headers": .object(headers), "body": .string(String(decoding: data, as: UTF8.self)), "base64": .string(data.base64EncodedString())])
+        }
+        throw NetworkFailure.redirect
     }
 }

@@ -337,3 +337,49 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
         #expect(ContinuousClock.now - started < .seconds(2))
     }
 }
+
+private actor PluginRedirectFixture {
+    private(set) var paths: [String] = []
+    func response(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let url = try #require(request.url)
+        #expect(url.host == "api.example.test")
+        paths.append(url.path)
+        if url.path == "/done" {
+            #expect(request.httpMethod == "GET")
+            #expect(request.httpBody == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == "pending=synthetic")
+            return (Data("done".utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
+        }
+        let location = url.path == "/outside" ? "https://outside.example.test/" : url.path == "/loop" ? "/loop" : "/done"
+        return (Data("pending".utf8), try #require(HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil,
+            headerFields: ["Location": location, "Set-Cookie": "session=synthetic; Path=/; HttpOnly"])))
+    }
+}
+
+@Test func pluginFetchRedirectModesPreserveManualSessionAndBoundFollowing() async throws {
+    try await withPlugin("""
+    export async function read({redirect='follow',path='/start'}) {
+      const response=await fetch('https://api.example.test'+path,{method:'POST',body:'ticket=synthetic',headers:{Cookie:'pending=synthetic'},redirect});
+      return {status:response.status,body:await response.text(),url:response.url,cookies:response.headers.getSetCookie(),location:response.headers.get('location')};
+    }
+    """) { _, root, manifest in
+        let fixture = PluginRedirectFixture()
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest,
+                                        transport: { request, _ in try await fixture.response(request) })
+        let manual = try await runtime.invoke("read", arguments: .object(["redirect": .string("manual")]))
+        #expect(manual["status"] == .number(302))
+        #expect(manual["body"] == .string("pending"))
+        #expect(manual["location"] == .string("/done"))
+        #expect(manual["cookies"].array == [.string("session=synthetic; Path=/; HttpOnly")])
+        #expect(await fixture.paths == ["/start"])
+        let followed = try await runtime.invoke("read")
+        #expect(followed["status"] == .number(200))
+        #expect(followed["url"] == .string("https://api.example.test/done"))
+        #expect(followed["body"] == .string("done"))
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["redirect": .string("error")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["path": .string("/outside")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["redirect": .string("unknown")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["path": .string("/loop")])) }
+        #expect(await fixture.paths == ["/start", "/start", "/done", "/start", "/outside"] + Array(repeating: "/loop", count: 10))
+    }
+}

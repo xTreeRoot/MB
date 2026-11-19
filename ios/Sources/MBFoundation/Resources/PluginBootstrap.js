@@ -127,7 +127,9 @@
     if (body != null && typeof body !== "string") throw new TypeError("Fetch body must be text or URLSearchParams");
     options.signal?.throwIfAborted();
     let abort;
-    const event = { kind: "fetch", url: String(input), method: options.method || "GET", headers: Object.fromEntries(headers), body: body ?? null };
+    const redirect = options.redirect ?? "follow";
+    if (!["follow", "manual", "error"].includes(redirect)) throw new TypeError("Invalid fetch redirect mode");
+    const event = { kind: "fetch", url: String(input), method: options.method || "GET", headers: Object.fromEntries(headers), body: body ?? null, redirect };
     const operation = request(event);
     const cancelled = new Promise((_, reject) => { abort = () => { __request({kind:"cancel", request:event.requestID}); pending.delete(event.requestID); reject(options.signal.reason); }; options.signal?.addEventListener("abort", abort, {once:true}); });
     let result;

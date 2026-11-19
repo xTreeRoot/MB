@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor @Observable
 public final class AccountModel {
@@ -14,6 +17,9 @@ public final class AccountModel {
     @ObservationIgnored private let source: (any AccountSource)?
     @ObservationIgnored private var attempt: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
+    #if os(iOS)
+    @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
     public init(source: (any AccountSource)?) { self.source = source; available = source != nil; displayName = source?.displayName ?? "账号" }
 
     public func restore() async {
@@ -38,10 +44,12 @@ public final class AccountModel {
                     await self?.receive(prompt, generation: current)
                 }
                 guard current == generation, !Task.isCancelled else { return }
+                endBackgroundSignIn()
                 account = found; revision += 1
                 prompt = nil; isSigningIn = false; attempt = nil
             } catch {
                 guard current == generation, !Task.isCancelled else { return }
+                endBackgroundSignIn()
                 errorMessage = error.localizedDescription; isSigningIn = false; prompt = nil; attempt = nil
             }
         }
@@ -50,6 +58,7 @@ public final class AccountModel {
     public func cancelSignIn() {
         generation += 1
         attempt?.cancel(); attempt = nil
+        endBackgroundSignIn()
         isSigningIn = false; prompt = nil
     }
 
@@ -65,9 +74,31 @@ public final class AccountModel {
         } catch { if current == generation { errorMessage = error.localizedDescription } }
     }
 
+    /// 扫码需切换到官方 App，申请系统允许的短时后台执行，避免确认响应在挂起时丢失。
+    private func beginBackgroundSignIn(generation: Int) {
+        #if os(iOS)
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "MBSignIn") { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.generation, self.isSigningIn else { return }
+                self.cancelSignIn()
+                self.errorMessage = AppLocalization.text("登录等待已超出系统后台时限，请回到 MB 重新登录")
+            }
+        }
+        #endif
+    }
+    private func endBackgroundSignIn() {
+        #if os(iOS)
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+        #endif
+    }
+
     private func receive(_ prompt: SignInPrompt, generation: Int) {
         guard generation == self.generation, isSigningIn, !Task.isCancelled else { return }
         self.prompt = prompt
+        if prompt.qrURL != nil { beginBackgroundSignIn(generation: generation) }
     }
     public func waitForSignIn() async { await attempt?.value }
 }
