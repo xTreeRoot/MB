@@ -89,6 +89,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
 
     override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
         val stage = active ?: return
+        if (mutable.value?.error != null) return
         if ((reason != Player.DISCONTINUITY_REASON_SEEK && reason != Player.DISCONTINUITY_REASON_AUTO_TRANSITION) ||
             newPosition.mediaItem?.mediaId != stage.track.id) return
         hold()
@@ -129,6 +130,12 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
         engine?.release()
     }
 
+    private fun fail(stage: Stage, message: String) {
+        retire(stage)
+        mutable.value = VideoFrameState(stage.track.id, loading = false, error = message)
+        releaseHold()
+    }
+
     fun close() {
         audio.removeListener(this)
         onGateChanged = {}
@@ -150,7 +157,8 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                if (valid(stage)) mutable.value = VideoFrameState(stage.track.id, loading = false, error = "视频地址加载失败")
+                ensureActive()
+                if (valid(stage)) fail(stage, "视频地址加载失败") else hideIfActive(stage)
                 return@launch
             }
             ensureActive()
@@ -172,15 +180,14 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
 
                 override fun onPlayerError(error: PlaybackException) {
                     if (stage.engine !== engine || !valid(stage)) return
-                    hold()
                     val action = mediaRecovery(error)
                     val retry = action?.let(stage.recovery::delayFor)
                     if (retry != null) {
+                        hold()
                         if (action == MediaRecovery.RefreshAddress) stage.resource = null
                         load(stage, audio.currentPosition, retry)
                     } else {
-                        retire(stage)
-                        mutable.value = VideoFrameState(stage.track.id, loading = false, error = "视频加载失败（${error.playbackDiagnostic(error.errorCode)}）")
+                        fail(stage, "视频加载失败（${error.playbackDiagnostic(error.errorCode)}）")
                     }
                 }
             })

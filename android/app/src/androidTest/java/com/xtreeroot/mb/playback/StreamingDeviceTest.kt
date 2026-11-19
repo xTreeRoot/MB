@@ -20,6 +20,7 @@ import com.xtreeroot.mb.music.StationPlaybackSource
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.music.VideoSource
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
@@ -199,6 +200,99 @@ class StreamingDeviceTest {
             withContext(Dispatchers.Main) { coordinator.close(); scope.cancel(); audio.release() }
             output.release()
             textures.release()
+        }
+    }
+
+    @Test fun failedVideoAddressDoesNotStopPlayingAudioOrReopenVideoOnSeek() = runBlocking {
+        val wave = wave(20)
+        val client = OkHttpClient.Builder().addInterceptor { chain -> media(chain.request(), wave) }.build()
+        val releaseAddress = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        val track = Track("fixture", "video-failed-address", "Fixture", "", durationMs = 20_000)
+        val source = object : VideoSource {
+            override val id = track.sourceId
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+            override suspend fun video(trackId: String): MediaResource {
+                calls.incrementAndGet()
+                releaseAddress.await()
+                throw IOException("Fixture address failure")
+            }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) {
+            player(client).apply {
+                setMediaItem(track.mediaItem().buildUpon().setUri("https://fixture.invalid/audio").build())
+                prepare()
+                play()
+            }
+        }
+        val coordinator = withContext(Dispatchers.Main) {
+            VideoPlayback(instrumentation.targetContext, client, audio, scope, { source }, { AudioQuality.Standard })
+        }
+        try {
+            eventually { audio.isPlaying }
+            withContext(Dispatchers.Main) { checkNotNull(coordinator.show(track)) }
+            eventually { calls.get() == 1 }
+            val heldPosition = withContext(Dispatchers.Main) {
+                assertFalse(audio.isPlaying)
+                audio.currentPosition.also { releaseAddress.complete(Unit) }
+            }
+            eventually { coordinator.frames.value?.error != null }
+            withContext(Dispatchers.Main) { assertNull(coordinator.heldIntent) }
+            eventually { audio.isPlaying && audio.currentPosition > heldPosition + 100 }
+            withContext(Dispatchers.Main) { audio.seekTo(4000) }
+            eventually { audio.isPlaying && audio.currentPosition > 4100 }
+            withContext(Dispatchers.Main) {
+                assertEquals(track.id, audio.currentMediaItem?.mediaId)
+                assertEquals(1, calls.get())
+                assertTrue(coordinator.frames.value?.error != null)
+                coordinator.retry()
+            }
+            eventually { calls.get() == 2 && coordinator.frames.value?.error != null && audio.isPlaying }
+        } finally {
+            withContext(Dispatchers.Main) { coordinator.close(); scope.cancel(); audio.release() }
+        }
+    }
+
+    @Test fun terminalVideoReadFailureKeepsPausedAudioAndAllowsPlayWithoutClosingVideo() = runBlocking {
+        val wave = wave(20)
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.encodedPath == "/video") response(request, 404, ByteArray(0)).build() else media(request, wave)
+        }.build()
+        val track = Track("fixture", "video-read-failure", "Fixture", "", durationMs = 20_000)
+        val source = object : VideoSource {
+            override val id = track.sourceId
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+            override suspend fun video(trackId: String) = MediaResource("https://fixture.invalid/video", emptyMap(), "mp4")
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) {
+            player(client).apply {
+                setMediaItem(track.mediaItem().buildUpon().setUri("https://fixture.invalid/audio").build(), 1500)
+                prepare()
+            }
+        }
+        val coordinator = withContext(Dispatchers.Main) {
+            VideoPlayback(instrumentation.targetContext, client, audio, scope, { source }, { AudioQuality.Standard })
+        }
+        try {
+            eventually { audio.playbackState == Player.STATE_READY }
+            val session = withContext(Dispatchers.Main) {
+                CaptionSessionPlayer(audio, coordinator) {}.also { checkNotNull(coordinator.show(track)) }
+            }
+            eventually { coordinator.frames.value?.error?.contains("HTTP 404") == true }
+            withContext(Dispatchers.Main) {
+                assertNull(coordinator.heldIntent)
+                assertFalse(audio.playWhenReady)
+                assertFalse(audio.isPlaying)
+                assertEquals(1500L, audio.currentPosition)
+                session.play()
+            }
+            eventually { audio.isPlaying && audio.currentPosition > 1600 }
+            assertTrue(coordinator.frames.value?.error?.contains("HTTP 404") == true)
+        } finally {
+            withContext(Dispatchers.Main) { coordinator.close(); scope.cancel(); audio.release() }
         }
     }
 

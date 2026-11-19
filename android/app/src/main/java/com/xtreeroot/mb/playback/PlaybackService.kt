@@ -96,9 +96,10 @@ internal class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
     private var video: VideoPlayback? = null
     private var stations: StationPlayback? = null
+    private var lastPortableQueueNotification = 0L
     private val checkpoint = object : Runnable {
         override fun run() {
-            if (session?.player?.isPlaying == true) persist()
+            if (session?.player?.isPlaying == true) persist(periodic = true)
             handler.postDelayed(this, 5_000)
         }
     }
@@ -181,7 +182,6 @@ internal class PlaybackService : MediaSessionService() {
         val stations = StationPlayback(player, scope, { app.playbackSource(it) as? StationPlaybackSource }) { status ->
             app.stationStatus.value = status
             persist()
-            app.portableLibrary.userStateChanged()
         }
         this.stations = stations
         val sessionPlayer = CaptionSessionPlayer(player, video, stations) {
@@ -335,7 +335,6 @@ internal class PlaybackService : MediaSessionService() {
                         Player.EVENT_PLAY_WHEN_READY_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED,
                         Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED)) {
                     persist()
-                    app.portableLibrary.userStateChanged()
                 }
                 if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_IS_PLAYING_CHANGED)) {
                     val track = player.currentMediaItem?.track()
@@ -522,11 +521,16 @@ internal class PlaybackService : MediaSessionService() {
         }.takeWhile { it != C.INDEX_UNSET }.toList()
     }
 
-    private fun persist() {
+    private fun persist(periodic: Boolean = false) {
         val player = player ?: return
         val tracks = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).track() ?: return }
         if (tracks.isEmpty()) storage.edit().remove("queue").apply()
         else storage.edit().putString("queue", QueueSnapshot(tracks, player.currentMediaItemIndex,
             player.currentPosition, player.repeatMode, player.shuffleModeEnabled, playOrder(player), stations?.station).encode()).apply()
+        val now = SystemClock.elapsedRealtime()
+        if (!periodic || now - lastPortableQueueNotification >= 30_000) {
+            lastPortableQueueNotification = now
+            (application as MBApplication).portableLibrary.userStateChanged()
+        }
     }
 }

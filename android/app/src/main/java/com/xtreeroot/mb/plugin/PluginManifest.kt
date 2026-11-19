@@ -2,7 +2,7 @@ package com.xtreeroot.mb.plugin
 
 import org.json.JSONObject
 
-internal class PluginException(message: String, val code: String? = null) : Exception(message)
+internal class PluginException(message: String, val code: String? = null, cause: Throwable? = null) : Exception(message, cause)
 
 internal data class PluginManifest(
     val id: String,

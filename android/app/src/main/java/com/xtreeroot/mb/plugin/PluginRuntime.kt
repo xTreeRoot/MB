@@ -51,6 +51,7 @@ internal class PluginRuntime(
         val events = mutableMapOf<Int, Job>()
         val wake = Channel<Unit>(Channel.CONFLATED)
         var signInRequests: MutableSet<Int>? = null
+        var signInDiagnostics: PluginSignInDiagnostics? = null
         var status = 0
         var failure: Exception? = null
     }
@@ -75,10 +76,15 @@ internal class PluginRuntime(
 
     suspend fun signIn(prompt: (PluginPrompt) -> Unit): Any = useMachine { runtime ->
         val requests = mutableSetOf<Int>()
+        val diagnostics = PluginSignInDiagnostics(dataDirectory)
         runtime.signInRequests = requests
+        runtime.signInDiagnostics = diagnostics
         hostState().onPrompt = prompt
-        try { invoke(runtime, "signIn", JSONObject(), 300_000) }
+        var completed = false
+        try { invoke(runtime, "signIn", JSONObject(), 300_000).also { completed = true } }
         finally {
+            runtime.signInDiagnostics = null
+            diagnostics.finish(completed)
             if (requests.isNotEmpty()) reset()
             runtime.signInRequests = null
             hostState().onPrompt = null
@@ -185,6 +191,19 @@ internal class PluginRuntime(
         }
     }
 
+    private suspend fun fetch(event: JSONObject, diagnostics: PluginSignInDiagnostics?): String {
+        val request = PluginFetchRequest.parse(event, manifest)
+        try {
+            val response = transport.fetch(request, manifest)
+            return response.toJson().toString().also { diagnostics?.record(request.url, response = response) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            diagnostics?.record(request.url, failure = error.cause ?: error)
+            throw error
+        }
+    }
+
     private fun schedule(runtime: Machine) {
         while (true) {
             val event = JSONObject(runtime.context.event() ?: return)
@@ -200,6 +219,7 @@ internal class PluginRuntime(
             if (id <= 0 || runtime.events.containsKey(id)) throw PluginException("Invalid plugin host request")
             val signInAllowed = (kind == "webSignIn" || kind == "oauthSignIn") &&
                 runtime.signInRequests?.takeIf { it.isEmpty() }?.add(id) == true
+            val diagnostics = runtime.signInDiagnostics
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 val (success, response) = try {
                     val value = when (kind) {
@@ -207,7 +227,7 @@ internal class PluginRuntime(
                             delay(event.optLong("delay").coerceIn(0, 300_000))
                             "null"
                         }
-                        "fetch" -> transport.fetch(PluginFetchRequest.parse(event, manifest), manifest).toJson().toString()
+                        "fetch" -> fetch(event, diagnostics)
                         "webSignIn" -> {
                             if (!signInAllowed) throw PluginException("Web sign-in requires an active sign-in request")
                             val cookie = webSignIn(PluginWebSignIn.parse(event, manifest))

@@ -1,6 +1,6 @@
 # MB Android
 
-安卓客户端在 `android` 分支独立开发。0.1.2 预览版继续对照 iOS 0.1.0 Build 23（`8c6522c`），并修复播放服务连接与旧版 WebView 隔离登录问题。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
+安卓客户端在 `android` 分支独立开发。0.1.3 预览版继续对照 iOS 0.1.0 Build 23（`8c6522c`），修复视频加载失败卡住音频和连续播放时独立备份进度不更新的问题，保留 0.1.2 的旧版 WebView 兼容修复。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
 
 ## 终端构建
 
@@ -27,6 +27,8 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。以上命令不�
 
 在 **资料库 → 数据位置** 中选择一个独立于 App 的本机文件夹，例如 `Documents/MB`。MB 在所选文件夹下创建 `MB Data`，增量备份已导入和下载的音频、歌单、喜欢、最近播放记录、本地歌词、搜索历史、播放队列、自定义背景、非敏感设置和已安装的插件包。插件只备份安装文件和预设选项，不备份启用状态、密码、自由输入配置或 `host.storage`。APK、工作数据库、在线播放缓存和账号凭据不写进该目录。
 
+连续播放时，应用约每 30 秒安排一次进度备份；暂停或切歌也会安排更新。恢复队列时不会自动播放，点播放后可从已备份位置继续。
+
 卸载前点 **立即备份**，等备份完成并确认没有错误。手动备份按长度和 SHA-256 核对所需文件，即使长度没变也能发现损坏；本机原件仍在时会补写并读回校验。校验报错时先不要卸载。重装后进入同一页面，重新选择原先的文件夹（不是 `MB Data` 子目录）；Android 会要求重新授权。恢复前同样检查文件完整性，已有项目不被同 ID 的旧副本覆盖，已经设置的偏好不被旧备份覆盖。恢复的插件保持停用，请在插件详情核对权限后手动启用。没有选独立目录时，只存在 App 私有数据，卸载不会保留它。
 
 ## 外观与插件
@@ -40,6 +42,7 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。以上命令不�
 - 插件可在其 `signIn` 中调用 `host.oauthSignIn({authorizationEndpoint, tokenEndpoint, clientID, redirectURI, scopes})`。它打开系统浏览器，以 PKCE 和单次 `state` 换取 JSON 令牌，回跳须在服务端注册为 `com.xtreeroot.mb:/oauth2redirect`。需使用适配 Android 的客户端配置，不支持直接套用现有 YouTube 插件里的 iOS OAuth 客户端和回跳。
 - 播放失败时，完整播放器会显示错误码，媒体请求返回 HTTP 状态时也会显示状态码。排查时可同时试播一首已导入的本地音频，区分本地播放与平台取流，不需要提供 Cookie 或带签名的媒体地址。
 - 已授权的调试设备可在复现后运行 `adb -s <设备序列号> logcat -d -s MBPlayback:I MBPluginBrowser:I '*:S'`。这两个日志标签记录播放服务连接、播放错误码、WebView 提供程序和启动阶段，不记录曲目、请求地址、账号或 Cookie。
+- 插件登录结束后，可对调试包执行 `adb -s <设备序列号> shell run-as com.xtreeroot.mb cat files/plugins/data/<插件ID>/sign-in-diagnostics.json` 读取最近一次报告。仅记录插件登录脚本的已授权请求，最多 32 条：域名、路径 SHA-256、HTTP 状态码、约定的整数业务码或异常类型。不保存原始路径、查询参数、请求头、正文、Cookie 或账号信息，不进入可携带备份。
 - 听歌进度到 70% 时，MB 会为自动播放的下一首先取地址和最多 256 KiB 音频，只临时放内存；下一首已有本地副本时不走网络，也不会提前播放。
 
 ## 模块

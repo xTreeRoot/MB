@@ -12,8 +12,10 @@ import com.xtreeroot.mb.music.toMetadataJson
 import com.xtreeroot.mb.music.toTrackMetadata
 import java.io.File
 import java.net.ServerSocket
+import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.nio.file.Files
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -533,6 +535,93 @@ class PluginRuntimeTest {
             assertEquals(PluginRedirectMode.Error, exchange.redirectMode)
             assertTrue(exchange.body.orEmpty().split('&').contains("code=fixture-code"))
             assertFalse(broker.callback(uri(callback)))
+        }
+    }
+
+    @Test fun signInRecordsBoundedDiagnosticsWithoutSavingRequestOrAccountData() {
+        var timeout = false
+        fixture(
+            """
+            export async function signIn() {
+                for (let attempt = 0; attempt < 34; attempt++) {
+                    await fetch('https://api.example.test/sensitive-route/' + attempt + '?t=fixture-query', {
+                        method: 'POST', headers: {Authorization: 'Bearer fixture-header'}, body: 'fixture-body'
+                    });
+                }
+                return {id:'signed-in'};
+            }
+            export async function home() { return (await fetch('https://api.example.test/home')).status; }
+            """.trimIndent(),
+            transport = PluginTransport { request, _ ->
+                if (timeout) throw PluginException("Plugin network request failed", pluginNetworkCode,
+                    SocketTimeoutException("fixture-exception-message"))
+                PluginFetchResponse(403, request.url, mapOf("X-Fixture" to "fixture-response-header"),
+                    listOf("session=fixture-cookie"),
+                    """{"code":-1,"status_info":{"code":"42"},"data":{"error_code":2147483648,"account":"fixture-account"}}"""
+                        .encodeToByteArray())
+            },
+        ) { runtime, _, data ->
+            val reportFile = File(data, "sign-in-diagnostics.json")
+            assertEquals("signed-in", (runtime.signIn {} as JSONObject).getString("id"))
+            val contents = reportFile.readText()
+            val report = JSONObject(contents)
+            assertTrue(report.getBoolean("completed"))
+            val entries = report.getJSONArray("entries")
+            assertEquals(32, entries.length())
+            val entry = entries.getJSONObject(0)
+            assertEquals("api.example.test", entry.getString("host"))
+            fun hash(path: String) = MessageDigest.getInstance("SHA-256").digest(path.encodeToByteArray()).toHexString()
+            assertEquals(hash("/sensitive-route/2"), entry.getString("pathHash"))
+            assertEquals(hash("/sensitive-route/33"), entries.getJSONObject(31).getString("pathHash"))
+            assertEquals(403, entry.getInt("status"))
+            assertEquals("[-1,42]", entry.getJSONArray("serviceCodes").toString())
+            assertFalse(contents.contains("fixture-"))
+            assertFalse(contents.contains("sensitive-route"))
+            assertEquals(403, runtime.invoke("home"))
+            assertEquals(contents, reportFile.readText())
+
+            timeout = true
+            try {
+                runtime.signIn {}
+                fail("The login should fail before receiving a response")
+            } catch (error: PlaybackIssueException) { assertEquals(PlaybackIssue.Network, error.issue) }
+            val failedContents = reportFile.readText()
+            assertFalse(failedContents.contains("fixture-"))
+            val failure = JSONObject(failedContents)
+            assertFalse(failure.getBoolean("completed"))
+            val failures = failure.getJSONArray("entries")
+            assertEquals(1, failures.length())
+            assertEquals("SocketTimeoutException", failures.getJSONObject(0).getString("failureType"))
+            assertFalse(failures.getJSONObject(0).has("status"))
+        }
+    }
+
+    @Test fun canceledSignInKeepsOnlyCompletedRequestDiagnostics() {
+        val polling = CompletableDeferred<Unit>()
+        fixture(
+            """
+            export async function signIn() {
+                await fetch('https://api.example.test/start');
+                await fetch('https://api.example.test/poll');
+            }
+            """.trimIndent(),
+            transport = PluginTransport { request, _ ->
+                if (request.url.path == "/poll") {
+                    polling.complete(Unit)
+                    awaitCancellation()
+                }
+                PluginFetchResponse(202, request.url, emptyMap(), emptyList(), "not JSON".encodeToByteArray())
+            },
+        ) { runtime, _, data ->
+            val attempt = async { runtime.signIn {} }
+            polling.await()
+            attempt.cancelAndJoin()
+            val report = JSONObject(File(data, "sign-in-diagnostics.json").readText())
+            assertFalse(report.getBoolean("completed"))
+            val entries = report.getJSONArray("entries")
+            assertEquals(1, entries.length())
+            assertEquals(202, entries.getJSONObject(0).getInt("status"))
+            assertFalse(entries.getJSONObject(0).has("serviceCodes"))
         }
     }
 

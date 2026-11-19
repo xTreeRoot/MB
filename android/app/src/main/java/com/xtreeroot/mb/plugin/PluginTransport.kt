@@ -124,7 +124,7 @@ internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : Plugi
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                continuation.resumeWith(Result.failure(networkFailure()))
+                continuation.resumeWith(Result.failure(networkFailure(e)))
             }
 
             override fun onResponse(call: Call, response: Response) {
@@ -134,13 +134,13 @@ internal class PluginHttpTransport(proxySelector: ProxySelector? = null) : Plugi
                         if (redirect != null) Exchange.Redirect(redirect) else Exchange.Result(read(response, current.url))
                     }
                 }.recoverCatching { failure ->
-                    throw if (failure is IOException) networkFailure() else failure
+                    throw if (failure is IOException) networkFailure(failure) else failure
                 })
             }
         })
     }
 
-    private fun networkFailure() = PluginException("Plugin network request failed", pluginNetworkCode)
+    private fun networkFailure(cause: IOException) = PluginException("Plugin network request failed", pluginNetworkCode, cause)
 
     private fun Response.read(url: URI, maximumBytes: Int): PluginFetchResponse {
         val headers = headers.names().associate { name -> name.lowercase(Locale.ROOT) to headers(name).joinToString(", ") }
