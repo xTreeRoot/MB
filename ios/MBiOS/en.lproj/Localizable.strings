@@ -147,6 +147,9 @@
 "视频播放" = "Video Playback";
 "视频播放进度" = "Video Progress";
 "视频模式" = "Video Mode";
+"观看当前视频" = "Watch Current Video";
+"此音源不支持评论" = "This source does not support comments";
+"音源" = "Sources";
 "视频画面" = "Video Picture";
 "视频详情" = "Video Details";
 "设置" = "Settings";

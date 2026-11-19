@@ -334,7 +334,9 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 15))
         selectTab("设置", app: app)
         let pluginLink = app.buttons["settings-plugins"]
-        for _ in 0..<5 { if !pluginLink.isHittable { app.swipeUp() } }
+        XCTAssertTrue(pluginLink.waitForExistence(timeout: 5))
+        XCTAssertTrue(pluginLink.isHittable, "设置首屏不滚动就能打开插件")
+        capture("设置-首屏插件入口-演示数据", app: app)
         pluginLink.tap()
         XCTAssertTrue(app.navigationBars["安装插件"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["media.example.test"].exists)
@@ -447,12 +449,13 @@ final class MBiOSUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["lyric-style-\(id)"].waitForExistence(timeout: 5))
             capture("歌词-\(name)-演示数据", app: app)
         }
-        // 在歌词显示期间选封面、在视频期间选歌词，都必须立即替换舞台。
         app.buttons["播放界面样式"].tap(); app.buttons["播放器样式"].tap(); app.buttons["磁带"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["player-artwork-cassette"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["跳转到 让晚风经过耳边"].exists)
         app.buttons["切换到实时视频"].tap()
         XCTAssertTrue(app.staticTexts["此音源不支持视频播放"].waitForExistence(timeout: 5))
+        app.buttons["video-open-music"].tap()
+        XCTAssertTrue(app.buttons["播放界面样式"].waitForExistence(timeout: 5))
         app.buttons["播放界面样式"].tap(); app.buttons["歌词舞台"].tap(); app.buttons["Tilt · 倾诉"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["lyric-style-tilt"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["此音源不支持视频播放"].exists)
@@ -655,15 +658,15 @@ final class MBiOSUITests: XCTestCase {
         let frameReady = expectation(for: NSPredicate(format: "value == %@", "视频画面已显示"), evaluatedWith: picture)
         wait(for: [frameReady], timeout: 45)
         capture("真实游客-点击封面实时视频", app: app)
-        chooseMode("听歌模式", app: app)
+        app.buttons["video-open-music"].tap()
         XCTAssertTrue(app.buttons["切换到实时视频"].waitForExistence(timeout: 5))
-        chooseMode("视频模式", app: app)
+        app.buttons["观看当前视频"].tap()
         XCTAssertTrue(picture.waitForExistence(timeout: 45))
         XCTAssertTrue(app.staticTexts["正在缓冲"].waitForNonExistence(timeout: 45))
         let secondFrameReady = expectation(for: NSPredicate(format: "value == %@", "视频画面已显示"), evaluatedWith: picture)
         wait(for: [secondFrameReady], timeout: 45)
         capture("真实游客-再次切换视频", app: app)
-        chooseMode("听歌模式", app: app)
+        app.buttons["video-open-music"].tap()
         XCTAssertTrue(controls.buttons["播放"].waitForExistence(timeout: 5))
         capture("真实游客-切回封面并暂停", app: app)
     }
@@ -764,18 +767,23 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["城市慢下来"].waitForExistence(timeout: 5))
         app.buttons["字幕"].tap()
         XCTAssertTrue(app.buttons["跳转到 让晚风经过耳边"].waitForExistence(timeout: 5))
-        for _ in 0..<6 {
-            chooseMode("视频模式", app: app)
-            XCTAssertTrue(app.staticTexts["此音源不支持视频播放"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["下一首"].isHittable)
-            capture("播放-即时切换视频-演示状态", app: app)
-            chooseMode("听歌模式", app: app)
-            XCTAssertFalse(app.staticTexts["此音源不支持视频播放"].exists)
-            XCTAssertTrue(app.buttons["队列"].isHittable)
-        }
         app.buttons["收起"].tap()
         chooseMode("视频模式", app: app)
+        XCTAssertTrue(first.isHittable, "有暂停曲目时切模式不应跳转")
+        XCTAssertFalse(app.buttons["全屏播放"].exists)
+        XCTAssertTrue(app.buttons["打开播放页，城市慢下来"].exists)
+        capture("视频-推荐浏览-演示数据", app: app)
+        first.tap()
         XCTAssertTrue(app.buttons["全屏播放"].waitForExistence(timeout: 5))
+        capture("视频-简介-演示数据", app: app)
+        app.buttons["评论"].tap()
+        XCTAssertTrue(app.staticTexts["慢下来，听见晚风里的片刻。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sliders["视频播放进度"].isHittable)
+        capture("视频-评论固定画面-演示数据", app: app)
+        app.buttons["队列"].tap()
+        XCTAssertTrue(app.buttons["队列选择 城市慢下来"].waitForExistence(timeout: 5))
+        app.buttons["队列选择 城市慢下来"].tap()
+        XCTAssertTrue(app.staticTexts["城市慢下来"].waitForExistence(timeout: 5))
         app.buttons["全屏播放"].tap()
         XCTAssertTrue(app.buttons["退出全屏"].waitForExistence(timeout: 5))
         capture("视频-横屏全屏-演示状态", app: app)
@@ -784,11 +792,8 @@ final class MBiOSUITests: XCTestCase {
         app.buttons["返回浏览"].tap()
         XCTAssertTrue(app.navigationBars["为你推荐"].waitForExistence(timeout: 5))
         XCTAssertTrue(first.exists)
-        chooseMode("视频模式", app: app)
-        XCTAssertTrue(app.staticTexts["此音源不支持视频播放"].waitForExistence(timeout: 5))
         chooseMode("听歌模式", app: app)
-        XCTAssertTrue(app.buttons["队列"].waitForExistence(timeout: 5))
-        app.buttons["收起"].tap()
+        XCTAssertTrue(first.isHittable)
         selectTab("设置", app: app)
         let network = app.buttons["网络与系统代理"]
         for _ in 0..<5 { if !network.isHittable { app.swipeUp() } }
@@ -812,17 +817,14 @@ final class MBiOSUITests: XCTestCase {
         search.typeText("music\n")
         XCTAssertTrue(app.buttons["选择 晚风里的片刻"].waitForExistence(timeout: 5))
         chooseMode("视频模式", app: app)
-        XCTAssertTrue(app.staticTexts["此音源不支持视频播放"].waitForExistence(timeout: 5))
-        app.buttons["返回浏览"].tap()
-        XCTAssertTrue(app.buttons["选择 晚风里的片刻"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["选择 晚风里的片刻"].isHittable)
+        XCTAssertFalse(app.buttons["返回浏览"].exists)
         app.buttons["选择 晚风里的片刻"].tap()
         XCTAssertTrue(app.staticTexts["此音源不支持视频播放"].waitForExistence(timeout: 5))
     }
 
     @MainActor private func chooseMode(_ label: String, app: XCUIApplication) {
-        let picker = app.segmentedControls["current-playback-mode"]
-        if picker.exists { picker.buttons[label].tap() }
-        else if app.buttons[label].firstMatch.isHittable { app.buttons[label].firstMatch.tap() }
+        if app.buttons[label].firstMatch.isHittable { app.buttons[label].firstMatch.tap() }
         else {
             app.buttons["切换播放模式"].tap()
             app.buttons[label].tap()
@@ -854,5 +856,35 @@ final class MBiOSUITests: XCTestCase {
             app.buttons["收起"].tap()
             app.buttons["首页"].tap()
         }
+    }
+
+    @MainActor func testTabletVideoDetailsFollowOrientation() throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("仅验证平板布局") }
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+        XCUIDevice.shared.orientation = .portrait
+        chooseMode("视频模式", app: app)
+        let card = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch
+        XCTAssertTrue(card.isHittable)
+        XCTAssertFalse(app.buttons["全屏播放"].exists)
+        card.tap()
+        let seek = app.sliders["视频播放进度"]
+        let comments = app.buttons["评论"]
+        XCTAssertTrue(comments.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(comments.frame.midY, seek.frame.maxY)
+        capture("iPad-竖屏-视频简介-演示数据", app: app)
+        comments.tap()
+        let comment = app.staticTexts["慢下来，听见晚风里的片刻。"]
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(comment.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(comments.frame.minX, seek.frame.maxX)
+        capture("iPad-横屏-视频评论-演示数据", app: app)
+        app.buttons["返回浏览"].tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .portrait
     }
 }

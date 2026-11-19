@@ -68,13 +68,7 @@ struct PluginCatalogPage: View {
                 ForEach(content.sections) { section in
                     Section {
                         if section.trackLayout == "videos" {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155))], spacing: 16) {
-                                ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
-                                    Button { play(section.tracks, index: index) } label: {
-                                        VStack(alignment: .leading) { RemoteArtwork(track: track).aspectRatio(16 / 9, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 10)); Text(track.title).font(.subheadline).lineLimit(2); Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                                    }.buttonStyle(.plain).contextMenu { menu(track) }.accessibilityLabel("播放 \(track.title)")
-                                }
-                            }
+                            VideoTrackGrid(tracks: section.tracks, select: { play($0, index: $1) }, menu: menu, includeArtistInLabel: false)
                         } else {
                         ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
                             HStack {

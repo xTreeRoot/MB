@@ -18,6 +18,10 @@ struct SettingsView: View {
                         ForEach(AppAppearance.allCases) { mode in Text(LocalizedStringKey(mode.title)).tag(mode) }
                     }
                 }
+                Section {
+                    NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
+                    Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
+                } header: { Text("音源") }
                 Section("播放") {
                     Picker("音质", selection: $preferences.values.quality) {
                         ForEach(AudioQuality.allCases) { quality in Text(LocalizedStringKey(quality.title)).tag(quality) }
@@ -57,8 +61,6 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
-                    NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
                     NavigationLink("网络与系统代理") { NetworkSettingsView(model: network) }
                     Button("清空搜索记录", role: .destructive) { clearingHistory = true }.disabled(preferences.values.searchHistory.isEmpty)
                 }

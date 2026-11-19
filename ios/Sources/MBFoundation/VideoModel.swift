@@ -20,7 +20,7 @@ public extension VideoEngine {
     var onUpdate: (() -> Void)? { get set }
 }
 
-/// 显式切换立即替换当前画面；音频始终使用原播放会话，恢复和浏览不自动打开视频。
+/// 模式偏好只应用于主动选择的内容；观看当前视频复用原音频会话。
 @MainActor @Observable public final class VideoModel {
     public private(set) var mode: PlaybackMode = .music
     public private(set) var presentationMode: PlaybackMode = .music
@@ -70,10 +70,6 @@ public extension VideoEngine {
             presentationMode = .music
             isVisible = false
             release()
-        } else if let track, track.localFileID == nil {
-            presentationMode = .video
-            isVisible = true
-            if !isReady && task == nil { load() }
         }
         let previous = saveTask
         let saving = Task {
@@ -117,6 +113,12 @@ public extension VideoEngine {
         guard presentationMode == .video, track != nil else { return }
         isVisible = true
         if !isReady && task == nil { load() }
+    }
+
+    public func watchCurrent() {
+        guard let track, track.localFileID == nil else { return }
+        presentationMode = .video
+        open()
     }
 
     public func browse() { isVisible = false; release() }

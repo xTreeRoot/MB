@@ -4,13 +4,13 @@ import SwiftUI
 /// 封面与歌词共用同一舞台和控制区；紧凑设备及辅助字体可滚动查看全部操作。
 struct NowPlayingView: View {
     let playback: PlaybackModel
-    let video: VideoModel
     let demo: Bool
     var interactionSource: (any InteractionSource)? = nil
     var librarySource: (any LibrarySource)? = nil
     var accountRevision = 0
     var downloads: DownloadModel? = nil
     var preferences: PreferencesModel? = nil
+    let watchVideo: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var hotComments: [TrackComment] = []
@@ -71,8 +71,7 @@ struct NowPlayingView: View {
             previewMilliseconds = demo ? 0 : Double(playback.positionMilliseconds)
         }
         .onChange(of: playback.positionMilliseconds) { _, value in if !scrubbing && !demo { previewMilliseconds = Double(value) } }
-        .onChange(of: video.presentationMode) { _, mode in if mode == .video { showingCaptions = false } }
-        .onAppear { showingCaptions = preferences?.values.lyricsStage == true && video.presentationMode == .music; if !demo { previewMilliseconds = Double(playback.positionMilliseconds) } }
+        .onAppear { showingCaptions = preferences?.values.lyricsStage == true; if !demo { previewMilliseconds = Double(playback.positionMilliseconds) } }
         #if os(iOS)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -86,6 +85,10 @@ struct NowPlayingView: View {
                 Spacer(minLength: 0)
                 Text(LocalizedStringKey(demo ? "界面演示" : "正在播放")).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
+                if track.localFileID == nil {
+                    Button("观看当前视频", systemImage: "play.rectangle", action: watchVideo)
+                        .labelStyle(.iconOnly).frame(width: 44, height: 44)
+                }
                 styleMenu
                 if let downloads {
                     Menu {
@@ -95,7 +98,6 @@ struct NowPlayingView: View {
                     } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("更多操作")
                 }
             }
-            PlaybackModePicker(video: video)
             GeometryReader { region in
                 let side = max(100, min(region.size.width, region.size.height, 440))
                 Group {
@@ -111,11 +113,8 @@ struct NowPlayingView: View {
                         CaptionView(timeline: demo ? DemoCatalog.timeline : playback.timeline,
                                     positionMilliseconds: demo ? Int64(previewMilliseconds) : playback.positionMilliseconds,
                                     message: playback.captionMessage, viewportHeight: region.size.height, seek: { playback.seek(to: $0) })
-                    } else if video.presentationMode == .video { VideoScreen(video: video).aspectRatio(16 / 9, contentMode: .fit) }
-                    else {
-                        Button {
-                            Task { await video.choose(.video) }
-                        } label: {
+                    } else {
+                        Button(action: watchVideo) {
                             Group {
                                 if let style = preferences?.values.playerStyle, style != .cover {
                                     RetroArtworkView(track: track, style: style, positionMilliseconds: playback.positionMilliseconds,
@@ -150,7 +149,7 @@ struct NowPlayingView: View {
                 progress
                 controls
                 HStack {
-                    Button { showingCaptions.toggle(); if showingCaptions { Task { await video.choose(.music) } } } label: { Image(systemName: "quote.bubble").font(.title3).frame(width: 52, height: 44).background(showingCaptions ? MBTheme.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12)) }
+                    Button { showingCaptions.toggle() } label: { Image(systemName: "quote.bubble").font(.title3).frame(width: 52, height: 44).background(showingCaptions ? MBTheme.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12)) }
                         .accessibilityLabel("字幕").accessibilityValue(Text(showingCaptions ? "开启" : "关闭"))
                     Spacer()
                     if interactionSource != nil, track.localFileID == nil {
@@ -176,9 +175,8 @@ struct NowPlayingView: View {
                         Button {
                             preferences.values.playerStyle = style
                             showingCaptions = false
-                            Task { await video.choose(.music) }
                         } label: {
-                            if !showingCaptions, video.presentationMode == .music, preferences.values.playerStyle == style {
+                            if !showingCaptions, preferences.values.playerStyle == style {
                                 Label(LocalizedStringKey(style.title), systemImage: "checkmark")
                             } else { Text(LocalizedStringKey(style.title)) }
                         }
@@ -189,7 +187,6 @@ struct NowPlayingView: View {
                         Button {
                             preferences.values.lyricStyle = style
                             showingCaptions = true
-                            Task { await video.choose(.music) }
                         } label: {
                             if showingCaptions, preferences.values.lyricStyle == style {
                                 Label(LocalizedStringKey(style.title), systemImage: "checkmark")

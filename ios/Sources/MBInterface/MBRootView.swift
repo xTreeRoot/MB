@@ -39,6 +39,7 @@ public struct MBRootView: View {
     @State private var selectedSourceID: String
     @State private var plugins: PluginModel
     @State private var currentInteractions: (any InteractionSource)?
+    @State private var interactionTrackID: String?
     @State private var currentLibrarySource: (any LibrarySource)?
     private let router: SourceRouter
     private let initialSource: any MusicSource
@@ -84,7 +85,7 @@ public struct MBRootView: View {
     @ViewBuilder private var tabsWithPlayer: some View {
         #if os(iOS)
         if #available(iOS 26.1, *) {
-            tabContent.tabViewBottomAccessory(isEnabled: playback.queue.current != nil) {
+            tabContent.tabViewBottomAccessory(isEnabled: playback.queue.current != nil && !video.isVisible) {
                 miniPlayer(systemContainer: true)
             }
         } else { tabContent }
@@ -105,7 +106,7 @@ public struct MBRootView: View {
     }
 
     @ViewBuilder private func miniPlayer(systemContainer: Bool = false) -> some View {
-        if playback.queue.current != nil {
+        if playback.queue.current != nil && !video.isVisible {
             MiniPlayerView(playback: playback, systemContainer: systemContainer, transitionEnabled: preferences.values.growFromCover, transitionNamespace: playerTransition, openQueue: { showingQueue = true }) {
                 if video.presentationMode == .video { video.open(); showVideo() }
                 else { showingPlayer = true }
@@ -116,7 +117,7 @@ public struct MBRootView: View {
     private var tabs: some View {
         tabsWithPlayer
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
-            .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, video: video, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
+            .sheet(isPresented: $showingPlayer) { NowPlayingView(playback: playback, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences, watchVideo: { video.watchCurrent() }).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }
             .sheet(isPresented: $showingQueue) { QueueView(playback: playback) }
             .sheet(isPresented: $showingAppSettings) { SettingsView(preferences: preferences, network: networkSettings, plugins: plugins) }
             .sheet(item: $commentTrack) { track in
@@ -162,6 +163,7 @@ public struct MBRootView: View {
             .task(id: selectedSourceID + ":" + String(plugins.revision)) { await activateSource() }
             .task(id: (playback.queue.current?.id ?? "") + ":" + String(plugins.revision)) {
                 currentInteractions = nil
+                interactionTrackID = nil
                 currentLibrarySource = nil
                 let track = playback.queue.current
                 await registerPlugins()
@@ -172,6 +174,7 @@ public struct MBRootView: View {
                     let available = await interactions.capabilities().available
                     guard !Task.isCancelled, playback.queue.current?.id == track.id else { return }
                     currentInteractions = available ? interactions : nil
+                    interactionTrackID = available ? track.id : nil
                 }
             }
     }
@@ -218,7 +221,7 @@ public struct MBRootView: View {
                                       positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing)
             }
             .onChange(of: video.isVisible) { _, visible in
-                if visible { if !showingPlayer { showVideo() } }
+                if visible { showingPlayer = false; showVideo() }
                 else { path.removeAll { $0 == .video }; searchPath.removeAll { $0 == .video } }
             }
             .onChange(of: path) { _, pages in
@@ -366,9 +369,19 @@ public struct MBRootView: View {
 
     @ViewBuilder private func destination(_ page: MBPage) -> some View {
         switch page {
-        case .video: VideoPageView(video: video, playback: playback, openMusic: { showingPlayer = true }).navigationTitle("视频播放").toolbar { toolbar }
+        case .video:
+            VideoPageView(video: video, playback: playback, interactionSource: interactionTrackID == playback.queue.current?.id ? currentInteractions : nil, accountRevision: account.revision, openMusic: {
+                showingPlayer = true
+                Task { await video.choose(.music) }
+            })
+            #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar, .tabBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            #else
+            .navigationTitle("视频播放")
+            #endif
         case .discovery(let category):
-            if let discovery = source as? any DiscoverySource { DiscoveryPageView(source: discovery, category: category, select: select, menu: trackMenu).toolbar { toolbar } }
+            if let discovery = source as? any DiscoverySource { DiscoveryPageView(source: discovery, category: category, videoMode: video.mode == .video, select: select, menu: trackMenu).toolbar { toolbar } }
         case .library(let route):
             if let provider = source as? any LibrarySource { LibraryPageView(source: provider, route: route, select: select, menu: trackMenu) }
         }
@@ -401,7 +414,7 @@ public struct MBRootView: View {
 
     @ViewBuilder private var browsingHome: some View {
             if let home, let discovery = source as? any DiscoverySource {
-                DiscoveryHomeView(model: home, source: discovery, select: select, menu: trackMenu)
+                DiscoveryHomeView(model: home, source: discovery, videoMode: video.mode == .video, select: select, menu: trackMenu)
             } else if let plugin = source as? PluginSource {
                 PluginHomeView(source: plugin, select: select, menu: trackMenu)
                     .id(ObjectIdentifier(plugin))
@@ -420,7 +433,11 @@ public struct MBRootView: View {
             List {
                 ForEach(Array(search.tracks.enumerated()), id: \.element.id) { index, track in
                     HStack(spacing: 4) {
-                        Button { select(search.tracks, index) } label: { TrackRow(track: track, selected: playback.queue.current?.id == track.id) }
+                        Button { select(search.tracks, index) } label: {
+                            let selected = playback.queue.current?.id == track.id
+                            if video.mode == .video { VideoTrackRow(track: track, selected: selected) }
+                            else { TrackRow(track: track, selected: selected) }
+                        }
                             .buttonStyle(.plain).accessibilityLabel("选择 \(track.title)")
                         Menu { trackMenu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                     }.contextMenu { trackMenu(track) }
@@ -496,10 +513,7 @@ public struct MBRootView: View {
     }
 
     private func chooseMode(_ mode: PlaybackMode) {
-        Task {
-            if mode == .music, video.isVisible { showingPlayer = true }
-            await video.choose(mode)
-        }
+        Task { await video.choose(mode) }
     }
     private func showVideo() {
         if selectedTab == .search { if searchPath.last != .video { searchPath.append(.video) } }

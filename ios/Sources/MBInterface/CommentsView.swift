@@ -3,29 +3,54 @@ import SwiftUI
 
 struct CommentsView: View {
     @State private var model: InteractionModel
-    @State private var draft = ""
     private let track: Track
-    @FocusState private var writing: Bool
     @Environment(\.dismiss) private var dismiss
     init(source: any InteractionSource, track: Track) { self.track = track; _model = State(initialValue: InteractionModel(source: source, track: track)) }
     var body: some View {
         NavigationStack {
+            TrackCommentsList(model: model, track: track)
+                .navigationTitle("评论与点赞")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+                .task { await model.refresh(); await model.loadLike() }
+        }
+    }
+}
+
+struct TrackLikeButton: View {
+    let model: InteractionModel
+    var body: some View {
+        if model.capabilities.likes {
+            Button { Task { await model.toggleLike() } } label: {
+                HStack {
+                    Label(LocalizedStringKey(model.liked ? "已点赞" : "点赞视频"), systemImage: model.liked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                    Spacer()
+                    if model.isChangingLike { ProgressView() }
+                }.frame(minHeight: 44)
+            }.disabled(model.isChangingLike)
+            if let error = model.likeError { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
+        }
+    }
+}
+
+struct TrackCommentsList: View {
+    let model: InteractionModel
+    var track: Track? = nil
+    @State private var draft = ""
+    @FocusState private var writing: Bool
+
+    var body: some View {
             List {
-                Section {
-                    TrackRow(track: track)
-                    if model.capabilities.likes {
-                        Button { Task { await model.toggleLike() } } label: {
-                            HStack {
-                                Label(LocalizedStringKey(model.liked ? "已点赞" : "点赞视频"), systemImage: model.liked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                                Spacer()
-                                if model.isChangingLike { ProgressView() }
-                            }.frame(minHeight: 44)
-                        }.disabled(model.isChangingLike)
-                        if let error = model.likeError { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
+                if let track {
+                    Section {
+                        TrackRow(track: track)
+                        TrackLikeButton(model: model)
                     }
                 }
                 if model.capabilities.comments {
-                    Section("评论 · \(model.total)") {
+                    Section {
                         ForEach(model.comments) { comment in
                             HStack(alignment: .top, spacing: 12) {
                                 PersonArtwork(name: comment.author, url: comment.avatarURL).frame(width: 34, height: 34)
@@ -49,6 +74,8 @@ struct CommentsView: View {
                         if model.isLoading { ProgressView().frame(maxWidth: .infinity).padding() }
                         else if model.comments.isEmpty && model.errorMessage == nil { ContentUnavailableView("暂无评论", systemImage: "bubble.left.and.bubble.right") }
                         if model.hasMore { Button("加载更多评论") { Task { await model.loadMore() } }.disabled(model.isLoading).frame(minHeight: 44) }
+                    } header: {
+                        if track != nil { Text("评论 · \(model.total)") }
                     }
                 }
                 if let message = model.errorMessage {
@@ -71,13 +98,7 @@ struct CommentsView: View {
                     }.padding(.horizontal, 16).padding(.vertical, 10).background(.bar)
                 }
             }
-            .navigationTitle("评论与点赞")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-            .task { await model.refresh(); await model.loadLike() }.refreshable { await model.refresh() }
-        }
+            .refreshable { await model.refresh() }
     }
 }
 

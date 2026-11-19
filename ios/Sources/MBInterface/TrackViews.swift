@@ -13,6 +13,60 @@ struct ArtworkView: View {
     }
 }
 
+struct VideoArtwork: View {
+    let track: Track
+
+    var body: some View {
+        RemoteArtwork(track: track).aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(alignment: .bottomTrailing) {
+                if track.durationMilliseconds > 0 {
+                    Text(TimeLabel.string(milliseconds: track.durationMilliseconds)).font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white).padding(4).background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4)).padding(5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .accessibilityHidden(true)
+    }
+}
+
+struct VideoTrackGrid: View {
+    let tracks: [Track]
+    let select: ([Track], Int) -> Void
+    let menu: (Track) -> AnyView
+    var includeArtistInLabel = true
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 12, alignment: .top)], spacing: 16) {
+            ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                Button { select(tracks, index) } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        VideoArtwork(track: track)
+                        Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                        Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain).contextMenu { menu(track) }
+                    .accessibilityLabel(includeArtistInLabel ? "播放 \(track.title)，\(track.artist)" : "播放 \(track.title)")
+            }
+        }
+    }
+}
+
+struct VideoTrackRow: View {
+    let track: Track
+    var selected = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VideoArtwork(track: track).frame(width: 122)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                    .foregroundStyle(selected ? MBTheme.accent : .primary)
+                Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.contentShape(Rectangle())
+    }
+}
+
 /// 封面和 API/音频共用代理策略，图片上下文由音源随曲目提供。
 struct RemoteArtwork: View {
     let track: Track
