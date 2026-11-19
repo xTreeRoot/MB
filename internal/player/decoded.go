@@ -22,6 +22,18 @@ type downloadFile struct {
 }
 
 func (f *downloadFile) ReadAt(b []byte, off int64) (int, error) {
+	f.dl.mu.Lock()
+	ranges := f.dl.ranges
+	f.dl.mu.Unlock()
+	if ranges != nil {
+		count, err := ranges.readAt(b, off)
+		if err != nil && !errors.Is(err, io.EOF) {
+			f.dl.mu.Lock()
+			f.dl.err = err
+			f.dl.mu.Unlock()
+		}
+		return count, err
+	}
 	f.dl.waitFor(off + int64(len(b)))
 	f.dl.mu.Lock()
 	defer f.dl.mu.Unlock()
@@ -36,6 +48,14 @@ func (f *downloadFile) ReadAt(b []byte, off int64) (int, error) {
 }
 
 func (f *downloadFile) Read(b []byte) (int, error) {
+	f.dl.mu.Lock()
+	indexed := f.dl.ranges != nil
+	f.dl.mu.Unlock()
+	if indexed {
+		n, err := f.ReadAt(b, f.pos)
+		f.pos += int64(n)
+		return n, err
+	}
 	r := downloadReader{d: f.dl, pos: f.pos}
 	n, err := r.Read(b)
 	f.pos = r.pos
@@ -49,7 +69,7 @@ func (f *downloadFile) Seek(off int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		f.dl.mu.Lock()
 		size := f.dl.size
-		if f.dl.done || f.dl.onDisk {
+		if f.dl.ranges == nil && (f.dl.done || f.dl.onDisk) {
 			size = f.dl.n
 		}
 		f.dl.mu.Unlock()

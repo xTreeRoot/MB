@@ -28,67 +28,96 @@ func addOther(a *app) (*fakeSource, *library) {
 	return other, addFake(a, other)
 }
 
-// chooseSource chooses a source with the sidebar's switcher.
 func chooseSource(t *testing.T, tt *ui.Tester, name string) {
 	t.Helper()
-	if err := tt.Click("Plugin"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
 	if err := tt.Click(name); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 }
 
-// The sidebar's switcher only shows once there's another source to choose.
-func TestSwitcherNeedsAnotherSource(t *testing.T) {
-	a := newTestApp()
-	tt := ui.NewTester(a.view, 1200, 800)
-	tt.Frame()
-	if _, ok := tt.Find("Plugin"); ok {
-		t.Error("a switcher with nothing to switch to")
-	}
-	addOther(a)
-	tt.Frame()
-	if _, ok := tt.Find("Plugin"); !ok {
-		t.Error("no switcher with two sources")
-	}
-}
-
-// The switcher's dropdown is driven by keys too: Escape closes it on the
-// source it was on, and Down then Enter switches to the next one.
-func TestSwitchSourceWithKeys(t *testing.T) {
+func TestSourceTabsFollowEnabledPlugins(t *testing.T) {
 	a := newTestApp()
 	_, lib := addOther(a)
 	tt := ui.NewTester(a.view, 1200, 800)
+	a.setPluginEnabled(lib, false)
 	tt.Frame()
-
-	if err := tt.Click("Plugin"); err != nil {
-		t.Fatal(err)
+	if _, ok := tt.Find("Other"); ok {
+		t.Fatal("disabled plugin stayed in the source tabs")
 	}
+	a.setPluginEnabled(lib, true)
 	tt.Frame()
 	if _, ok := tt.Find("Other"); !ok {
-		t.Fatal("the dropdown didn't open")
+		t.Fatal("enabled plugin did not appear in the source tabs")
 	}
-	tt.Key(0, ui.KeyDown)
-	tt.Key(0, ui.KeyEscape)
-	tt.Frame()
-	if _, ok := tt.Find("Other"); ok || a.library == lib {
-		t.Fatalf("Escape: open %v, active %q", ok, a.library.id)
-	}
+}
 
-	tt.Key(0, ui.KeyDown)
+func TestSourceTabsScrollWithoutMovingPlaybackMode(t *testing.T) {
+	a := newTestApp()
+	var last *library
+	for index := range 6 {
+		source := newFakeSource(fmt.Sprintf("source-%d", index))
+		source.info.Name = fmt.Sprintf("Stream Catalog %d", index)
+		last = addFake(a, source)
+	}
+	tt := ui.NewTester(a.view, 700, 500)
 	tt.Frame()
-	tt.Key(0, ui.KeyDown)
-	tt.Frame()
-	tt.Key(0, ui.KeyEnter)
-	tt.Frame()
-	if a.library != lib || a.settings.Source != "other" {
+	mode, ok := tt.Find(T("Video Mode"))
+	if !ok || mode.X+mode.W > 700 {
+		t.Fatalf("mode switch is out of bounds: %v, %v", mode, ok)
+	}
+	first, ok := tt.Find(a.library.name())
+	if !ok {
+		t.Fatal("initial tab not visible")
+	}
+	tt.Wheel(first.X+8, first.Y+8, 1200, 0)
+	settled(tt)
+	if a.sourceScroll.X <= 0 {
+		t.Fatal("overflowing tabs did not scroll")
+	}
+	if after, _ := tt.Find(T("Video Mode")); after != mode {
+		t.Fatalf("mode switch moved: %v to %v", mode, after)
+	}
+	chooseSource(t, tt, last.name())
+	if a.library != last || a.settings.Source != last.id {
 		t.Fatalf("active %q, remembered %q", a.library.id, a.settings.Source)
 	}
-	if _, ok := tt.Find("fake"); ok {
-		t.Error("the dropdown stayed open")
+	if dir := os.Getenv("MM_FRAMES"); dir != "" {
+		saveFrame(t, dir, "desktop-source-tabs.png", tt.Image())
+	}
+}
+
+func TestPlaylistRowsShowDeclaredAndResolvedPlaybackProblems(t *testing.T) {
+	a := newTestApp()
+	callbacks := posts(a)
+	a.pl = player.New(a.post)
+	a.pl.Source = a.sourceByID
+	without(a, "isLiked")
+	fake(a).stream = func(string, string) (*music.Stream, error) { return &music.Stream{}, nil }
+	tracks := []music.Track{
+		{ID: "member", Source: "fake", Name: "Members Only", UnavailableReason: music.TrackVIP},
+		{ID: "missing", Source: "fake", Name: "Missing Stream"},
+	}
+	a.playlists["status"] = &music.Playlist{ID: "status", Name: "Track status demo", Tracks: tracks}
+	a.open(route{page: pagePlaylist, src: "fake", id: "status"})
+	view := ui.NewTester(a.view, 1200, 800)
+	view.Frame()
+	if _, ok := view.Find(T("VIP required")); !ok {
+		t.Fatalf("missing declared status: %q", view.Texts())
+	}
+	if _, ok := view.Find(T("Audio source unavailable")); ok {
+		t.Fatal("untried stream was marked as unavailable")
+	}
+	if err := view.Click("Missing Stream"); err != nil {
+		t.Fatal(err)
+	}
+	until(t, callbacks, func() bool { return a.pl.TrackProblem(&tracks[1]) == music.TrackNoSource })
+	view.Frame()
+	if _, ok := view.Find(T("Audio source unavailable")); !ok {
+		t.Fatalf("resolved error missing: %q", view.Texts())
+	}
+	if dir := os.Getenv("MM_FRAMES"); dir != "" {
+		saveFrame(t, dir, "desktop-track-status.png", view.Image())
 	}
 }
 
@@ -1552,17 +1581,55 @@ func TestUpdatePluginReusesCheck(t *testing.T) {
 
 // githubPlugin is a plugin installed from o/gh at v0.1.0.
 func githubPlugin(t *testing.T) *plugin.Plugin {
+	return githubPluginFor(t, "gh", "GH", "o/gh")
+}
+
+func githubPluginFor(t *testing.T, id, name, repo string) *plugin.Plugin {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "gh")
+	dir := filepath.Join(t.TempDir(), id)
 	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(`{"id":"gh","name":"GH"}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "plugin.json"), []byte(fmt.Sprintf(`{"id":%q,"name":%q}`, id, name)), 0o644)
 	os.WriteFile(filepath.Join(dir, "index.js"), []byte(""), 0o644)
-	os.WriteFile(filepath.Join(dir, ".origin.json"), []byte(`{"repo":"o/gh","version":"v0.1.0"}`), 0o644)
+	os.WriteFile(filepath.Join(dir, ".origin.json"), []byte(fmt.Sprintf(`{"repo":%q,"version":"v0.1.0"}`, repo)), 0o644)
 	p, err := plugin.Load(dir, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestUpdateAllContinuesAndLeavesPermissionChangesForReview(t *testing.T) {
+	a := newTestApp()
+	callbacks := posts(a)
+	a.settingsPage = "plugins"
+	addFake(a, githubPluginFor(t, "offline", "Offline", "o/offline"))
+	review := addFake(a, githubPluginFor(t, "review", "Review", "o/review"))
+	a.setPluginEnabled(review, false)
+	wasLatest, wasFetch := latestPlugin, fetchRelease
+	defer func() { latestPlugin, fetchRelease = wasLatest, wasFetch }()
+	var checked []string
+	latestPlugin = func(repo string) (*plugin.Release, error) {
+		checked = append(checked, repo)
+		if repo == "o/offline" {
+			return nil, errors.New("offline")
+		}
+		return &plugin.Release{Repo: repo, Version: "v0.2.0"}, nil
+	}
+	fetchRelease = func(release *plugin.Release, _ string) (*plugin.Pending, error) {
+		return &plugin.Pending{Manifest: plugin.Manifest{ID: "review", Permissions: plugin.Permissions{Network: []string{"example.test"}}}}, nil
+	}
+	view := ui.NewTester(a.settingsView, 780, 1000)
+	view.Frame()
+	if err := view.Click(T("Update All")); err != nil {
+		t.Fatal(err)
+	}
+	until(t, callbacks, func() bool { return a.installer.batchStatus != "" })
+	if !slices.Equal(checked, []string{"o/offline", "o/review"}) {
+		t.Fatalf("update requests: %v", checked)
+	}
+	if a.installer.checked["offline"] != checkFailed || a.installer.updateErr["review"] == "" || a.settings.PluginUpdates["review"] != "v0.2.0" || !slices.Contains(a.settings.DisabledPlugins, review.id) {
+		t.Fatalf("unexpected results: %s", a.installer.batchStatus)
+	}
 }
 
 // Clicking where a plugin came from in its settings opens its repository on

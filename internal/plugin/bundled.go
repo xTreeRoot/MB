@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 )
 
+func (p *Plugin) IsBundled() bool { return p.bundled }
+
 // LoadBundled installs and compiles plugins from a filesystem with one plugin
 // per directory. Explicitly installed plugins take precedence by manifest ID;
 // each source keeps its data in dataDirectory/<id> across bundled upgrades.

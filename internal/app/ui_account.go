@@ -93,6 +93,9 @@ func (a *app) loadAccount(lib *library) {
 				}
 			}
 			was := lib.account
+			if was != nil && (acc == nil || was.ID != acc.ID) {
+				a.invalidateEdge(lib)
+			}
 			lib.account = acc
 			switch {
 			case first && was == nil && acc != nil && lib.homeErr == "" && !lib.needsSignIn:
@@ -103,12 +106,16 @@ func (a *app) loadAccount(lib *library) {
 			case (was == nil) != (acc == nil):
 				a.afterAccount(lib)
 			}
+			if acc != nil && a.edge.profileJobs[lib] == nil {
+				a.syncEdgeProfile(lib, false)
+			}
 		})
 	}()
 }
 
 // afterAccount loads anew what's personal to who listens to a source.
 func (a *app) afterAccount(lib *library) {
+	a.syncEdgeProfile(lib, false)
 	lib.accountAsked = true
 	lib.forget()
 	lib.needsSignIn, lib.askedSignIn = false, false

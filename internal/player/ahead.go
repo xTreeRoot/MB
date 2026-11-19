@@ -1,6 +1,10 @@
 package player
 
-import "mygo-music/internal/music"
+import (
+	"strings"
+
+	"mygo-music/internal/music"
+)
 
 // The next track's audio is asked for once the current one plays, and comes in
 // meanwhile, so that it starts at once when its turn comes: a source may take
@@ -61,8 +65,8 @@ func (p *Player) getAhead(quality string) {
 	go func() {
 		defer close(a.done)
 		info, err := src.Stream(t.ID, quality)
-		if err == nil && info == nil {
-			err = music.ErrUnavailable
+		if err == nil && (info == nil || strings.TrimSpace(info.URL) == "") {
+			err = music.ErrNoStream
 		}
 		if err != nil {
 			a.err = err

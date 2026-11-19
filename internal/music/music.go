@@ -41,7 +41,8 @@ type Track struct {
 	// URL is the track's page at its source, for sharing.
 	URL string `json:"url,omitempty"`
 	// Unavailable says the listener can't play it, for a source that knows.
-	Unavailable bool `json:"unavailable,omitempty"`
+	Unavailable       bool         `json:"unavailable,omitempty"`
+	UnavailableReason TrackProblem `json:"unavailableReason,omitempty"`
 
 	// An episode of a podcast is a track like any other, that says which show
 	// it's of, what it's about and when it came out, as the source has it.
@@ -49,6 +50,17 @@ type Track struct {
 	Description string `json:"description,omitempty"`
 	Published   string `json:"published,omitempty"`
 }
+
+type TrackProblem string
+
+const (
+	TrackVIP         TrackProblem = "vip"
+	TrackNoSource    TrackProblem = "noSource"
+	TrackSignIn      TrackProblem = "signIn"
+	TrackUnavailable TrackProblem = "unavailable"
+	TrackNetwork     TrackProblem = "network"
+	TrackUnknown     TrackProblem = "unknown"
+)
 
 // ArtistNames joins the track's artists as the credits read.
 func (t *Track) ArtistNames() string {
@@ -368,6 +380,9 @@ var (
 	ErrSetup = errors.New("the plugin needs setting up")
 	// ErrUnavailable says the track can't be played.
 	ErrUnavailable = errors.New("not available")
+	ErrVIP         = errors.New("VIP required")
+	ErrNoStream    = errors.New("no playable stream")
+	ErrNetwork     = errors.New("network error")
 	// ErrUnsupported says the source doesn't do this.
 	ErrUnsupported = errors.New("not supported by this source")
 )

@@ -75,7 +75,7 @@ var confirmRemovePlugin = func(a *app, name string, yes func()) {
 			Message:            Tf("Remove %s?", name),
 			Detail:             T("Its folder moves to the Trash. Its settings stay, in case you install it again."),
 			Buttons:            []string{T("Cancel"), T("Remove")},
-			DefaultButton:      1,
+			DefaultButton:      0,
 			DestructiveButtons: []int{1},
 		})
 		if err == nil && res.Button == 1 {
@@ -101,6 +101,10 @@ type pluginInstaller struct {
 	busy         bool            // one's downloading
 	err          string          // what went wrong last
 	pending      *plugin.Pending // one downloaded, for the listener to allow
+	batch        bool
+	batchStatus  string
+	stars        *starsImport
+	starsAddress string
 	updating     map[string]bool
 	updateErr    map[string]string // what went wrong updating a plugin, by ID
 	// checked is what checking a plugin for a new version came to, when the
@@ -131,6 +135,9 @@ func (a *app) askForRepo() {
 // installFromRepo downloads what's written in the field, to ask about it.
 func (a *app) installFromRepo() {
 	in := &a.installer
+	if in.batch || in.stars != nil || len(in.updating) > 0 {
+		return
+	}
 	repo, err := plugin.ParseRepo(in.repo)
 	if err != nil {
 		in.err = T("Write a repository as owner/repo, or its address on GitHub")
@@ -173,6 +180,9 @@ func (a *app) openLink(raw string) {
 		return
 	}
 	in := &a.installer
+	if in.stars != nil {
+		return
+	}
 	in.repo = repo
 	in.catalogOpen = false
 	in.open, in.github = true, true
@@ -189,6 +199,9 @@ func (a *app) openLink(raw string) {
 func (a *app) installFromDisk(folder bool) {
 	in := &a.installer
 	pickPlugin(a, folder, func(path string) {
+		if in.batch || in.busy || in.stars != nil || len(in.updating) > 0 {
+			return
+		}
 		a.cancelInstall()
 		in.catalogOpen = false
 		in.open, in.github, in.busy, in.err = true, false, true, ""
@@ -305,13 +318,15 @@ func (a *app) pluginInstalled(id string) error {
 // comes back. The last one on stays, as there would be nothing to show.
 func (a *app) removePlugin(lib *library) {
 	p := pluginOf(lib)
-	if p == nil || (len(a.libs) == 1 && a.libs[0] == lib) {
+	if p == nil || p.IsBundled() || len(a.allLibs) <= 1 || a.installer.batch || a.installer.stars != nil || a.installer.updating[lib.id] {
 		return
 	}
+	a.invalidateEdge(lib)
 	a.allLibs = slices.DeleteFunc(slices.Clone(a.allLibs), func(l *library) bool { return l == lib })
 	a.plugins = slices.DeleteFunc(a.plugins, func(q *plugin.Plugin) bool { return q == p })
 	a.enabledChanged()
 	if a.library == lib {
+		a.settings.DisabledPlugins = slices.DeleteFunc(a.settings.DisabledPlugins, func(id string) bool { return id == a.libs[0].id })
 		a.switchSource(a.libs[0].id)
 	}
 	delete(a.settings.PluginUpdates, lib.id)
@@ -339,36 +354,133 @@ func (a *app) checkPluginUpdates() {
 	if !a.settings.PluginsChecked.IsZero() && time.Since(a.settings.PluginsChecked) < pluginCheckEvery {
 		return
 	}
-	origins := map[string]plugin.Origin{}
+	a.runPluginBatch(false, false)
+}
+
+type pluginUpdateTarget struct {
+	id          string
+	origin      plugin.Origin
+	permissions plugin.Permissions
+}
+
+func (a *app) githubPluginTargets() []pluginUpdateTarget {
+	var targets []pluginUpdateTarget
 	for _, lib := range a.allLibs {
-		if p := pluginOf(lib); p != nil {
-			if o := p.Origin(); o != nil {
-				origins[lib.id] = *o
+		if plug := pluginOf(lib); plug != nil && !plug.IsBundled() {
+			if origin := plug.Origin(); origin != nil {
+				targets = append(targets, pluginUpdateTarget{lib.id, *origin, plug.Permissions()})
 			}
 		}
 	}
-	if len(origins) == 0 {
+	return targets
+}
+
+func (a *app) runPluginBatch(update, manual bool) {
+	in := &a.installer
+	if in.batch || in.busy || in.stars != nil || in.pending != nil || len(in.updating) != 0 {
 		return
 	}
-	a.settings.PluginsChecked = time.Now()
-	a.settings.save()
+	for _, status := range in.checked {
+		if status == checking {
+			return
+		}
+	}
+	targets := a.githubPluginTargets()
+	if len(targets) == 0 {
+		return
+	}
+	in.batch = true
+	in.batchStatus = ""
+	if in.checked == nil {
+		in.checked = map[string]checkResult{}
+	}
+	if in.updateErr == nil {
+		in.updateErr = map[string]string{}
+	}
+	if in.found == nil {
+		in.found = map[string]*plugin.Release{}
+	}
+	if a.settings.PluginUpdates == nil {
+		a.settings.PluginUpdates = map[string]string{}
+	}
+	for _, target := range targets {
+		in.checked[target.id] = checking
+		delete(in.updateErr, target.id)
+	}
+	directory := pluginsDir()
 	go func() {
-		found, releases := map[string]string{}, map[string]*plugin.Release{}
-		for id, o := range origins {
-			rel, err := latestPlugin(o.Repo)
-			if err != nil {
-				log.Printf("checking plugin %s: %v", id, err)
-				continue
+		available, applied, review, failed := 0, 0, 0, 0
+		for _, target := range targets {
+			release, checkErr := latestPlugin(target.origin.Repo)
+			newer := checkErr == nil && plugin.IsNewer(release.Version, target.origin.Version)
+			var updateErr error
+			needsReview := false
+			if newer {
+				available++
+				if update {
+					var pending *plugin.Pending
+					pending, updateErr = fetchRelease(release, directory)
+					if updateErr == nil {
+						switch {
+						case pending.Manifest.ID != target.id:
+							pending.Discard()
+							updateErr = errors.New(T("The update belongs to a different plugin"))
+						case asksForMore(target.permissions, pending.Manifest.Permissions):
+							needsReview = true
+							pending.Discard()
+						default:
+							updateErr = pending.Install(directory)
+						}
+					}
+				}
 			}
-			if plugin.IsNewer(rel.Version, o.Version) {
-				found[id], releases[id] = rel.Version, rel
-			}
+			a.post(func() {
+				id := target.id
+				if checkErr != nil {
+					in.checked[id] = checkFailed
+					failed++
+					return
+				}
+				delete(in.checked, id)
+				if !newer {
+					delete(a.settings.PluginUpdates, id)
+					delete(in.found, id)
+					if manual {
+						in.checked[id] = upToDate
+					}
+					return
+				}
+				a.settings.PluginUpdates[id], in.found[id] = release.Version, release
+				if !update {
+					return
+				}
+				if needsReview {
+					in.updateErr[id] = T("Open this update to review new permissions")
+					review++
+					return
+				}
+				if updateErr == nil {
+					updateErr = a.pluginInstalled(id)
+				}
+				if updateErr != nil {
+					in.updateErr[id] = installError(updateErr)
+					failed++
+				} else {
+					applied++
+				}
+			})
 		}
 		a.post(func() {
-			a.settings.PluginUpdates = found
-			a.installer.found = releases
+			in.batch = false
+			a.settings.PluginsChecked = time.Now()
+			if manual {
+				if update {
+					in.batchStatus = Tf("Updated %d · Review permissions %d · Failed %d", applied, review, failed)
+				} else {
+					in.batchStatus = Tf("Updates available %d · Failed %d", available, failed)
+				}
+			}
 			a.settings.save()
-			a.redraw()
 		})
 	}()
 }
@@ -382,6 +494,9 @@ func (a *app) checkPluginUpdate(lib *library) {
 		return
 	}
 	in := &a.installer
+	if in.batch || in.updating[lib.id] {
+		return
+	}
 	if in.checked == nil {
 		in.checked = map[string]checkResult{}
 	}
@@ -394,6 +509,10 @@ func (a *app) checkPluginUpdate(lib *library) {
 	go func() {
 		rel, err := latestPlugin(o.Repo)
 		a.post(func() {
+			if !slices.Contains(a.allLibs, lib) {
+				delete(in.checked, id)
+				return
+			}
 			switch {
 			case err != nil:
 				log.Printf("checking plugin %s: %v", id, err)
@@ -432,6 +551,9 @@ func (a *app) updatePlugin(lib *library) {
 		return
 	}
 	in := &a.installer
+	if in.batch || in.busy || in.pending != nil || len(in.updating) != 0 || in.checked[lib.id] == checking {
+		return
+	}
 	if in.updating == nil {
 		in.updating = map[string]bool{}
 	}
@@ -455,6 +577,10 @@ func (a *app) updatePlugin(lib *library) {
 			pending, err = fetchRelease(rel, pluginsDir())
 		} else {
 			pending, err = fetchPlugin(o.Repo, pluginsDir())
+		}
+		if err == nil && (pending.Manifest.ID != id || !plugin.IsNewer(pending.Version, o.Version)) {
+			pending.Discard()
+			err = errors.New(T("The download is not an update for this plugin"))
 		}
 		if err == nil && asksForMore(had, pending.Manifest.Permissions) {
 			a.post(func() {
@@ -622,6 +748,9 @@ func (a *app) installDialog(c *ui.Context, p palette) {
 
 func (a *app) openEdgeCatalog() {
 	in := &a.installer
+	if in.batch || in.busy || len(in.updating) > 0 {
+		return
+	}
 	a.cancelInstall()
 	in.open, in.catalogOpen, in.busy, in.github = true, true, true, false
 	in.catalog, in.err = nil, ""
@@ -645,7 +774,7 @@ func (a *app) openEdgeCatalog() {
 func (a *app) installEdgePackage(entry edge.Package) {
 	in := &a.installer
 	catalog := a.edge.catalog
-	if catalog == nil {
+	if catalog == nil || in.batch || in.busy || len(in.updating) > 0 {
 		return
 	}
 	in.busy, in.err = true, ""
@@ -697,7 +826,7 @@ func (a *app) pluginUpdateButton(c *ui.Context, lib *library) {
 	if in.updating[lib.id] {
 		label = T("Updating…")
 	}
-	if ui.Button(c.Key("update"), label).Disabled(in.updating[lib.id]).Clicked() {
+	if ui.Button(c.Key("update"), label).Disabled(in.batch || in.checked[lib.id] == checking || len(in.updating) > 0).Clicked() {
 		a.updatePlugin(lib)
 	}
 }
@@ -719,8 +848,7 @@ func (a *app) pluginUpdateError(c *ui.Context, lib *library, p palette) {
 	}
 }
 
-// pluginMenu is what else can be done with a plugin: showing its folder, and
-// removing it, but the last one on, as there would be nothing to show.
+// pluginMenu is what else can be done with an installed plugin.
 func (a *app) pluginMenu(c *ui.Context, lib *library, p palette) {
 	plug := pluginOf(lib)
 	if plug == nil {
@@ -728,8 +856,8 @@ func (a *app) pluginMenu(c *ui.Context, lib *library, p palette) {
 	}
 	more := iconButton(c.Key("plugin-more"), iconMore, 16, p.muted, Tf("More for %s", lib.name()))
 	more.Menu(func(m *ui.Menu) {
-		if plug.Origin() != nil {
-			busy := a.installer.checked[lib.id] == checking || a.installer.updating[lib.id]
+		if !plug.IsBundled() && plug.Origin() != nil {
+			busy := a.installer.batch || a.installer.checked[lib.id] == checking || a.installer.updating[lib.id]
 			if m.Item(T("Check for Updates")).Disabled(busy).Chosen() {
 				a.checkPluginUpdate(lib)
 			}
@@ -737,10 +865,11 @@ func (a *app) pluginMenu(c *ui.Context, lib *library, p palette) {
 		if m.Item(T("Show Folder")).Chosen() {
 			revealFolder(plug.Dir())
 		}
-		m.Separator()
-		last := len(a.libs) == 1 && a.libs[0] == lib
-		if m.Item(T("Remove…")).Disabled(last || a.installer.updating[lib.id]).Chosen() {
-			confirmRemovePlugin(a, lib.name(), func() { a.removePlugin(lib) })
+		if !plug.IsBundled() {
+			m.Separator()
+			if m.Item(T("Remove…")).Disabled(len(a.allLibs) <= 1 || a.installer.batch || a.installer.updating[lib.id]).Chosen() {
+				confirmRemovePlugin(a, lib.name(), func() { a.removePlugin(lib) })
+			}
 		}
 	})
 }

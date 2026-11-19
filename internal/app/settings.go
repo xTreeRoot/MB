@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -34,7 +35,8 @@ type settings struct {
 	DisabledPlugins []string `json:"disabledPlugins,omitempty"`
 	// SystemProxyHosts is the destination allowlist; every other host is direct.
 	// Keep an empty array when the listener clears it, overriding the defaults.
-	SystemProxyHosts []string `json:"systemProxyHosts"`
+	SystemProxyHosts    []string `json:"systemProxyHosts"`
+	GitHubProxyDefaults bool     `json:"githubProxyDefaults,omitempty"`
 	// PluginsChecked is when plugins were last checked for new versions, once a
 	// day, and PluginUpdates the versions found, by plugin.
 	PluginsChecked time.Time         `json:"pluginsChecked,omitzero"`
@@ -106,7 +108,24 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{SystemProxyHosts: []string{"*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com", "*.googleusercontent.com", "api.betterlyrics.org"}, Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, MenuBarLyricsWidth: menuBarDefaultWidth, MenuBarVideo: true, CacheMB: 2048}
+	s := settings{SystemProxyHosts: []string{"*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.ggpht.com", "*.googleusercontent.com", "api.betterlyrics.org"}, Language: i18n.System, NotchActivity: true, Quality: "high", Appearance: "system", Volume: 0.8, Normalize: player.NormalizationStandard, AppIcon: "dock-and-menubar", MenuBarLyrics: true, MenuBarLyricsWidth: menuBarDefaultWidth, MenuBarVideo: true, CacheMB: 2048}
+	s.addGitHubProxyDefaults()
+	return s
+}
+
+func (s *settings) addGitHubProxyDefaults() {
+	if s.GitHubProxyDefaults {
+		return
+	}
+	s.GitHubProxyDefaults = true
+	if len(s.SystemProxyHosts) == 0 {
+		return
+	}
+	for _, host := range []string{"github.com", "api.github.com", "codeload.github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com", "raw.githubusercontent.com"} {
+		if !slices.Contains(s.SystemProxyHosts, host) {
+			s.SystemProxyHosts = append(s.SystemProxyHosts, host)
+		}
+	}
 }
 
 func settingsPath() (string, error) {
@@ -122,7 +141,9 @@ func loadSettings() settings {
 	s := defaultSettings()
 	if path, err := settingsPath(); err == nil {
 		if b, err := os.ReadFile(path); err == nil {
+			s.GitHubProxyDefaults = false
 			json.Unmarshal(b, &s)
+			s.addGitHubProxyDefaults()
 		}
 		s.path = path
 	}

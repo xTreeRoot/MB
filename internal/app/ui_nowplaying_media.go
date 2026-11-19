@@ -24,6 +24,7 @@ func (a *app) syncInlineMV() {
 	} else if a.mv.win == nil {
 		a.mv.release()
 		a.mv.key = ""
+		a.pl.HoldForVideo(false)
 	}
 }
 

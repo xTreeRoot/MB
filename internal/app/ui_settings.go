@@ -50,6 +50,7 @@ func (a *app) openSettings() {
 		Content:         ui.View(a.settingsView),
 	})
 	a.settingsWin.OnClosed(func() {
+		a.closeStars()
 		a.settingsWin = nil
 		// Its sign-in dialog goes with it; a sign-in on its way still counts.
 		if a.signIn.here {
@@ -214,6 +215,10 @@ func (a *app) settingsView(c *ui.Context) {
 				ui.Text(c, title).FontSize(15).FontWeight(700).SingleLine().Shrink(1).MinWidth(0)
 				if query == "" && current.id == "plugins" {
 					ui.Box(c).Grow(1)
+					if in := &a.installer; ui.Button(c.Key("stars-import"), T("Import / Replace Plugins")).Margin(0, 8, 0, 0).
+						Disabled(in.busy || in.batch || in.open || len(in.updating) != 0).Clicked() {
+						a.openStars()
+					}
 					a.installMenu(c, p)
 				}
 			})
@@ -222,6 +227,7 @@ func (a *app) settingsView(c *ui.Context) {
 		})
 	})
 	a.installDialog(c, p)
+	a.starsDialog(c, p)
 	a.signInDialog(c, p, true)
 }
 
@@ -353,6 +359,22 @@ func (a *app) settingsSections(c *ui.Context, p palette) []settingsSection {
 				s.Appearance = modes[i]
 				a.changed()
 			}
+		})
+		skinDescription := ""
+		if a.skinError {
+			skinDescription = T("Could not update the background image")
+		}
+		row(T("Background Skin"), skinDescription, func() {
+			ui.Row(c).Gap(6).Children(func() {
+				if ui.Button(c.Key("choose-skin"), T("Choose Background Image…")).Disabled(a.skinBusy).Clicked() {
+					a.chooseSkin()
+				}
+				if a.skin != nil || a.skinError {
+					if ui.Button(c.Key("clear-skin"), T("Restore Default Background")).Disabled(a.skinBusy).Clicked() {
+						a.clearSkin()
+					}
+				}
+			})
 		})
 		row(T("Now Playing Style"), T("Show the song playing as its cover, or as a record or a cassette turning as it plays"), func() {
 			labels := make([]string, len(playerStyles))
@@ -562,6 +584,27 @@ func (a *app) anyCan(what string) bool {
 // sourceSettings lists the sources, each with what it asks of the listener,
 // and where more of them come from.
 func (a *app) sourceSettings(c *ui.Context, row settingsRow, block settingsBlock, p palette) {
+	in := &a.installer
+	if len(a.githubPluginTargets()) > 0 {
+		status := in.batchStatus
+		busy := in.batch || in.busy || in.pending != nil || len(in.updating) != 0
+		if in.batch {
+			status = T("Checking plugin updates…")
+		}
+		for _, result := range in.checked {
+			busy = busy || result == checking
+		}
+		row(T("Plugin Updates"), status, func() {
+			ui.Row(c).Gap(6).Children(func() {
+				if ui.Button(c.Key("check-plugin-updates"), T("Check for Updates")).Disabled(busy).Clicked() {
+					a.runPluginBatch(false, true)
+				}
+				if ui.Button(c.Key("update-all-plugins"), T("Update All")).Disabled(busy).Clicked() {
+					a.runPluginBatch(true, true)
+				}
+			})
+		})
+	}
 	for _, lib := range a.allLibs {
 		if lib.id == local.ID {
 			a.localSettings(c, lib, row, block, p)

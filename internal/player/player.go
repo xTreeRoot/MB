@@ -1,10 +1,12 @@
 package player
 
 import (
+	"context"
 	"errors"
 	"math"
 	"math/rand/v2"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -63,19 +65,22 @@ type Player struct {
 	feeding  bool // the feed is asked
 	awaiting bool // at the queue's end, for what the feed gives
 
-	track      *music.Track
-	out        *audio.Player
-	stream     stream
-	watch      *watched      // stream, as out plays it
-	info       *music.Stream // what the current track streams
-	fade       fader
-	gain       float64 // the current track's normalizing gain
-	normalizer *normalizer
-	measuring  bool // a fixed gain is being measured, or has been measured
-	loading    bool
-	playing    bool // what the listener wants: false while paused
-	err        string
-	gen        int // counts loads, to drop the results of stale ones
+	track         *music.Track
+	out           *audio.Player
+	stream        stream
+	watch         *watched      // stream, as out plays it
+	info          *music.Stream // what the current track streams
+	fade          fader
+	gain          float64 // the current track's normalizing gain
+	normalizer    *normalizer
+	measuring     bool // a fixed gain is being measured, or has been measured
+	loading       bool
+	playing       bool // what the listener wants: false while paused
+	videoHold     bool
+	err           string
+	trackProblems map[problemKey]music.TrackProblem
+	gen           int // counts loads, to drop the results of stale ones
+	stopOpening   context.CancelFunc
 
 	lyrics       []lyrics.Line
 	lyricsLoaded bool
@@ -168,7 +173,9 @@ func (p *Player) announce(t *music.Track, artwork []byte) {
 func (p *Player) ended() {
 	if p.repeat == RepeatOne {
 		p.out.Seek(0)
-		p.out.Play()
+		if !p.videoHold {
+			p.out.Play()
+		}
 		return
 	}
 	if p.at+1 >= len(p.order) && p.feed != nil {
@@ -484,7 +491,7 @@ func (p *Player) TogglePlay() {
 	}
 	p.playing = true
 	p.record()
-	if !p.seeking && !out.Playing() {
+	if !p.videoHold && !p.seeking && !out.Playing() {
 		if out.Position() >= out.Duration()-time.Second {
 			out.Seek(0)
 		}
@@ -533,13 +540,28 @@ func (p *Player) Seek(t time.Duration) {
 			}
 			p.seeking = false
 			out.Seek(t)
-			if p.playing || !p.fade.silent() {
+			if !p.videoHold && (p.playing || !p.fade.silent()) {
 				out.Play()
 			}
 			p.sync()
 		})
 	})
 	p.sync()
+}
+
+func (p *Player) HoldForVideo(hold bool) {
+	if p.videoHold == hold {
+		return
+	}
+	p.videoHold = hold
+	if p.out == nil {
+		return
+	}
+	if hold {
+		p.out.Pause()
+	} else if p.playing && !p.seeking {
+		p.out.Play()
+	}
 }
 
 func (p *Player) SetVolume(v float64) {
@@ -624,6 +646,10 @@ func (p *Player) Levels() ([Bands]float32, bool) {
 }
 
 func (p *Player) stop() {
+	if p.stopOpening != nil {
+		p.stopOpening()
+		p.stopOpening = nil
+	}
 	if out := p.out; out != nil {
 		// Paused first, it fades out over a few milliseconds, rather than
 		// stopping with a click.
@@ -712,6 +738,10 @@ func (p *Player) prepare(at int, play bool, from time.Duration) (music.Track, mu
 // loadSkipping loads the track at order[at], to play or not, from from,
 // skipping those that cannot play the way dir goes: skipped of them so far.
 func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duration) {
+	p.loadAudio(at, skipped, dir, play, from, false)
+}
+
+func (p *Player) loadAudio(at, skipped, dir int, play bool, from time.Duration, refreshed bool) {
 	t, src := p.prepare(at, play, from)
 	gen := p.gen
 	p.loading = true
@@ -724,8 +754,26 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 		quality = p.Quality()
 	}
 	pre := p.takeAhead(t, quality)
+	ctx, cancel := context.WithCancel(context.Background())
+	p.stopOpening = cancel
+	if refreshed && pre != nil {
+		pre.close()
+		pre = nil
+	}
+	recover := func(err error) bool {
+		if !refreshMedia(err) {
+			return false
+		}
+		position, intent := p.Position(), p.playing
+		if refreshed {
+			p.pending = position
+			return false
+		}
+		p.loadAudio(at, 0, stay, intent, position, true)
+		return true
+	}
 	go func() {
-		info, s, err := p.open(src, t, quality, pre)
+		info, s, err := p.openContext(ctx, src, t, quality, pre)
 		p.post(func() {
 			if gen != p.gen {
 				if s != nil {
@@ -733,11 +781,20 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 				}
 				return
 			}
+			cancel()
+			p.stopOpening = nil
 			p.loading = false
 			if err != nil {
+				if recover(err) {
+					return
+				}
+				if refreshMedia(err) {
+					dir = stay
+				}
 				p.loadFailed(t.Source, err, at, skipped, dir)
 				return
 			}
+			p.rememberTrackProblem(&t, nil)
 			p.stream, p.info = s, info
 			p.gain = normGain(info)
 			p.normalizer = newNormalizer(s)
@@ -750,9 +807,13 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 						if gen != p.gen || p.out == nil {
 							return
 						}
+						if recover(err) {
+							return
+						}
 						p.pending = p.Position()
 						p.stop()
 						p.playing, p.err = false, errorText(err)
+						p.rememberTrackProblem(&t, err)
 						p.sync()
 					})
 				},
@@ -778,7 +839,9 @@ func (p *Player) loadSkipping(at, skipped, dir int, play bool, from time.Duratio
 				p.pending = 0
 			}
 			if p.playing {
-				p.out.Play()
+				if !p.videoHold {
+					p.out.Play()
+				}
 				p.fade.fade(1, fadeIn, nil)
 				p.record()
 			}
@@ -831,6 +894,7 @@ func (p *Player) loadLyrics(gen int, src music.Source, t music.Track) {
 // to do something first, which would stop the next track too.
 func (p *Player) loadFailed(source string, err error, at, skipped, dir int) {
 	p.err = errorText(err)
+	p.rememberTrackProblem(p.track, err)
 	if errors.Is(err, music.ErrSignIn) || errors.Is(err, music.ErrSetup) {
 		p.playing = false
 		if p.Failed != nil {
@@ -856,6 +920,8 @@ func errorText(err error) string {
 		return i18n.T("The plugin of this song is gone")
 	case errors.Is(err, music.ErrUnavailable):
 		return i18n.T("This song isn't available")
+	case errors.Is(err, music.ErrVIP), errors.Is(err, music.ErrNoStream), errors.Is(err, music.ErrNetwork):
+		return TrackProblemText(classifyTrackProblem(err))
 	case errors.Is(err, music.ErrSignIn):
 		return i18n.T("Sign in to play this song")
 	case errors.Is(err, music.ErrSetup):
@@ -874,6 +940,10 @@ var errNoSource = errors.New("player: no such source")
 // there, or else streamed into the cache, and kept once it has all come in.
 // What failed ahead is asked for again: it may have been a moment's.
 func (p *Player) open(src music.Source, t music.Track, quality string, pre *ahead) (*music.Stream, stream, error) {
+	return p.openContext(context.Background(), src, t, quality, pre)
+}
+
+func (p *Player) openContext(ctx context.Context, src music.Source, t music.Track, quality string, pre *ahead) (*music.Stream, stream, error) {
 	if src == nil {
 		if pre != nil {
 			pre.close()
@@ -884,7 +954,12 @@ func (p *Player) open(src music.Source, t music.Track, quality string, pre *ahea
 	var info *music.Stream
 	ok := false
 	if pre != nil {
-		<-pre.done
+		select {
+		case <-ctx.Done():
+			pre.close()
+			return nil, nil, ctx.Err()
+		case <-pre.done:
+		}
 		if pre.err == nil {
 			info, dl, ok = pre.info, pre.dl, true
 			if dl == nil {
@@ -905,8 +980,11 @@ func (p *Player) open(src music.Source, t music.Track, quality string, pre *ahea
 		if err != nil {
 			return nil, nil, err
 		}
-		if info == nil {
-			return nil, nil, music.ErrUnavailable
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if info == nil || strings.TrimSpace(info.URL) == "" {
+			return nil, nil, music.ErrNoStream
 		}
 		if path, isFile := music.PathOf(info.URL); isFile {
 			dl, err = openFile(path)
@@ -917,8 +995,15 @@ func (p *Player) open(src music.Source, t music.Track, quality string, pre *ahea
 			dl = p.Cache.download(t.Source, t.ID, quality, info)
 		}
 	}
+	stop := context.AfterFunc(ctx, dl.cancel)
 	s, err := openStream(dl, t.Duration)
+	stop()
 	if err != nil {
+		dl.mu.Lock()
+		if dl.err != nil {
+			err = dl.err
+		}
+		dl.mu.Unlock()
 		dl.Close()
 		return nil, nil, err
 	}

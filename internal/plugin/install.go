@@ -635,7 +635,7 @@ func (p *Pending) Install(dir string) error {
 	if _, err := os.Stat(target); err == nil {
 		var was Origin
 		readJSON(filepath.Join(target, originFile), &was)
-		if was.Repo != p.Repo {
+		if !strings.EqualFold(was.Repo, p.Repo) {
 			return fmt.Errorf("a plugin called %s is already installed", p.Manifest.ID)
 		}
 	}

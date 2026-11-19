@@ -836,7 +836,7 @@ class BilibiliPlatformStrategy {
     const { detail, dash } = await this.playbackInfo(id);
     const audio = object(array(dash.audio)[0]);
     const url = text(audio.base_url ?? audio.baseUrl);
-    if (!url) throw fail("unavailable", host.t("The video does not have a playable audio track."));
+    if (!url) throw fail("noSource", host.t("The video does not have a playable audio track."));
     return {
       url,
       type: text(audio.mime_type ?? audio.mimeType).startsWith("audio/mp4") ? "m4a" : "aac",

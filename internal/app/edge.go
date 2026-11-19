@@ -28,6 +28,8 @@ type edgePanel struct {
 	fresh             map[*library]edge.Ticket
 	context           context.Context
 	stop              context.CancelFunc
+	profileContext    context.Context
+	profileJobs       map[*library]context.CancelFunc
 }
 
 func (a *app) startEdge(ctx context.Context) {
@@ -53,6 +55,7 @@ func (a *app) activateNode(node *edge.Node) {
 	panel.node = node
 	panel.owner, panel.choices, panel.deleteFor = nil, nil, ""
 	panel.fresh = make(map[*library]edge.Ticket)
+	panel.profileJobs = make(map[*library]context.CancelFunc)
 	panel.service, panel.catalog = nil, nil
 	if node == nil {
 		return
@@ -60,6 +63,10 @@ func (a *app) activateNode(node *edge.Node) {
 	panel.address, panel.service, panel.catalog = node.Address, node.Sync, node.Catalog()
 	ctx, cancel := context.WithCancel(panel.context)
 	panel.stop = cancel
+	panel.profileContext = ctx
+	for _, lib := range a.libs {
+		a.syncEdgeProfile(lib, false)
+	}
 	service := node.Sync
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -76,6 +83,10 @@ func (a *app) activateNode(node *edge.Node) {
 }
 
 func (a *app) invalidateEdge(lib *library) {
+	if cancel := a.edge.profileJobs[lib]; cancel != nil {
+		cancel()
+		delete(a.edge.profileJobs, lib)
+	}
 	delete(a.edge.fresh, lib)
 	if a.edge.service != nil {
 		a.edge.service.Invalidate(lib.id)
@@ -83,6 +94,36 @@ func (a *app) invalidateEdge(lib *library) {
 	if a.edge.owner == lib {
 		a.edge.owner, a.edge.choices = nil, nil
 	}
+}
+
+func (a *app) syncEdgeProfile(lib *library, publish bool) {
+	panel := &a.edge
+	if panel.service == nil || lib.account == nil {
+		return
+	}
+	if cancel := panel.profileJobs[lib]; cancel != nil {
+		cancel()
+	}
+	ctx, cancel := context.WithCancel(panel.profileContext)
+	panel.profileJobs[lib] = cancel
+	service, platform := panel.service, lib.id
+	ticket := service.Ticket(platform)
+	profile := edge.Profile{AccountID: lib.account.ID, Name: lib.account.Name}
+	go func() {
+		err := service.SyncProfile(ctx, platform, ticket, profile, publish)
+		a.post(func() {
+			if ctx.Err() != nil || service != panel.service || service.Ticket(platform) != ticket {
+				return
+			}
+			cancel()
+			delete(panel.profileJobs, lib)
+			if err != nil {
+				panel.message = edgeError(err)
+			} else if publish {
+				panel.message = T("Platform profile synced.")
+			}
+		})
+	}()
 }
 
 func edgeError(err error) string {
@@ -93,7 +134,9 @@ func edgeError(err error) string {
 		case http.StatusForbidden:
 			return T("Incorrect node password.")
 		case http.StatusNotFound:
-			return T("This node does not support password access.")
+			return T("This node does not support the requested sync feature.")
+		case http.StatusGone:
+			return T("The cloud record was deleted and was not recreated.")
 		case http.StatusTooManyRequests:
 			return Tf("Too many requests. Try again in at least %d seconds.", int(status.RetryAfter.Round(time.Second)/time.Second))
 		case http.StatusPreconditionFailed:
@@ -229,6 +272,9 @@ func (a *app) edgeSettings(c *ui.Context, p palette, block settingsBlock) {
 				}
 			}
 			if lib := a.library; space != "" && lib != nil && lib.account != nil {
+				if ui.Button(c.Key("edge-profile"), T("Sync This Platform Profile")).Disabled(panel.busy).Clicked() {
+					a.syncEdgeProfile(lib, true)
+				}
 				if source := pluginOf(lib); source != nil && source.SessionMigrator() != nil {
 					ticket, account := panel.service.Ticket(lib.id), lib.account.ID
 					migrator := source.SessionMigrator()

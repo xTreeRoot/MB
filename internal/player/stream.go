@@ -15,8 +15,6 @@ import (
 
 	"github.com/egoist/mygo/audio"
 	gomp3 "github.com/hajimehoshi/go-mp3"
-
-	"mygo-music/internal/music"
 )
 
 // A download fetches a song as it plays: readers wait for the bytes they
@@ -46,12 +44,17 @@ type download struct {
 	closed bool
 	// onDisk says the song is a whole file, to walk through at will.
 	onDisk bool
+	ranges *byteRanges
 }
 
 // startDownload fetches url, of size bytes if known and with headers, into
 // part, a file that keep keeps once it has all come in: or into memory,
 // without one.
 func startDownload(url string, size int64, headers map[string]string, part *os.File, keep func(string, int64) (string, bool)) *download {
+	return startMediaDownload(url, size, headers, part, keep, false, 0)
+}
+
+func startMediaDownload(url string, size int64, headers map[string]string, part *os.File, keep func(string, int64) (string, bool), indexed bool, budget int64) *download {
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &download{size: size, cancel: cancel, users: 2}
 	d.cond.L = &d.mu
@@ -61,7 +64,7 @@ func startDownload(url string, size int64, headers map[string]string, part *os.F
 	case size > 0:
 		d.data = make([]byte, 0, prealloc(size))
 	}
-	go d.run(ctx, url, headers)
+	go d.run(ctx, url, headers, indexed, budget)
 	return d
 }
 
@@ -87,31 +90,25 @@ func opened(f *os.File, size int64) *download {
 	return d
 }
 
-func (d *download) run(ctx context.Context, url string, headers map[string]string) {
+func (d *download) run(ctx context.Context, url string, headers map[string]string, indexed bool, budget int64) {
 	defer d.release()
+	if indexed && d.tryRanges(ctx, url, headers, budget) {
+		return
+	}
 	finish := func(err error) {
 		d.mu.Lock()
 		d.done, d.err = true, err
 		d.cond.Broadcast()
 		d.mu.Unlock()
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		finish(err)
-		return
-	}
-	req.Header.Set("User-Agent", music.Agent)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	res, err := music.HeadersStay(http.DefaultClient, req.URL.Hostname(), headers).Do(req)
+	res, err := mediaRequest(ctx, url, headers, "", "")
 	if err != nil {
 		finish(err)
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		finish(errors.New(res.Status))
+		finish(mediaHTTPError(res.StatusCode))
 		return
 	}
 	buf := make([]byte, 64<<10)
@@ -129,7 +126,11 @@ func (d *download) run(ctx context.Context, url string, headers map[string]strin
 			return
 		}
 		if err != nil {
-			finish(err)
+			if ctx.Err() != nil {
+				finish(ctx.Err())
+			} else {
+				finish(errMediaInterrupted)
+			}
 			return
 		}
 	}
@@ -226,7 +227,14 @@ func (d *download) release() {
 		d.file.Close()
 	}
 	if d.part != "" {
-		os.Remove(d.part)
+		if d.ranges != nil && d.ranges.diskBytes.Load() == d.ranges.size {
+			if _, kept := d.keep(d.part, d.ranges.size); kept {
+				d.part = ""
+			}
+		}
+		if d.part != "" {
+			os.Remove(d.part)
+		}
 	}
 	d.file, d.data, d.n, d.part = nil, nil, 0, ""
 }
@@ -235,6 +243,9 @@ func (d *download) release() {
 func (d *download) Progress() float64 {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.ranges != nil {
+		return float64(d.ranges.covered.Load()) / float64(d.ranges.size)
+	}
 	if d.done && d.err == nil {
 		return 1
 	}
@@ -262,7 +273,7 @@ func (d *download) readAt(b []byte, off int64) (int, error) {
 	if n <= 0 {
 		return 0, nil
 	}
-	if d.file == nil {
+	if d.file == nil || d.ranges != nil {
 		return copy(b, d.data[off:d.n]), nil
 	}
 	return d.file.ReadAt(b[:n], off)
@@ -340,6 +351,8 @@ func openStream(dl *download, durationMs int64) (stream, error) {
 		switch {
 		case string(head[4:8]) == "ftyp":
 			return openMP4Stream(dl)
+		case string(head[:4]) == "fLaC":
+			return openFLACStream(dl)
 		case (string(head[:4]) == "RIFF" || string(head[:4]) == "RF64") && string(head[8:12]) == "WAVE":
 			return openWAVStream(dl)
 		}

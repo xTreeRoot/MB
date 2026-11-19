@@ -47,6 +47,9 @@ func (a *app) view(c *ui.Context) {
 	}
 	npOpen, npSettled := a.npState(c)
 	root.Children(func() {
+		if a.skin != nil && !(npOpen && npSettled) {
+			a.skinBackdrop(c)
+		}
 		page := ui.Row(c).Fill().AlignItems(ui.Stretch)
 		page.Children(func() {
 			if npOpen && npSettled {
@@ -57,13 +60,19 @@ func (a *app) view(c *ui.Context) {
 				return
 			}
 			side := ui.Column(c).Width(sidebarWidth)
-			if !c.Vibrancy() {
+			if a.skin != nil {
+				side.Background(p.sidebar.Alpha(0.28))
+			} else if !c.Vibrancy() {
 				side.Background(p.sidebar)
 			}
 			side.Children(func() { a.sidebar(c) })
 			// Keyed, so that a popover of the sidebar opening or closing
 			// keeps what the page and its bars hold, their edges' fades.
-			ui.Box(c.Key("main")).Grow(1).Background(p.bg).Children(func() {
+			main := ui.Box(c.Key("main")).Grow(1)
+			if a.skin == nil {
+				main.Background(p.bg)
+			}
+			main.Children(func() {
 				a.content(c)
 				// The bars float over the page, which scrolls under them:
 				// positioned, they paint over it.
@@ -221,7 +230,6 @@ func (a *app) sidebar(c *ui.Context) {
 	// Where nothing in it takes the press, the sidebar moves the window, as
 	// the title bar it reaches up into would.
 	ui.Column(c).Fill().Padding(top, 14, 14, 14).Gap(4).DragWindow().Children(func() {
-		a.sourceSwitcher(c)
 		if a.can("search") {
 			a.searchField(c)
 		}
@@ -359,8 +367,9 @@ func (a *app) pageTop(c *ui.Context) {
 		Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
 	// The pointer over it brings the edge up too, as AppKit's does.
 	edge.Opacity(edgeShown(edge, a.underTop || edge.Hovered()))
-	if len(a.history) > 0 || len(a.forward) > 0 {
-		ui.Row(c).Absolute().Top(0).Left(20).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
+	ui.Row(c.Key("page-toolbar")).Absolute().Top(0).Left(20).Right(max(24, c.TitleBar().Right+12)).Height(topBar(c)).
+		Gap(8).AlignItems(ui.Center).DragWindow().Children(func() {
+		if len(a.history) > 0 || len(a.forward) > 0 {
 			back := iconButton(c.Key("back"), iconBack, 18, a.pal.muted, T("Back")).Disabled(len(a.history) == 0)
 			if len(a.history) == 0 {
 				back.Opacity(0.35)
@@ -371,10 +380,9 @@ func (a *app) pageTop(c *ui.Context) {
 			if len(a.forward) > 0 && iconButton(c.Key("forward"), iconForward, 18, a.pal.muted, T("Forward")).Clicked() {
 				a.goForward()
 			}
-		})
-	}
-	ui.Row(c.Key("playback-mode-bar")).Absolute().Top(0).Right(max(24, c.TitleBar().Right+12)).Height(topBar(c)).AlignItems(ui.Center).Children(func() {
-		a.playbackModeSwitch(c)
+		}
+		a.sourceTabs(c)
+		ui.Row(c.Key("playback-mode-bar")).Shrink(0).Children(func() { a.playbackModeSwitch(c) })
 	})
 }
 
@@ -659,55 +667,34 @@ func (a *app) builtinTitle(name string) string {
 	return T(builtinPages[name].label)
 }
 
-// sourceSwitcher chooses the active source, once there is another. It takes no
-// room of its own: beside the window buttons where they sit over the sidebar, in
-// the strip they leave empty, and elsewhere just a line of text atop it. It
-// drops down a list of the sources, in the colors of the account menu, with a
-// check by the active one.
-func (a *app) sourceSwitcher(c *ui.Context) {
-	if len(a.libs) < 2 {
-		return
-	}
-	p := a.pal
-	const height = 24
-	chosen := a.library.id
-	sel := ui.SelectBase(c.Key("source"), &chosen)
-	b := sel.Trigger.Height(height).PaddingX(7).Gap(4).Radius(7).AlignItems(ui.Center).
-		FocusRing(false).Label(T("Plugin"))
-	if left := c.TitleBar().Left; left > 0 {
-		b.Absolute().Top((topBar(c) - height) / 2).Left(left + 12).MaxWidth(sidebarWidth - left - 22)
-	} else {
-		b.AlignSelf(ui.Start).Margin(0, 0, 4, -7).MaxWidth(sidebarWidth - 28)
-	}
-	color := p.muted
-	if b.Hovered() || sel.Open() {
-		b.Background(p.hover)
-		color = p.text
-	}
-	b.Children(func() {
-		ui.Text(c, a.name()).FontSize(12.5).FontWeight(600).TextColor(color).SingleLine().Shrink(1).MinWidth(0)
-		ui.Icon(c, iconUpDown).Size(11, 11).TextColor(p.faint)
-	})
-	pop := popoverColors(p.dark)
-	sel.Popup(func(panel ui.Element) {
-		panel.Margin(6, 0, 0, 0).Padding(5).Gap(1).MinWidth(180).MaxWidth(sidebarWidth+60).
-			Radius(12).Background(pop.fill).Border(0.5, pop.edge).Shadow(0, 8, 24, -4, ui.RGBA(0, 0, 0, 0.2))
+func (a *app) sourceTabs(c *ui.Context) {
+	active := a.library
+	ui.ScrollHorizontal(c.Key("source-tabs")).Grow(1).Basis(0).MinWidth(0).Height(topBar(c)).AlignItems(ui.Center).
+		Role(ui.RoleTabList).TrackScroll(&a.sourceScroll).Children(func() {
 		for _, lib := range a.libs {
-			name := lib.name()
-			item := sel.Item(lib.id).Label(name).Height(30).PaddingX(8).Gap(8).Radius(7).AlignItems(ui.Center)
-			if item.Highlighted() {
-				item.Background(p.press)
+			selected := lib == active
+			name, color, weight := lib.name(), a.pal.muted, 500
+			tab := ui.ButtonBase(c.Key(lib.id)).Role(ui.RoleTab).Label(name).AccessSelected(selected).
+				Shrink(0).Height(32).PaddingX(10).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+			if tab.Hovered() {
+				tab.Background(a.pal.hover)
 			}
-			item.Children(func() {
-				check := ui.Icon(c, iconCheck).Size(14, 14).TextColor(p.text).Shrink(0)
-				if lib != a.library {
-					check.Opacity(0)
+			if selected {
+				color, weight = a.pal.text, 700
+				if a.revealedSource != lib.id {
+					tab.ScrollIntoView()
+					a.revealedSource = lib.id
 				}
-				ui.Text(c, name).FontSize(13).TextColor(p.text).SingleLine().Shrink(1).MinWidth(0)
+			}
+			tab.Children(func() {
+				ui.Text(c, name).FontSize(13).FontWeight(weight).SingleLine().TextColor(color)
+				if selected {
+					ui.Box(c).Absolute().Bottom(1).Left(10).Right(10).Height(3).Radius(1.5).Background(a.pal.accent)
+				}
 			})
+			if tab.Clicked() {
+				a.switchSource(lib.id)
+			}
 		}
 	})
-	if b.Changed() {
-		a.switchSource(chosen)
-	}
 }

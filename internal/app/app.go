@@ -111,7 +111,12 @@ type app struct {
 	settingSaves   map[*library]<-chan struct{} // source save order, main thread only
 	settingPending map[string]*settingWrite     // last queued value per source/key
 
-	trackList ui.ListState
+	trackList      ui.ListState
+	sourceScroll   ui.ScrollState
+	revealedSource string
+	skin           *ui.Bitmap
+	skinBusy       bool
+	skinError      bool
 	// Where the page and the sidebar are scrolled, kept while Now Playing
 	// covers them, unbuilt.
 	pageScroll ui.ScrollState
@@ -409,6 +414,7 @@ func Run() error {
 			BackgroundColor:      "light-dark(#ffffff, #141416)",
 			Content:              ui.View(a.view),
 		})
+		a.restoreSkin()
 		a.setMenu()
 		a.boot()
 		// The notch player is macOS's, over its menu bar: elsewhere it would

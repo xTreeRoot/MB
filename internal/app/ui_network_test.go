@@ -11,6 +11,29 @@ import (
 	"mygo-music/internal/network"
 )
 
+func TestGitHubProxyDefaultsPreserveUserAllowlistChanges(t *testing.T) {
+	legacy := settings{SystemProxyHosts: []string{"custom.example.test", "api.github.com"}}
+	legacy.addGitHubProxyDefaults()
+	for _, host := range []string{"custom.example.test", "github.com", "api.github.com", "codeload.github.com", "release-assets.githubusercontent.com"} {
+		if !slices.Contains(legacy.SystemProxyHosts, host) {
+			t.Fatalf("proxy allowlist omitted %s", host)
+		}
+	}
+	if len(legacy.SystemProxyHosts) != 7 {
+		t.Fatalf("proxy allowlist duplicated entries: %v", legacy.SystemProxyHosts)
+	}
+	legacy.SystemProxyHosts = []string{"custom.example.test"}
+	legacy.addGitHubProxyDefaults()
+	if len(legacy.SystemProxyHosts) != 1 {
+		t.Fatal("removed domains came back")
+	}
+	var empty settings
+	empty.addGitHubProxyDefaults()
+	if len(empty.SystemProxyHosts) != 0 {
+		t.Fatal("cleared allowlist was repopulated")
+	}
+}
+
 // Saving changes the active policy and persists it; invalid text keeps the old
 // policy, while an explicitly empty list stays empty across settings reloads.
 func TestNetworkAllowlistSettings(t *testing.T) {

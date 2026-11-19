@@ -180,6 +180,13 @@ func (p *Player) measureGain() {
 	}
 	p.measuring = true
 	dl, _ := p.stream.source()
+	dl.mu.Lock()
+	indexed := dl.ranges != nil
+	dl.mu.Unlock()
+	if indexed {
+		p.measuring = false
+		return
+	}
 	duration, gen := p.track.Duration, p.gen
 	go func() {
 		s, err := openShared(dl, duration)

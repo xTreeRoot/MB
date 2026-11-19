@@ -28,6 +28,7 @@ type mvState struct {
 	commentsScroll ui.ScrollState
 	pinned         bool
 	lastSeek       time.Time
+	refreshUsed    bool
 	scrub          scrubState
 }
 
@@ -110,6 +111,7 @@ func (a *app) closedMV(win *mygo.Window) {
 	m.release()
 	m.key = ""
 	m.large = false
+	a.pl.HoldForVideo(false)
 	a.syncInlineMV()
 	a.syncDock()
 	a.redraw()
@@ -120,6 +122,7 @@ func (a *app) loadMV(key string) {
 	m := &a.mv
 	if m.key != key {
 		m.detailScroll, m.commentsScroll = ui.ScrollState{}, ui.ScrollState{}
+		m.refreshUsed = false
 	}
 	m.release()
 	m.key, m.err = key, ""
@@ -190,6 +193,7 @@ func mvSync(audioPos, videoPos time.Duration, playing, buffering bool) (seek boo
 func (a *app) syncMV() {
 	m := &a.mv
 	if a.quitting || m.win == nil && !m.inline {
+		a.pl.HoldForVideo(false)
 		return
 	}
 	key := ""
@@ -199,7 +203,12 @@ func (a *app) syncMV() {
 	if key != m.key || m.video == nil && !m.loading && m.err == "" {
 		a.loadMV(key)
 	}
+	if m.video != nil && m.video.Err() != nil && m.proxy != nil && m.proxy.refreshable.Load() && !m.refreshUsed {
+		m.refreshUsed = true
+		a.loadMV(key)
+	}
 	resync := false
+	hold := (m.large || m.inline) && (m.loading || m.video != nil && m.video.Err() == nil && (!m.video.Ready() || m.video.Buffering()))
 	if m.video != nil && m.video.Ready() {
 		playing := a.pl.Playing() && !a.pl.Loading()
 		seek, rate := mvSync(a.pl.Position(), m.video.Position(), playing, m.video.Buffering())
@@ -207,6 +216,9 @@ func (a *app) syncMV() {
 		if seek && time.Since(m.lastSeek) >= time.Second {
 			m.video.Seek(a.pl.Position())
 			m.lastSeek = time.Now()
+		}
+		if m.large || m.inline {
+			hold = hold || seek
 		}
 		if m.video.Rate() != rate {
 			m.video.SetRate(rate)
@@ -219,6 +231,7 @@ func (a *app) syncMV() {
 			}
 		}
 	}
+	a.pl.HoldForVideo(hold)
 	if m.win != nil {
 		m.win.Invalidate()
 	}

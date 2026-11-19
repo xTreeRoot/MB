@@ -21,6 +21,7 @@
 | `searchVideos({query, offset})`（iOS） | 可选；返回 `{tracks, more}`，`offset` 从 0 开始，按返回的原始 `tracks` 数量推进 | 视频模式下为支持该能力的音源显示独立的「视频」搜索；普通搜索继续调用 `search` |
 | `cancelSignIn()` / `music.SignInCanceler` | 停止当前登录尝试、定时器和请求，使挂起的 `signIn()` 结束；未导出时取消为无操作 | 关闭登录弹窗后取消任务，并忽略迟到结果 |
 | `lyrics({id})` | 沿用现有 `{lrc, translation}` 或 `{lines:[{start,end,text,words?}]}`；时间统一为毫秒 | 播放器和状态栏按音频时间轴显示；平台原始秒数在插件中转换 |
+| 曲目 `unavailableReason` / `stream({id, quality})` | 曲目可声明 `vip`、`noSource`、`signIn`、`unavailable`。解析音频失败时可抛带相同 `code` 的 JavaScript `Error`；空 `url` 表示没有音源 | 列表按曲目来源和 ID 显示原因，不额外请求每行。仅在平台明确要求会员时使用 `vip`；旧版 `unavailable: true` 仍显示暂不可播放，不等同于 VIP |
 | `Section.trackLayout: "videos"` | 可选横版封面卡片网格；保留标准 `tracks` 字段，省略时沿用原有布局 | 首页与浏览页显示 16:9 封面、时长和作者，点击直接播放所在分区队列 |
 | `host.signInPrompt({qr,text})` | `qr` 可省略或为空，表示仅更新文字状态；提供时为扫码链接 | 通用登录弹窗展示准备/确认文字、二维码、刷新状态与取消操作 |
 | `requestHeaders`、媒体 `headers` 和 `host.storage` | 沿用现有权限、请求头和隔离存储契约 | 统一处理媒体请求与本地持久化，页面不接触平台凭据 |

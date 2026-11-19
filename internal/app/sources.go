@@ -215,7 +215,7 @@ func (a *app) activate(lib *library) {
 	a.startLibrary(lib)
 }
 
-// switchSource goes to a source's Home, as the sidebar's switcher does.
+// switchSource goes to a source's Home.
 func (a *app) switchSource(id string) {
 	if lib := a.libOf(id); lib != nil && lib != a.library {
 		a.open(route{page: pageHome, src: id})

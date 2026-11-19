@@ -520,6 +520,12 @@ func asError(code, message string) error {
 		known = music.ErrSetup
 	case "unavailable":
 		known = music.ErrUnavailable
+	case "vip":
+		known = music.ErrVIP
+	case "noSource":
+		known = music.ErrNoStream
+	case "network":
+		known = music.ErrNetwork
 	case "unsupported":
 		known = music.ErrUnsupported
 	default:

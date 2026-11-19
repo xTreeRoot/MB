@@ -1,6 +1,7 @@
 package player
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -263,6 +264,63 @@ func settle(t *testing.T, ch chan func(), p *Player) {
 		case <-deadline:
 			t.Fatal("still loading")
 		}
+	}
+}
+
+type problemSource struct {
+	nothing
+	resolve func(string) (*music.Stream, error)
+}
+
+func (s problemSource) Stream(id, _ string) (*music.Stream, error) { return s.resolve(id) }
+
+func TestTrackProblemFollowsFailedSongAndClearsOnPlayback(t *testing.T) {
+	for _, scenario := range []struct {
+		name string
+		err  error
+		want music.TrackProblem
+	}{
+		{"explicit VIP", music.ErrVIP, music.TrackVIP},
+		{"empty stream", nil, music.TrackNoSource},
+		{"known network failure", music.ErrNetwork, music.TrackNetwork},
+		{"untyped VIP message", errors.New("VIP only"), music.TrackUnknown},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			p, callbacks, _, tracks := servedQueue(t, "first", "next")
+			base := p.Source("s")
+			attempts := 0
+			p.Source = func(string) music.Source {
+				return problemSource{resolve: func(id string) (*music.Stream, error) {
+					if id == "first" {
+						attempts++
+						if attempts == 1 {
+							return &music.Stream{}, scenario.err
+						}
+					}
+					return base.Stream(id, "")
+				}}
+			}
+			p.PlayTrack(tracks, 0)
+			settle(t, callbacks, p)
+			if reason := p.TrackProblem(&tracks[0]); reason != scenario.want {
+				t.Fatalf("reason %q, want %q", reason, scenario.want)
+			}
+			sameID := tracks[0]
+			sameID.Source = "other"
+			if reason := p.TrackProblem(&sameID); reason != "" {
+				t.Fatalf("problem leaked to another source: %q", reason)
+			}
+			p.PlayTrack(tracks, 1)
+			settle(t, callbacks, p)
+			if p.TrackProblem(&tracks[0]) != scenario.want || p.TrackProblem(&tracks[1]) != "" {
+				t.Fatal("problem did not stay with the failed track")
+			}
+			p.PlayTrack(tracks, 0)
+			settle(t, callbacks, p)
+			if p.TrackProblem(&tracks[0]) != "" || !p.Playing() {
+				t.Fatalf("retry did not clear previous problem: %s", p.Err())
+			}
+		})
 	}
 }
 

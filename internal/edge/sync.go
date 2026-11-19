@@ -40,6 +40,7 @@ type syncState struct {
 	Versions    map[string]string
 	Refs        map[string]string
 	Pending     map[string]upload
+	Profiles    map[string]Profile `json:",omitempty"`
 }
 
 type Sync struct {

@@ -488,6 +488,10 @@ func (a *app) trackRow(c *ui.Context, tracks []music.Track, i int, covers bool, 
 	playing := sameTrack(a.pl.Current(), tr)
 	row := ui.ButtonBase(c.Key(tr.ID)).Height(54).PaddingX(12).Gap(14).Radius(10).AlignItems(ui.Center).FocusRing(false).Label(tr.Name).
 		ContextMenu(a.songItems(tr, pid))
+	problem := player.TrackProblemText(a.pl.TrackProblem(tr))
+	if problem != "" {
+		row.Description(problem)
+	}
 	hovered := row.Hovered()
 	bg := ui.Transparent
 	switch {
@@ -497,9 +501,6 @@ func (a *app) trackRow(c *ui.Context, tracks []music.Track, i int, covers bool, 
 		bg = p.hover
 	}
 	row.Background(row.AnimateColor("bg", bg, ui.Animation{Duration: 100 * time.Millisecond}))
-	if tr.Unavailable {
-		row.Opacity(0.42)
-	}
 	a.wantLike(tr)
 	row.Children(func() {
 		ui.Box(c).Width(26).Center().Children(func() {
@@ -519,11 +520,23 @@ func (a *app) trackRow(c *ui.Context, tracks []music.Track, i int, covers bool, 
 			name := p.text
 			if playing {
 				name = p.accent
+			} else if tr.Unavailable {
+				name = p.muted
 			}
 			ui.Text(c, tr.Name).FontSize(14).FontWeight(500).TextColor(name).SingleLine()
-			a.artistLinks(c, tr, p.muted, p.text).FontSize(12.5).SingleLine().Shrink(1).MinWidth(0)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				a.artistLinks(c, tr, p.muted, p.text).FontSize(12.5).SingleLine().Shrink(1).MinWidth(0)
+				if problem != "" && !wide {
+					ui.Text(c, problem).FontSize(12).TextColor(p.accent).SingleLine().Shrink(0)
+				}
+			})
 		})
 		if wide {
+			ui.Box(c.Key("track-status")).Width(166).Shrink(0).Children(func() {
+				if problem != "" {
+					ui.Text(c, problem).FontSize(12).TextColor(p.accent).SingleLine()
+				}
+			})
 			album := ui.RichText(c).Grow(2).Basis(0).MinWidth(0).FontSize(12.5).TextColor(p.muted).SingleLine()
 			album.Children(func() {
 				if tr.Album.ID == "" || !a.trackLib(tr).can("album") {

@@ -136,6 +136,7 @@ func (p *Player) loadRemote(gen int, src music.Source, at, skipped, dir int, pla
 				p.loadFailed(src.Info().ID, err, at, skipped, dir)
 				return
 			}
+			p.rememberTrackProblem(p.track, nil)
 			r.started, r.running = true, true
 			r.pos, r.at, r.command = from, p.now(), p.now()
 			p.pending = 0

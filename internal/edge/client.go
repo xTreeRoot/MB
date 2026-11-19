@@ -22,9 +22,11 @@ const envelopeLimit = 128 << 10
 
 var encoding = base64.RawURLEncoding.Strict()
 var identifier = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var errNodeUnavailable = errors.New("cannot reach MB Server")
 
 type StatusError struct {
 	Code       int
+	Kind       string
 	RetryAfter time.Duration
 }
 
@@ -117,7 +119,7 @@ func (client *Client) request(ctx context.Context, method, path, token, etag str
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		return nil, nil, errors.Join(errors.New("cannot reach MB Server"), ctx.Err())
+		return nil, nil, errors.Join(errNodeUnavailable, ctx.Err())
 	}
 	defer response.Body.Close()
 	for _, code := range expected {
@@ -131,7 +133,14 @@ func (client *Client) request(ctx context.Context, method, path, token, etag str
 		return data, response.Header, nil
 	}
 	retry, _ := strconv.ParseInt(response.Header.Get("Retry-After"), 10, 32)
-	return nil, response.Header, &StatusError{Code: response.StatusCode, RetryAfter: time.Duration(max(retry, 0)) * time.Second}
+	var failure struct {
+		Error string `json:"error"`
+	}
+	if strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
+		data, _ := io.ReadAll(io.LimitReader(response.Body, 1025))
+		_ = json.Unmarshal(data, &failure)
+	}
+	return nil, response.Header, &StatusError{Code: response.StatusCode, Kind: failure.Error, RetryAfter: time.Duration(max(retry, 0)) * time.Second}
 }
 
 func validBase64(value string, size int) bool {

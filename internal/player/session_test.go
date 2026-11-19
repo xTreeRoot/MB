@@ -62,13 +62,15 @@ func TestBrokenStreamCanResume(t *testing.T) {
 	release := make(chan struct{})
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) == 1 {
+		if request := requests.Add(1); request <= 2 {
 			w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 			w.Write(b[:1000])
 			w.(http.Flusher).Flush()
-			select {
-			case <-release:
-			case <-r.Context().Done():
+			if request == 1 {
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
 			}
 			return // an incomplete body fails after the decoder has opened
 		}
@@ -108,7 +110,7 @@ func TestBrokenStreamCanResume(t *testing.T) {
 	from := p.Position()
 	p.TogglePlay()
 	settle(t, ch, p)
-	if !p.Ready() || !p.Playing() || p.Err() != "" || p.Position() < from || requests.Load() != 2 {
+	if !p.Ready() || !p.Playing() || p.Err() != "" || p.Position() < from || requests.Load() != 3 {
 		t.Fatalf("retry: ready=%v playing=%v position=%v error=%q requests=%d", p.Ready(), p.Playing(), p.Position(), p.Err(), requests.Load())
 	}
 }

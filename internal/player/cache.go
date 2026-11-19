@@ -109,12 +109,16 @@ func (c *Cache) find(source, id, quality string) (*os.File, *music.Stream, bool)
 // not keep it.
 func (c *Cache) download(source, id, quality string, st *music.Stream) *download {
 	part := c.part(st)
+	indexed := st.Type == "m4a" || st.Type == "mp4" || st.Type == "flac"
 	if part == nil {
-		return startDownload(st.URL, st.Size, st.Headers, nil, nil)
+		return startMediaDownload(st.URL, st.Size, st.Headers, nil, nil, indexed, 0)
 	}
-	return startDownload(st.URL, st.Size, st.Headers, part, func(path string, n int64) (string, bool) {
+	c.mu.Lock()
+	budget := c.limit / 4
+	c.mu.Unlock()
+	return startMediaDownload(st.URL, st.Size, st.Headers, part, func(path string, n int64) (string, bool) {
 		return c.keep(source, id, quality, st, path, n)
-	})
+	}, indexed, budget)
 }
 
 // part makes a file for a song of the stream st to come into, or returns
