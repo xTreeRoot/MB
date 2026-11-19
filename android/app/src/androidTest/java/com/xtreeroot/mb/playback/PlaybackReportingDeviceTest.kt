@@ -32,6 +32,40 @@ import org.junit.Test
 class PlaybackReportingDeviceTest {
     private val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MBApplication
 
+    @Test fun mediaTitleUsesCurrentLyricWithoutChangingQueueMetadata() = runBlocking {
+        val original = app.settings.values.value.nowPlayingLyrics
+        try {
+            app.settings.update { it.copy(nowPlayingLyrics = true) }
+            withFixture { player ->
+                suspend fun expect(title: String, artist: String) = eventually {
+                    player.mediaMetadata.title?.toString() == title && player.mediaMetadata.artist?.toString() == artist
+                }
+                withContext(Dispatchers.Main) {
+                    player.pause()
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 0)
+                    player.prepare()
+                }
+                eventually { player.playbackState == Player.STATE_READY }
+                expect(first.title, first.title)
+                withContext(Dispatchers.Main) { player.seekTo(2_000) }
+                expect("First line", first.title)
+                withContext(Dispatchers.Main) { player.seekTo(4_000) }
+                expect("Next line", first.title)
+                withContext(Dispatchers.Main) {
+                    assertEquals(first, player.currentMediaItem?.track())
+                    assertEquals(second, player.getMediaItemAt(1).track())
+                    player.seekToNextMediaItem()
+                }
+                expect(second.title, second.title)
+                app.settings.update { it.copy(nowPlayingLyrics = false) }
+                expect(second.title, second.artist)
+                withContext(Dispatchers.Main) { assertEquals(second, player.currentMediaItem?.track()) }
+            }
+        } finally {
+            app.settings.update { it.copy(nowPlayingLyrics = original) }
+        }
+    }
+
     @Test fun reportsOnlyWhenASelectionStartsPlayingThroughTheMediaSession() = runBlocking {
         withFixture { player ->
             suspend fun reports() = source.search("reports", 1).tracks.map(Track::title)
@@ -200,7 +234,7 @@ class PlaybackReportingDeviceTest {
 
     private suspend fun withFixture(cacheSecond: Boolean = false, action: suspend Fixture.(MediaController) -> Unit) {
         val id = "played-fixture-${UUID.randomUUID()}"
-        val first = Track(id, "first", "First", "")
+        val first = Track(id, "first", "First", "Fixture artist")
         val second = first.copy(sourceTrackId = "second", title = "Second")
         val plugin = app.plugins.install(app.plugins.prepareZip { fixtureZip(id).inputStream() })
         val fixture = Fixture(plugin, first, second)
@@ -258,6 +292,9 @@ class PlaybackReportingDeviceTest {
                 export function played({id}) {
                     const reports = host.storage.get('plays') ?? [];
                     host.storage.set('plays', [...reports, id]);
+                }
+                export function lyrics({id}) {
+                    return {lrc: id === 'first' ? '[00:02.00]First  line\n[00:04.00]Next line' : ''};
                 }
                 export function stationNext({id}) {
                     host.storage.set('stationRequest', id);

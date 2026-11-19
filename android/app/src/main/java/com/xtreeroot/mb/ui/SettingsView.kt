@@ -128,7 +128,7 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
             }
             item { SettingHeader(mb("锁屏与媒体控制", "Lock Screen & Media Controls")) }
             item {
-                SettingSwitch(mb("在歌手栏显示当前歌词", "Show Current Lyric in Artist Field"), values.nowPlayingLyrics) { enabled ->
+                SettingSwitch(mb("在主标题显示当前歌词", "Show Current Lyric in Media Title"), values.nowPlayingLyrics) { enabled ->
                     update { it.copy(nowPlayingLyrics = enabled) }
                 }
             }

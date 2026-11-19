@@ -58,7 +58,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -341,7 +343,7 @@ internal class PlaybackService : MediaSessionService() {
             combine(currentMedia, app.settings.values) { track, preferences ->
                 track?.takeIf { preferences.nowPlayingLyrics && (it.sourceId != app.bilibili.id || preferences.builtInEnabled) }
             }.distinctUntilChanged().collectLatest { track ->
-                sessionPlayer.showCaption(null, null)
+                sessionPlayer.showCaption(track?.id, null)
                 if (track == null) return@collectLatest
                 showSystemCaptions(app, track, player, sessionPlayer)
             }
@@ -375,6 +377,7 @@ internal class PlaybackService : MediaSessionService() {
         val lines = try { app.playbackSource(track.sourceId)?.captions(track.sourceTrackId).orEmpty() }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { return }
+        currentCoroutineContext().ensureActive()
         if (lines.isEmpty()) return
         while (player.currentMediaItem?.mediaId == track.id) {
             val active = if (player.playbackState == Player.STATE_ENDED) -1 else lines.activeCaption(player.currentPosition)

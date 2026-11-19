@@ -3,6 +3,7 @@ package com.xtreeroot.mb.ui
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,13 +21,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
@@ -35,6 +38,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -44,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,7 +59,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
@@ -85,20 +92,33 @@ import kotlinx.coroutines.CancellationException
 internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Unit, queue: () -> Unit,
                         coverBounds: (Rect) -> Unit) {
     val track = state.current ?: return
-    Surface(tonalElevation = 3.dp) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).clickable(onClick = open).padding(6.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Artwork(track, Modifier.size(40.dp).onGloballyPositioned { coverBounds(it.boundsInWindow()) })
-                Column {
-                    Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    Text(state.error ?: track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium)
+    val colors = MaterialTheme.colorScheme
+    Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp), color = colors.surfaceContainer, shadowElevation = 2.dp,
+        border = BorderStroke(0.5.dp, colors.outlineVariant)) {
+        Column {
+            Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).clickable(onClick = open).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Artwork(track, Modifier.size(40.dp).onGloballyPositioned { coverBounds(it.boundsInWindow()) })
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        (state.error ?: track.artist).takeIf(String::isNotBlank)?.let { subtitle ->
+                            Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                        }
+                    }
+                }
+                PlayButton(state.playWhenReady && state.error == null, toggle)
+                IconButton(onClick = queue) { Icon(Icons.AutoMirrored.Filled.List, mb("播放队列", "Queue"), Modifier.size(20.dp)) }
+            }
+            if (state.durationMs > 0) {
+                val progress = (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f)
+                Box(Modifier.fillMaxWidth().height(2.dp).background(colors.outlineVariant)) {
+                    Box(Modifier.fillMaxWidth(progress).height(2.dp).background(colors.primary))
                 }
             }
-            PlayButton(state.playWhenReady && state.error == null, toggle)
-            IconButton(onClick = queue) { Icon(Icons.AutoMirrored.Filled.List, mb("播放队列", "Queue")) }
         }
     }
 }
@@ -144,8 +164,9 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
     val comment = if (showHotComments && !captions.loading && captions.error == null) {
         quietCommentAt(state.positionMs, captions.value, state.durationMs, hotComments)
     } else null
+    val colors = MaterialTheme.colorScheme
     Scaffold(
-        containerColor = if (preferences.fog) Color.Transparent else MaterialTheme.colorScheme.background,
+        containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onBackground,
         modifier = if (origin == null) Modifier else Modifier.onGloballyPositioned { frame = it.boundsInWindow() }.graphicsLayer {
             val destination = frame
@@ -162,8 +183,10 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
             }
         },
         topBar = {
-            TopAppBar(title = { Text(mb("正在播放", "Now Playing"), maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
-                IconButton(onClick = close) { Icon(Icons.Default.ArrowDropDown, mb("关闭播放器", "Close Player")) }
+            TopAppBar(title = { Text(mb("正在播放", "Now Playing"), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) },
+                expandedHeight = 48.dp, colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surfaceContainerLow), navigationIcon = {
+                IconButton(onClick = close) { Icon(Icons.Default.KeyboardArrowDown, mb("关闭播放器", "Close Player")) }
             }, actions = {
                 val stageLabel = if (showingCaptions) mb("封面", "Cover") else mb("歌词", "Lyrics")
                 val videoLabel = mb("观看当前视频", "Watch Current Video")
@@ -182,7 +205,8 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
             })
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(colors.surfaceContainerLow, colors.background))),
+            contentAlignment = Alignment.Center) {
             if (preferences.fog) {
                 val bass by app.bassLevel.collectAsStateWithLifecycle()
                 PlaybackFog(track, if (state.playing) bass else 0f, animate, Modifier.matchParentSize())
@@ -249,7 +273,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         IconButton(onClick = model::previous) {
                             Icon(painterResource(R.drawable.ic_media_previous), mb("上一首", "Previous"))
                         }
-                        PlayButton(state.playWhenReady && state.error == null, model::toggle)
+                        PlayButton(state.playWhenReady && state.error == null, model::toggle, prominent = !enlargedText)
                         IconButton(onClick = model::next) {
                             Icon(painterResource(R.drawable.ic_media_next), mb("下一首", "Next"))
                         }
@@ -307,10 +331,14 @@ internal fun PlayerProgress(state: PlaybackState, smoke: Boolean, seek: (Long) -
 }
 
 @Composable
-internal fun PlayButton(playing: Boolean, toggle: () -> Unit) {
-    IconButton(onClick = toggle) {
-        if (playing) Icon(painterResource(R.drawable.ic_media_pause), mb("暂停", "Pause"))
-        else Icon(Icons.Default.PlayArrow, mb("播放", "Play"), Modifier.size(28.dp))
+internal fun PlayButton(playing: Boolean, toggle: () -> Unit, prominent: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    val size = if (prominent) 32.dp else 24.dp
+    val modifier = if (prominent) Modifier.size(60.dp).background(colors.primary, CircleShape) else Modifier
+    IconButton(onClick = toggle, modifier = modifier, colors = IconButtonDefaults.iconButtonColors(
+        contentColor = if (prominent) colors.onPrimary else colors.onSurface)) {
+        if (playing) Icon(painterResource(R.drawable.ic_media_pause), mb("暂停", "Pause"), Modifier.size(size))
+        else Icon(Icons.Default.PlayArrow, mb("播放", "Play"), Modifier.size(size))
     }
 }
 

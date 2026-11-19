@@ -1,6 +1,6 @@
 # MB Android
 
-安卓客户端在 `android` 分支独立开发。当前对照 `origin/ios` 的 iOS 0.1.0 Build 17（`6cdfb5d`）；已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
+安卓客户端在 `android` 分支独立开发。0.1.1 预览版参考 iOS 0.1.0 Build 18（`65078a7`）的音源栏和系统媒体歌词；已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
 
 ## 终端构建
 

@@ -4,9 +4,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,7 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -33,9 +39,15 @@ import com.xtreeroot.mb.music.Track
 internal val LocalTrackActions = staticCompositionLocalOf<(Track) -> Unit> { {} }
 
 @Composable
-internal fun TrackActionsButton(track: Track) {
+internal fun TrackActionsButton(track: Track, modifier: Modifier = Modifier, onArtwork: Boolean = false) {
     val open = LocalTrackActions.current
-    IconButton(onClick = { open(track) }) { Icon(Icons.Default.MoreVert, mb("操作 ${track.title}", "Actions for ${track.title}")) }
+    val label = mb("操作 ${track.title}", "Actions for ${track.title}")
+    IconButton(onClick = { open(track) }, modifier = modifier) {
+        if (onArtwork) Box(Modifier.size(28.dp).background(Color.Black.copy(alpha = 0.66f), CircleShape),
+            contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.MoreVert, label, Modifier.size(17.dp), tint = Color.White)
+        } else Icon(Icons.Default.MoreVert, label, Modifier.size(20.dp))
+    }
 }
 
 @Composable

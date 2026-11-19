@@ -3,6 +3,7 @@ package com.xtreeroot.mb.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -38,7 +39,7 @@ internal fun SourceTabs(sources: Map<String, String>, selected: String, select: 
             state.scrollToItem(index)
         }
     }
-    LazyRow(Modifier.fillMaxWidth().selectableGroup(), state = state,
+    LazyRow(Modifier.fillMaxWidth().selectableGroup(), state = state, contentPadding = PaddingValues(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         items(entries, key = { it.key }) { entry ->
             val current = selected == entry.key

@@ -14,7 +14,9 @@ import com.google.common.util.concurrent.ListenableFuture
 internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val video: VideoPlayback, private val stations: StationPlayback? = null,
                                     private val retryPlayback: () -> Unit) :
     ForwardingSimpleBasePlayer(audio) {
-    private var caption: Pair<String, String>? = null
+    private data class SystemCaption(val trackId: String, val line: String?)
+
+    private var caption: SystemCaption? = null
 
     init { video.onGateChanged = { invalidateState() } }
 
@@ -61,7 +63,8 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
     }
 
     fun showCaption(trackId: String?, text: String?) {
-        val next = if (trackId != null && !text.isNullOrBlank()) trackId to text else null
+        val line = text?.let { captionWhitespace.replace(it, " ").trim() }?.takeIf(String::isNotEmpty)
+        val next = trackId?.let { SystemCaption(it, line) }
         if (caption != next) {
             caption = next
             invalidateState()
@@ -75,9 +78,16 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
             builder.setPlayWhenReady(intent, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             if (player.playbackState == Player.STATE_READY) builder.setPlaybackState(Player.STATE_BUFFERING)
         }
-        caption?.takeIf { it.first == player.currentMediaItem?.mediaId }?.second?.let { line ->
-            builder.setPlaylist(player.currentTimeline, player.currentTracks, player.mediaMetadata.buildUpon().setArtist(line).build())
+        val item = player.currentMediaItem
+        val current = caption?.takeIf { it.trackId == item?.mediaId }
+        val trackTitle = item?.mediaMetadata?.title ?: player.mediaMetadata.title
+        if (current != null && trackTitle != null) {
+            val title = current.line ?: trackTitle
+            val metadata = player.mediaMetadata.buildUpon().setTitle(title).setDisplayTitle(title).setArtist(trackTitle).build()
+            builder.setPlaylist(player.currentTimeline, player.currentTracks, metadata)
         }
         return builder.build()
     }
 }
+
+private val captionWhitespace = Regex("[\\p{Z}\\s]+")

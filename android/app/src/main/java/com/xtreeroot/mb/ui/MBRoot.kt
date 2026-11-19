@@ -26,22 +26,21 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Home as OutlineHome
+import androidx.compose.material.icons.outlined.Person as OutlinePerson
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -58,11 +57,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -91,6 +90,12 @@ private enum class Tab(val chinese: String, val english: String) {
         Search -> Icons.Default.Search
         Library -> Icons.AutoMirrored.Filled.List
         Account -> Icons.Default.Person
+    }
+
+    fun navigationIcon(active: Boolean) = if (active) icon else when (this) {
+        Discover -> Icons.Outlined.OutlineHome
+        Account -> Icons.Outlined.OutlinePerson
+        else -> icon
     }
 }
 
@@ -138,8 +143,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
     val english = preferences.language.usesEnglish()
     CompositionLocalProvider(LocalMBEnglish provides english, LocalVideoBrowse provides (preferences.playbackMode == PlaybackMode.Video),
         LocalTrackPlaybackIssues provides trackPlaybackIssues) {
-    MaterialTheme(colorScheme = if (dark) darkColorScheme(primary = Color(0xFFFF696F))
-        else lightColorScheme(primary = Color(0xFFD1293B), background = Color(0xFFF5F5F7))) {
+    MaterialTheme(colorScheme = if (dark) musicDark else musicLight) {
         var tab by rememberSaveable { mutableStateOf(Tab.Discover) }
         var category by rememberSaveable { mutableStateOf<DiscoveryCategory?>(null) }
         var showPlayer by rememberSaveable { mutableStateOf(false) }
@@ -295,25 +299,28 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     openMusic = { showVideo = false; player.closeVideo(); showPlayer = true })
             }
         } else AppearanceBackdrop(backgroundState.image, dark) { surface ->
+            val atRoot = page == null && category == null && accountRoute == null
+            val discoverRoot = atRoot && tab == Tab.Discover
             Scaffold(
                 containerColor = surface,
                 contentColor = MaterialTheme.colorScheme.onBackground,
                 topBar = {
-                    val discoverRoot = tab == Tab.Discover && page == null && category == null
                     val title = if (page != null && pluginSource != null) catalogTitle(page, pluginSource)
                         else category?.title() ?: accountRoute?.let { libraryPage.value.title ?: it.title() } ?: mb(tab.chinese, tab.english)
                     TopAppBar(title = {
-                        if (discoverRoot && sourceId != null) SourceTabs(sourceNames, sourceId, switchSource)
-                        else Text(title, maxLines = 1)
+                        if (!atRoot) Text(title, maxLines = 1)
+                        else if (discoverRoot) Text("MB", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
                     },
+                        expandedHeight = if (atRoot) 48.dp else 64.dp,
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = surface),
                         navigationIcon = {
-                        if (category != null || accountRoute != null || page != null) IconButton(onClick = back) {
+                        if (!atRoot) IconButton(onClick = back) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, mb("返回", "Back"))
                         }
                     }, actions = {
                         if (discoverRoot) {
                             IconButton(onClick = { switchTab(Tab.Search) }) { Icon(Icons.Default.Search, mb("搜索", "Search")) }
-                        } else if (page == null && category == null && accountRoute == null && tab != Tab.Library && sourceId != null) {
+                        } else if (atRoot && tab != Tab.Library && sourceId != null) {
                             SourceSwitcher(sourceNames, sourceId, switchSource)
                         }
                         if (tab == Tab.Discover || tab == Tab.Search) {
@@ -328,15 +335,15 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     })
                 },
                 bottomBar = {
-                    Column {
+                    if (!isWide || playback.current != null) MusicBottomDock {
                         if (playback.current != null) {
                             MiniPlayer(playback, open = { showPlayer = true }, toggle = player::toggle,
                                 queue = { showQueue = true }, coverBounds = { miniCover = it })
                         }
-                        if (!isWide) NavigationBar {
+                        if (!isWide) MusicNavigation {
                             Tab.entries.forEach { item ->
-                                NavigationBarItem(item == tab, onClick = { switchTab(item) },
-                                    icon = { Icon(item.icon, null) }, label = { Text(mb(item.chinese, item.english)) })
+                                MusicNavigationItem(mb(item.chinese, item.english), item.navigationIcon(item == tab),
+                                    item == tab, { switchTab(item) }, Modifier.weight(1f))
                             }
                         }
                     }
@@ -351,8 +358,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-                        Box(Modifier.widthIn(max = 900.dp).fillMaxWidth()) {
-                            tabState.SaveableStateProvider(tab) {
+                        Column(Modifier.widthIn(max = 900.dp).fillMaxWidth().fillMaxHeight()) {
+                            if (discoverRoot && sourceId != null) SourceTabs(sourceNames, sourceId, switchSource)
+                            Box(Modifier.weight(1f).fillMaxWidth()) { tabState.SaveableStateProvider(tab) {
                                 CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
                                     when {
                                         visibleCatalog != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
@@ -378,7 +386,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                                     }
                                     }
                                 }
-                            }
+                            } }
                         }
                     }
                 }

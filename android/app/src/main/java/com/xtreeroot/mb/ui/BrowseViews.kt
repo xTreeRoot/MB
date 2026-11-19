@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -56,6 +58,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +69,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.xtreeroot.mb.music.DiscoveryCategory
+import com.xtreeroot.mb.R
 import com.xtreeroot.mb.music.SuggestionSource
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.plugin.PluginSource
@@ -91,18 +95,22 @@ internal fun Discover(
     val home by model.home.collectAsStateWithLifecycle()
     val wideCovers = LocalVideoBrowse.current
     RefreshableList(refreshing = home.loading && home.value.isNotEmpty(), refresh = { if (!home.loading) model.refresh() },
-        contentPadding = PaddingValues(vertical = 12.dp)) {
+        contentPadding = PaddingValues(bottom = 20.dp)) {
         if (home.loading && home.value.isEmpty()) item { Loading() }
         home.error?.let { message -> item { Retry(message, model::refresh) } }
         home.value.forEach { section ->
             item(key = "header-${section.category}") {
-                Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp).fillMaxWidth(),
+                Row(Modifier.padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 3.dp).fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(section.category.title(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        section.week?.let { Text(mb("第 $it 周", "Week $it"), style = MaterialTheme.typography.labelMedium) }
+                        Text(section.category.title(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        section.week?.let { Text(mb("第 $it 周", "Week $it"), style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
-                    TextButton(onClick = { open(section.category) }) { Text(mb("更多", "More")) }
+                    TextButton(onClick = { open(section.category) }) {
+                        Text(mb("更多", "More"))
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp))
+                    }
                 }
             }
             section.error?.let { item { Retry(it, model::refresh) } }
@@ -111,20 +119,19 @@ internal fun Discover(
                 section.category != DiscoveryCategory.Chart -> item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(section.tracks, key = Track::id) { track ->
-                            val width = if (section.category == DiscoveryCategory.Recommended) 156.dp else 132.dp
-                            Column(Modifier.width(width).clickable(enabled = connected) { play(section.tracks, track) }) {
+                            val lead = section.category == DiscoveryCategory.Recommended
+                            val width = if (lead) 236.dp else if (wideCovers) 168.dp else 136.dp
+                            Column(Modifier.width(width).clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = connected && !track.isUnavailable) { play(section.tracks, track) }) {
                                 Box {
-                                    Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (wideCovers) 16f / 9f else 1.4f))
-                                    Box(Modifier.align(Alignment.TopEnd).clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))) {
-                                        TrackActionsButton(track)
-                                    }
+                                    Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (wideCovers || lead) 16f / 9f else 1f))
+                                    TrackActionsButton(track, Modifier.align(Alignment.TopEnd), onArtwork = true)
                                 }
-                                Spacer(Modifier.height(6.dp))
+                                Spacer(Modifier.height(8.dp))
                                 Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelMedium)
+                                    style = if (lead) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold)
+                                TrackSubtitle(track)
                             }
                         }
                     }
@@ -276,21 +283,21 @@ internal fun VideoPreviewRow(track: Track, connected: Boolean, selectedTrack: Bo
 @Composable
 internal fun TrackRow(track: Track, enabled: Boolean = true, rank: Int? = null,
                       actions: @Composable () -> Unit = { TrackActionsButton(track) }, play: () -> Unit) {
-    ListItem(modifier = Modifier.clickable(enabled = enabled && !track.isUnavailable, onClick = play),
-        headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { TrackSubtitle(track) },
-        leadingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                rank?.let { Text(it.toString(), Modifier.width(20.dp), style = MaterialTheme.typography.titleMedium) }
-                Artwork(track, Modifier.size(48.dp))
-            }
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (track.durationMs > 0) Text(timeLabel(track.durationMs))
-                actions()
-            }
-        })
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().heightIn(min = 60.dp)
+        .clickable(enabled = enabled && !track.isUnavailable, onClick = play).padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        rank?.let { Text(it.toString(), Modifier.width(28.dp), style = MaterialTheme.typography.titleMedium,
+            color = if (it == 1) colors.primary else colors.onSurfaceVariant, fontWeight = FontWeight.Bold) }
+        Artwork(track, Modifier.size(44.dp))
+        Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = colors.onSurface)
+            TrackSubtitle(track)
+        }
+        if (track.durationMs > 0) Text(timeLabel(track.durationMs), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        actions()
+    }
 }
 
 @Composable
@@ -303,11 +310,14 @@ internal fun Artwork(address: String?, headers: Map<String, String>, modifier: M
     val context = LocalContext.current
     Box(modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center) {
-        Text("♫", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(painterResource(R.drawable.ic_music_note), null, Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
         if (address != null) {
-            val request = ImageRequest.Builder(context).data(address).apply {
-                headers.forEach { (name, value) -> addHeader(name, value) }
-            }.build()
+            val request = remember(context, address, headers) {
+                ImageRequest.Builder(context).data(address).apply {
+                    headers.forEach { (name, value) -> addHeader(name, value) }
+                }.build()
+            }
             AsyncImage(request, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
     }
