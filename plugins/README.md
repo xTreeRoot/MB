@@ -27,6 +27,12 @@
 
 新增能力必须有不依赖具体平台的宿主回归。平台 API 和响应转换的测试放在插件目录，播放器页面与播放同步的测试留在播放器包。
 
+## 自托管节点的会话同步
+
+- `exportSession()` 返回 `{format, account_id, account_label?, session}`，没有已验证会话时返回 `null`。`account_id` 是平台稳定账号 ID；`session` 只包含审核过的可迁移字段，不能导出整个 `host.storage`。
+- `validateSession({format, account_id, session})` 在线核对账号，返回标准账号对象或 `null`，不得写入实际会话。宿主再次检查当前节点和操作是否仍有效后，才调用 `commitSession({format, account_id, session, account})` 提交已验证的会话。有效本地会话或本机退出状态优先。
+- 桌面宿主目前仅对随应用发布且导出完整接口的插件开放同步。同 ID 的手工安装包及节点目录的现有外部插件不具备同步资格。设备令牌、恢复密钥及加密传输由宿主管理，不暴露给插件。[协议与测试向量](https://github.com/xTreeRoot/MB/blob/server/server/EDGE.md)
+
 ## 开发与验证
 
 ```bash

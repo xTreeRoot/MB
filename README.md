@@ -2,7 +2,7 @@
 
 使用 Go 与 [MyGo](https://github.com/egoist/mygo) 构建的原生桌面音乐播放器，基于 [egoist/mygo-music](https://github.com/egoist/mygo-music) 提交 `298c88a03407844ac1c4eb76e3590edfe4577121` 开发，遵循 AGPL-3.0 许可证。
 
-iPhone / iPad 客户端位于 `main` 分支的 [ios/](https://github.com/xTreeRoot/MB/tree/main/ios)，使用 SwiftUI；构建、个人签名安装和页面截图见该目录说明。
+iPhone / iPad 客户端在独立的 [`ios` 分支](https://github.com/xTreeRoot/MB/tree/ios)。自托管节点在 [`server` 分支](https://github.com/xTreeRoot/MB/tree/server/server)。
 
 ## 当前能力
 
@@ -14,6 +14,12 @@ iPhone / iPad 客户端位于 `main` 分支的 [ios/](https://github.com/xTreeRo
 - 中文和英文界面、macOS 托盘与刘海播放器。
 
 登录 Cookie 保存在软件数据目录的 `plugin-data/bilibili/storage.json` 中。退出登录只停用 Cookie，重启后也保持退出状态；再次登录时先验证已保存的 Cookie，有效则直接复用，失效才重新扫码。字幕能否获取取决于视频提供的字幕和账号权限；缺少字幕时会返回明确状态。
+
+## 自托管节点
+
+- 桌面端在「设置 → 接入节点」输入自托管服务器域名或 HTTPS 地址及密码。应用没有默认节点；只接入信任的服务器，**节点管理员可以解密同步会话**。接入协议见 [`server/EDGE.md`](https://github.com/xTreeRoot/MB/blob/server/server/EDGE.md)。
+- 插件设置可从节点的签名目录安装缺失的插件；仍需确认权限。节点不可用、签名或包校验失败都不会替换已有插件或启用停用项。
+- 内置哔哩哔哩支持同步登录会话；已有有效本机登录优先，可手动同步当前账号。退出本机不会删除云端，云端删除是单独操作。外部插件暂只支持安装，不迁移其登录数据。
 
 ## 开发与验证
 

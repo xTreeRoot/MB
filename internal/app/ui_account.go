@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"mygo-music/internal/edge"
 	"mygo-music/internal/music"
 	"rsc.io/qr"
 )
@@ -53,11 +55,27 @@ func (a *app) loadAccount(lib *library) {
 	}
 	lib.accountBusy = true
 	gen := lib.accountGen
+	service := a.edge.service
+	var migrator edge.Migrator
+	var ticket edge.Ticket
+	if source := pluginOf(lib); source != nil && service != nil {
+		migrator, ticket = source.SessionMigrator(), service.Ticket(lib.id)
+	}
 	go func() {
 		acc, err := lib.src.Account()
+		var choices []edge.Candidate
+		var syncErr error
+		queriedCloud := false
+		if err == nil && acc == nil && migrator != nil {
+			queriedCloud = true
+			acc, choices, syncErr = service.Restore(context.Background(), lib.id, ticket, migrator, "")
+		}
 		a.post(func() {
 			lib.accountBusy = false
 			if lib.accountGen != gen {
+				return
+			}
+			if queriedCloud && service.Ticket(lib.id) != ticket {
 				return
 			}
 			first := !lib.accountAsked
@@ -65,6 +83,14 @@ func (a *app) loadAccount(lib *library) {
 			if err != nil {
 				a.problem(lib, err, T("Couldn't reach this plugin"))
 				return
+			}
+			if migrator != nil && service.Ticket(lib.id) == ticket {
+				if syncErr != nil {
+					a.edge.message = edgeError(syncErr)
+				}
+				if len(choices) > 1 {
+					a.edge.owner, a.edge.choices = lib, choices
+				}
 			}
 			was := lib.account
 			lib.account = acc
@@ -136,6 +162,13 @@ func (a *app) startSignIn() {
 	if lib == nil || d.waiting {
 		return
 	}
+	a.invalidateEdge(lib)
+	service := a.edge.service
+	var migrator edge.Migrator
+	var ticket edge.Ticket
+	if source := pluginOf(lib); service != nil && source != nil {
+		migrator, ticket = source.SessionMigrator(), service.Ticket(lib.id)
+	}
 	d.waiting, d.err, d.last = true, "", d.err
 	accountGen := lib.accountGen
 	d.prompt, d.qr = music.SignInPrompt{}, nil
@@ -185,6 +218,16 @@ func (a *app) startSignIn() {
 			lib.accountGen++
 			lib.account = acc
 			a.afterAccount(lib)
+			if current && acc != nil && migrator != nil {
+				a.edge.fresh[lib] = ticket
+				go func() {
+					if err := service.Publish(context.Background(), lib.id, acc.ID, ticket, migrator); err == nil {
+						if err := service.Flush(context.Background()); err != nil && service.Ticket(lib.id) == ticket {
+							a.post(func() { a.edge.message = edgeError(err) })
+						}
+					}
+				}()
+			}
 			// Signed in to another source from the settings: that's the one they're
 			// after. One finishing after they closed the dialog doesn't move them.
 			if current && a.library != lib {
@@ -214,6 +257,9 @@ func (a *app) signOut(lib *library) {
 	if a.signIn.lib == lib {
 		a.cancelSignIn()
 	}
+	a.invalidateEdge(lib)
+	service := a.edge.service
+	source := pluginOf(lib)
 	lib.accountGen++
 	gen := lib.accountGen
 	lib.account = nil
@@ -221,10 +267,17 @@ func (a *app) signOut(lib *library) {
 	lib.mine, lib.saved = nil, nil
 	lib.forget()
 	go func() {
+		var syncErr error
+		if service != nil && source != nil && source.SessionMigrator() != nil {
+			syncErr = service.Block(lib.id)
+		}
 		err := lib.src.SignOut()
 		a.post(func() {
 			if lib.accountGen != gen {
 				return
+			}
+			if syncErr != nil {
+				a.edge.message = edgeError(syncErr)
 			}
 			if err != nil {
 				a.actionFailed(lib, err, T("Couldn't sign out"))

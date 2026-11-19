@@ -518,6 +518,9 @@ func (a *app) settingsSections(c *ui.Context, p palette) []settingsSection {
 		})
 	})
 
+	if a.edge.nodes != nil || a.edge.message != "" {
+		add("edge", T("Connect to Node"), iconRefresh, func(row settingsRow, block settingsBlock) { a.edgeSettings(c, p, block) })
+	}
 	if a.updates {
 		add("updates", T("Updates"), iconRefresh, func(row settingsRow, block settingsBlock) {
 			desc := T("Check for a new version once a day")

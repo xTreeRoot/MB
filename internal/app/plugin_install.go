@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"mygo-music/internal/edge"
 	"mygo-music/internal/plugin"
 )
 
@@ -93,6 +95,8 @@ type pluginInstaller struct {
 	// open is whether the dialog shows: asking for a repository, with github,
 	// or about a plugin on its way, or what went wrong with one.
 	open, github bool
+	catalogOpen  bool
+	catalog      []edge.Package
 	repo         string          // what's written in the field
 	busy         bool            // one's downloading
 	err          string          // what went wrong last
@@ -120,6 +124,7 @@ const (
 func (a *app) askForRepo() {
 	in := &a.installer
 	a.cancelInstall()
+	in.catalogOpen = false
 	in.open, in.github, in.err = true, true, ""
 }
 
@@ -169,6 +174,7 @@ func (a *app) openLink(raw string) {
 	}
 	in := &a.installer
 	in.repo = repo
+	in.catalogOpen = false
 	in.open, in.github = true, true
 	a.showMain()
 	a.openSourceSettings()
@@ -184,6 +190,7 @@ func (a *app) installFromDisk(folder bool) {
 	in := &a.installer
 	pickPlugin(a, folder, func(path string) {
 		a.cancelInstall()
+		in.catalogOpen = false
 		in.open, in.github, in.busy, in.err = true, false, true, ""
 		go func() {
 			pending, err := openPlugin(path, pluginsDir())
@@ -215,6 +222,9 @@ func (a *app) confirmInstall() {
 	in := &a.installer
 	pending := in.pending
 	if pending == nil {
+		return
+	}
+	if in.catalogOpen && (a.edge.busy || a.edge.catalog == nil) {
 		return
 	}
 	in.pending, in.busy = nil, true
@@ -273,6 +283,7 @@ func (a *app) pluginInstalled(id string) error {
 		return nil
 	}
 	old := a.allLibs[at]
+	a.invalidateEdge(old)
 	a.allLibs[at] = lib
 	if was := pluginOf(old); was != nil {
 		a.plugins = slices.DeleteFunc(a.plugins, func(q *plugin.Plugin) bool { return q == was })
@@ -491,6 +502,9 @@ func (a *app) installMenu(c *ui.Context, p palette) {
 	in := &a.installer
 	add := iconButton(c.Key("install-plugin"), iconPlus, 16, p.muted, T("Install a Plugin"))
 	add.Menu(func(m *ui.Menu) {
+		if a.edge.catalog != nil && m.Item(T("Install from MB Plugin Catalog…")).Disabled(in.busy || a.edge.busy).Chosen() {
+			a.openEdgeCatalog()
+		}
 		if m.Item(T("From GitHub…")).Disabled(in.busy).Chosen() {
 			a.askForRepo()
 		}
@@ -565,7 +579,21 @@ func (a *app) installDialog(c *ui.Context, p palette) {
 				ui.Text(c, programsWarning(perms.Process)).FontSize(13).TextColor(p.muted).LineHeight(1.45)
 			}
 			problem()
-			buttons(T("Install"), in.busy, Tf("Install %s", pending.Manifest.Name), a.confirmInstall)
+			buttons(T("Install"), in.busy || in.catalogOpen && a.edge.busy, Tf("Install %s", pending.Manifest.Name), a.confirmInstall)
+		case in.catalogOpen:
+			ui.Text(c, T("MB Plugin Catalog")).FontSize(17).FontWeight(700)
+			if in.busy {
+				ui.Text(c, T("Downloading…")).TextColor(p.muted)
+			} else {
+				for _, entry := range in.catalog {
+					if a.libOf(entry.ID) == nil && !slices.Contains(a.settings.DisabledPlugins, entry.ID) &&
+						ui.Button(c.Key(entry.ID), entry.ID+" "+entry.Version).Clicked() {
+						a.installEdgePackage(entry)
+					}
+				}
+			}
+			problem()
+			buttons("", false, "", nil)
 		case in.github:
 			ui.Text(c, T("Install from GitHub")).FontSize(17).FontWeight(700)
 			ui.Text(c, T("A repository with a plugin, as owner/repo or its address on GitHub")).FontSize(13).TextColor(p.muted).LineHeight(1.45)
@@ -590,6 +618,52 @@ func (a *app) installDialog(c *ui.Context, p palette) {
 			buttons("", false, "", nil)
 		}
 	})
+}
+
+func (a *app) openEdgeCatalog() {
+	in := &a.installer
+	a.cancelInstall()
+	in.open, in.catalogOpen, in.busy, in.github = true, true, true, false
+	in.catalog, in.err = nil, ""
+	catalog := a.edge.catalog
+	go func() {
+		entries, err := catalog.Fetch(context.Background())
+		a.post(func() {
+			in.busy = false
+			if a.edge.catalog != catalog {
+				return
+			}
+			if err != nil {
+				in.err = edgeError(err)
+				return
+			}
+			in.catalog = entries
+		})
+	}()
+}
+
+func (a *app) installEdgePackage(entry edge.Package) {
+	in := &a.installer
+	catalog := a.edge.catalog
+	if catalog == nil {
+		return
+	}
+	in.busy, in.err = true, ""
+	go func() {
+		pending, err := plugin.PrepareCatalogPackage(context.Background(), catalog, entry, pluginsDir())
+		a.post(func() {
+			in.busy = false
+			if err != nil {
+				in.err = installError(err)
+				return
+			}
+			if !in.open || !in.catalogOpen || a.edge.catalog != catalog {
+				go pending.Discard()
+				return
+			}
+			in.pending = pending
+		})
+	}()
 }
 
 // pluginFrom says where a plugin came from: its repository, with its address

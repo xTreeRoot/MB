@@ -147,6 +147,37 @@ test("sign-out preserves the cookie across restarts without sending it until sig
   }
 });
 
+test("session migration stages only allowlisted cookies for the verified account", async () => {
+  const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };
+  const storage = new Map();
+  const cookie = "SESSDATA=synthetic-session; DedeUserID=123; bili_jct=synthetic-csrf";
+  const candidate = { format: 1, account_id: "123", session: { cookie: `${cookie}; sid=local-only` } };
+  let verifiedID = 456;
+  try {
+    const module = await loadStrategy(async (input, options) => {
+      assert.equal(new URL(input).pathname, "/x/web-interface/nav");
+      assert.equal(options.headers.Cookie, cookie);
+      return jsonResponse({ code: 0, data: { isLogin: true, mid: verifiedID, uname: "listener" } });
+    }, [], storage);
+    assert.equal(await module.validateSession(candidate), null);
+    assert.equal(storage.has("session"), false);
+    verifiedID = 123;
+    const account = await module.validateSession(candidate);
+    assert.equal(account.id, "123");
+    assert.equal(storage.has("session"), false);
+    assert.equal(await module.account(), null);
+    assert.equal(module.commitSession({ ...candidate, account }).id, "123");
+    assert.deepEqual(storage.get("session"), { cookie, active: true });
+    assert.deepEqual(module.exportSession(), { ...candidate, account_label: "listener", session: { cookie } });
+    await module.signOut();
+    assert.equal(await module.validateSession(candidate), null);
+    assert.equal(module.exportSession(), null);
+    assert.deepEqual(storage.get("session"), { cookie, active: false });
+  } finally {
+    Object.assign(globalThis, original);
+  }
+});
+
 /** Expired saved cookies fall back to scanning and are replaced only after validation. */
 test("expired saved cookies fall back to QR login", async () => {
   const original = { fetch: globalThis.fetch, host: globalThis.host, setTimeout: globalThis.setTimeout };

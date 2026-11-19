@@ -154,6 +154,7 @@ func (e *NeedsNewerApp) Error() string {
 // Plugin is a music.Source in JavaScript. It starts on first use, and again on
 // the next use after it got stuck.
 type Plugin struct {
+	bundled  bool
 	manifest Manifest
 	dir      string // where plugin.json is
 	data     string // the plugin's own data, and ours about it

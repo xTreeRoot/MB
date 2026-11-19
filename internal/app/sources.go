@@ -204,6 +204,9 @@ func (a *app) activate(lib *library) {
 	if lib == a.library {
 		return
 	}
+	if a.library != nil && a.library.accountBusy {
+		a.invalidateEdge(a.library)
+	}
 	a.library = lib
 	a.settings.Source = lib.id
 	a.settings.save()

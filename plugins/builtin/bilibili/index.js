@@ -175,6 +175,18 @@ function randomDmToken() {
   return characters[first] + characters[second];
 }
 
+function transferableCookie(value, accountID) {
+  const fields = new Map();
+  for (const part of text(value).split(";")) {
+    const match = part.trim().match(/^(SESSDATA|DedeUserID|bili_jct)=([!-~]+)$/);
+    if (!match) continue;
+    if (fields.has(match[1])) return "";
+    fields.set(match[1], match[2]);
+  }
+  if (fields.size !== 3 || fields.get("DedeUserID") !== accountID || !/^[1-9]\d*$/.test(accountID)) return "";
+  return ["SESSDATA", "DedeUserID", "bili_jct"].map((name) => `${name}=${fields.get(name)}`).join("; ");
+}
+
 class BilibiliPlatformStrategy {
   id = "bilibili";
   session = object(host.storage.get("session"));
@@ -261,6 +273,30 @@ class BilibiliPlatformStrategy {
     if (!account) this.forgetSession(cookie);
     this.accountSnapshot = account;
     return account;
+  }
+
+  exportSession() {
+    const account = this.accountSnapshot;
+    const cookie = account && transferableCookie(this.cookie, account.id);
+    return cookie ? { format: 1, account_id: account.id, account_label: account.name, session: { cookie } } : null;
+  }
+
+  async validateSession(input) {
+    if (input.format !== 1 || text(this.session.cookie) || this.loginAttempt) return null;
+    const cookie = transferableCookie(input.session?.cookie, input.account_id);
+    if (!cookie) return null;
+    const account = await this.checkCookie(cookie);
+    return account?.id === input.account_id ? account : null;
+  }
+
+  commitSession(input) {
+    if (input.format !== 1 || text(this.session.cookie) || this.loginAttempt || input.account?.id !== input.account_id) return null;
+    const cookie = transferableCookie(input.session?.cookie, input.account_id);
+    if (!cookie) return null;
+    this.rememberSession(cookie, true);
+    this.cookie = cookie;
+    this.accountSnapshot = input.account;
+    return input.account;
   }
 
   rememberSession(cookie, active) {
@@ -967,6 +1003,18 @@ export function cancelSignIn() {
 
 export function account() {
   return activePlatformStrategy().accountInfo();
+}
+
+export function exportSession() {
+  return activePlatformStrategy().exportSession();
+}
+
+export function validateSession(input) {
+  return activePlatformStrategy().validateSession(input);
+}
+
+export function commitSession(input) {
+  return activePlatformStrategy().commitSession(input);
 }
 
 export function home() {

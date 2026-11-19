@@ -82,5 +82,9 @@ func loadBundledPlugin(source fs.FS, directory, dataDirectory string) (*Plugin, 
 	if err != nil {
 		return nil, err
 	}
-	return Load(directory, dataDirectory)
+	p, err := Load(directory, dataDirectory)
+	if err == nil {
+		p.bundled = true
+	}
+	return p, err
 }

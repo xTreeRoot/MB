@@ -64,6 +64,7 @@ type Pending struct {
 	Manifest Manifest
 	root     string // where it unpacked
 	tmp      string // the folder to remove with it
+	catalog  bool
 }
 
 // ErrNoRepo says there's no such public repository.
@@ -625,6 +626,12 @@ func (p *Pending) Discard() { os.RemoveAll(p.tmp) }
 func (p *Pending) Install(dir string) error {
 	defer os.RemoveAll(p.tmp)
 	target := filepath.Join(dir, p.Manifest.ID)
+	if p.catalog {
+		if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("cannot install catalog plugin %s over a local plugin", p.Manifest.ID)
+		}
+		return os.Rename(p.root, target)
+	}
 	if _, err := os.Stat(target); err == nil {
 		var was Origin
 		readJSON(filepath.Join(target, originFile), &was)

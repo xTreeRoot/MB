@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -82,6 +83,7 @@ type app struct {
 
 	captions  captionState    // the episode playing's captions, and the model they take
 	installer pluginInstaller // installing and updating plugins
+	edge      edgePanel
 	// links are the app's links opened before its window was made, macOS
 	// handing over the one it was started with first.
 	links []string
@@ -302,6 +304,7 @@ func (a *app) enabledChanged() {
 func (a *app) setPluginEnabled(lib *library, on bool) {
 	disabled := slices.DeleteFunc(slices.Clone(a.settings.DisabledPlugins), func(id string) bool { return id == lib.id })
 	if !on {
+		a.invalidateEdge(lib)
 		if len(a.libs) == 1 && a.libs[0] == lib {
 			return
 		}
@@ -359,6 +362,9 @@ func Run() error {
 		cacheUsed:   -1,
 	}
 	a.useUpdater(i18n.Resolve(initialSettings.Language, systemLanguages()))
+	edgeContext, stopEdge := context.WithCancel(context.Background())
+	defer stopEdge()
+	a.startEdge(edgeContext)
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
 		a.settings.applyAppearance()
