@@ -75,7 +75,13 @@ xcodebuild -project MBiOS.xcodeproj -scheme MBiOS -configuration Debug \
 bash scripts/package-ipa.sh
 ```
 
-`package-ipa.sh` 输出 `.build/artifacts/MB-iOS-0.1.0-14-unsigned.ipa` 及源码 SHA-256 清单。未签名 IPA 需要自己的签名，不能点击直接安装；Xcode 直接运行是首次安装最省事的方式。
+`package-ipa.sh` 按 Xcode 工程中的 `MARKETING_VERSION` 和 `CURRENT_PROJECT_VERSION` 输出 `.build/artifacts/MB-iOS-<版本>-<构建号>-unsigned.ipa` 及源码 SHA-256 清单。iOS 使用独立的 `mb-ios-v<版本>` 标签在 [GitHub Releases](https://github.com/xTreeRoot/MB/releases) 发布；公开包不带开发者签名，须自行签名后安装。
+
+### 0.1.0 (17) - 2026-11-19
+
+- 支持自托管节点绑定和已验证账号资料加密同步，不通过资料接口上传 Cookie。线上真实账号同步尚未验收。
+- 补充音视频分段缓存、有限重试及原位置恢复；尚未实现同容器音视频共用分段，断网后的音画偏差尚未实测。
+- 插件页支持音源标签、GitHub Stars 批量导入、检查更新、一键更新和删除；新增独立皮肤及已知不可播原因提示。
 
 UI 回归使用后台启动的 Simulator 设备和 XCTest，不需要打开 Simulator.app 或控制 Xcode 窗口。可先用 `xcrun simctl list devices available` 找设备，再按 [Review/README.md](Review/README.md) 的命令运行和导出截图。Release 忽略 `--demo`；Debug 演示资料、插件、静音音频与实际沙盒数据隔离。
 
