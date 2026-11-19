@@ -40,6 +40,8 @@ go tool mygo build -sign - -skip-notarize
 
 产物位于 `build/darwin-arm64/MB.app`。默认使用本地临时签名；正式公证发布需要维护者自行配置 Apple 签名和公证凭据。
 
+[GitHub Releases](https://github.com/xTreeRoot/MB/releases) 中，桌面版使用 `mb-desktop-v<版本>` 标签，目前提供未公证的 macOS Apple Silicon 包；iOS 使用独立的 `mb-ios-v<版本>` 标签。产品版本与上游 MyGo Music 宿主兼容版本分别维护。
+
 ## 平台策略
 
 通用播放器只依赖 `internal/music.Source`。自带插件集中在 `plugins/builtin/<platform>`，每个平台有自己的清单、网络权限、会话和 API 实现，通过通用的 `internal/plugin.LoadBundled` 加载。当前仅内置哔哩哔哩；源码、测试和平台资料均独立于播放器页面。
