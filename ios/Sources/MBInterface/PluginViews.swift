@@ -2,6 +2,44 @@ import MBFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct PluginPreparationPresentation: ViewModifier {
+    let model: PluginModel
+
+    func body(content: Content) -> some View {
+        content
+            .disabled(model.preparation != nil)
+            .accessibilityHidden(model.preparation != nil)
+            .overlay {
+                if let preparation = model.preparation {
+                    ZStack {
+                        Color.black.opacity(0.35).ignoresSafeArea().accessibilityHidden(true)
+                        VStack(spacing: 16) {
+                            switch preparation {
+                            case .checking:
+                                ProgressView().controlSize(.large).accessibilityHidden(true)
+                                Text("正在检查插件").font(.headline)
+                                    .accessibilityIdentifier("plugin-checking")
+                            case .failed(let message):
+                                Text("插件检查失败").font(.headline)
+                                Text(message).font(.subheadline).foregroundStyle(.secondary)
+                                Button("确定") { model.dismissPreparationError() }.buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("dismiss-plugin-check-error")
+                            }
+                        }
+                        .multilineTextAlignment(.center)
+                        .padding(24)
+                        .frame(idealWidth: 255, maxWidth: 320)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+                        .padding(.horizontal, 24)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityAddTraits(.isModal)
+                    }
+                }
+            }
+            .interactiveDismissDisabled(model.preparation != nil)
+    }
+}
+
 struct PluginsView: View {
     let model: PluginModel
     @State private var importing = false
@@ -32,8 +70,8 @@ struct PluginsView: View {
                 Button("从 ZIP 安装", systemImage: "doc.zipper") { importing = true }
                 Button("从文件夹安装", systemImage: "folder") { folder = true }
                 Button("从 GitHub 安装", systemImage: "arrow.down.circle") { github = true }
+                    .accessibilityIdentifier("plugin-install-github")
             }.disabled(model.busy)
-            if model.busy { ProgressView("正在检查插件") }
             if let error = model.errorMessage { Text(error).font(.caption).foregroundStyle(.red) }
         }
         .modifier(MusicGroupedList())

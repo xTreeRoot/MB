@@ -96,6 +96,7 @@ enum DemoCatalog {
         export function home(){return {title:'示例插件首页',sections:[{title:'示例曲目',tracks:[track],links:[{title:'更多示例',page:'more'}],albums:[{id:'al',name:'示例专辑'}],artists:[{id:'ar',name:'示例作者'}],playlists:[{id:'pl',name:listName,mine:true}],shows:[{id:'sh',name:'示例播客'}],stations:[{id:'st',name:'示例电台'}]}]};}
         export function browse({page}){return {title:'示例分页',sections:[{title:'分页曲目',tracks:[track]}]};}
         export function search({query,kind}){return {tracks:kind==='tracks'?[{...track,name:query+' · 插件结果'}]:[],albums:kind==='albums'?[{id:'al',name:'示例专辑'}]:[],artists:kind==='artists'?[{id:'ar',name:'示例作者'}]:[],playlists:kind==='playlists'?[{id:'pl',name:listName,mine:true}]:[],shows:kind==='shows'?[{id:'sh',name:'示例播客'}]:[],more:false};}
+        export function searchVideos({query,offset}){return offset===0?{tracks:[{...track,id:'sample-video',name:query+' · 视频结果'},{}],more:true}:offset===2?{tracks:[{...track,id:'sample-video-next',name:query+' · 更多视频'}],more:false}:{tracks:[],more:false};}
         export function album(){return {album:{id:'al',name:'示例专辑',description:'专辑详情 · 演示数据'},tracks:[track]};}
         export function artist(){return {artist:{id:'ar',name:'示例作者'},tracks:[track]};}
         export function playlist(){return {playlist:{id:'pl',name:listName,mine:true},tracks:listTracks};}

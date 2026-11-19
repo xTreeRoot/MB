@@ -24,6 +24,13 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         offsets[query]?[page + 1] = offset + result["tracks"].array.count
         return TrackPage(tracks: tracks, hasMore: result["more"] == .bool(true) && !tracks.isEmpty)
     }
+    public func searchVideos(query: String, offset: Int) async throws -> (page: TrackPage, nextOffset: Int) {
+        let result = try await runtime.invoke("searchVideos", arguments: .object(["query": .string(query), "offset": .number(Double(offset))]))
+        let rawTracks = result["tracks"]
+        let count = rawTracks.array.count
+        let page = TrackPage(tracks: try await tracks(rawTracks), hasMore: result["more"] == .bool(true) && count > 0)
+        return (page, offset + count)
+    }
     public func home() async throws -> PluginBrowse {
         guard try await supports("home") else { return PluginBrowse(title: displayName) }
         return try await browseResult(try await runtime.invoke("home"))

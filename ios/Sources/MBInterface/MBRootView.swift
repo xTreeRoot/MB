@@ -3,20 +3,23 @@ import SwiftUI
 
 enum MBPage: Hashable { case discovery(DiscoveryCategory), video, library(LibraryRoute) }
 private enum MBTab: Hashable { case discover, search, library, account }
+private enum SearchScope: Hashable { case tracks, videos }
 
 /// 手机使用层级返回；平板保留发现侧栏。所有页面共用同一播放会话。
 public struct MBRootView: View {
     @State private var selectedTab = MBTab.discover
     @Namespace private var playerTransition
-    @State private var search: SearchModel
+    @State private var trackSearch: SearchModel
+    @State private var videoSearch: SearchModel?
+    @State private var searchScope = SearchScope.tracks
     @State private var playback: PlaybackModel
     @State private var video: VideoModel
     @State private var home: DiscoveryModel?
     @State private var networkSettings = NetworkSettingsModel()
     @State private var suggestions: [String] = []
     @State private var recordedSelection = -1
-    @State private var input = ""
-    @State private var request = SearchRequest()
+    @State private var searchInputs: [SearchScope: String] = [:]
+    @State private var request: SearchRequest?
     @State private var path: [MBPage] = []
     @State private var searchPath: [MBPage] = []
     @State private var showingAppSettings = false
@@ -45,6 +48,11 @@ public struct MBRootView: View {
     private let initialSource: any MusicSource
     private let initialSourceID: String
     private let demo: Bool
+    private var search: SearchModel { searchScope == .videos ? videoSearch ?? trackSearch : trackSearch }
+    private var input: String {
+        get { searchInputs[searchScope, default: ""] }
+        nonmutating set { searchInputs[searchScope] = newValue }
+    }
 
     public init(source: any MusicSource, sourceID: String = "demo", demo: Bool = false) {
         let preview = demo ? DemoLibrary() : nil
@@ -52,7 +60,7 @@ public struct MBRootView: View {
         self.router = router
         self.initialSource = source; self.initialSourceID = sourceID
         _selectedSourceID = State(initialValue: sourceID)
-        _search = State(initialValue: SearchModel(source: source))
+        _trackSearch = State(initialValue: SearchModel(source: source))
         _playback = State(initialValue: PlaybackModel(source: demo ? source as? any PlaybackSource : router,
                                                      engine: NativeAudioEngine(), store: demo ? nil : AppPersistence.shared, mediaLibrary: demo ? nil : MediaLibrary.shared))
         _home = State(initialValue: (source as? any DiscoverySource).map { DiscoveryModel(source: $0) })
@@ -63,7 +71,18 @@ public struct MBRootView: View {
         _downloads = State(initialValue: DownloadModel(source: demo ? source as? any PlaybackSource : router, library: preview?.media ?? .shared))
         _localLibrary = State(initialValue: LocalLibraryModel(store: preview?.store ?? .shared))
         _previewLibrary = State(initialValue: preview)
-        _plugins = State(initialValue: PluginModel(installer: preview.map { PluginInstaller(directory: $0.pluginDirectory) } ?? PluginInstaller()))
+        let installer = preview.map { PluginInstaller(directory: $0.pluginDirectory) } ?? PluginInstaller()
+        #if DEBUG
+        if let preview, ProcessInfo.processInfo.arguments.contains("--plugin-check-demo") {
+            _plugins = State(initialValue: PluginModel(installer: installer) { installer, repo in
+                try await Task.sleep(for: .seconds(5))
+                let fixture = try preview.pluginFixture()
+                return try await installer.prepare(repo == "fixture/failure" ? fixture.appendingPathComponent("missing.zip") : fixture)
+            })
+            return
+        }
+        #endif
+        _plugins = State(initialValue: PluginModel(installer: installer))
     }
 
     private var tabContent: some View {
@@ -123,7 +142,11 @@ public struct MBRootView: View {
             .sheet(item: $commentTrack) { track in
                 if let interactions = currentInteractions { CommentsView(source: interactions, track: track).id(account.revision) }
             }
-            .sheet(isPresented: $showingPlugins) { NavigationStack { PluginsView(model: plugins).toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { showingPlugins = false }.accessibilityIdentifier("dismiss-plugins") } } } }
+            .sheet(isPresented: $showingPlugins) {
+                NavigationStack {
+                    PluginsView(model: plugins).toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { showingPlugins = false }.accessibilityIdentifier("dismiss-plugins") } }
+                }.modifier(PluginPreparationPresentation(model: plugins))
+            }
             .onOpenURL { url in
                 if let repo = PluginInstaller.repository(fromInstallURL: url) { showingPlugins = true; Task { await plugins.prepareGitHub(repo) } }
             }
@@ -224,6 +247,9 @@ public struct MBRootView: View {
                 if visible { showingPlayer = false; showVideo() }
                 else { path.removeAll { $0 == .video }; searchPath.removeAll { $0 == .video } }
             }
+            .onChange(of: video.mode) { _, mode in
+                if mode == .music { changeSearchScope(.tracks) }
+            }
             .onChange(of: path) { _, pages in
                 if selectedTab == .discover, !pages.contains(.video), video.isVisible { video.browse() }
             }
@@ -234,10 +260,11 @@ public struct MBRootView: View {
 
     public var body: some View {
         observedTabs
-            .task(id: input + ":" + selectedSourceID) { await updateSuggestions() }
-            .task(id: request.id) {
-                if request.more { await search.loadMore() }
-                else { await search.search(request.query) }
+            .task(id: input + ":" + selectedSourceID + ":" + String(describing: searchScope)) { await updateSuggestions() }
+            .task(id: request?.id) { [request] in
+                guard let request, !Task.isCancelled else { return }
+                if request.more { await request.model.loadMore() }
+                else { await request.model.search(request.query) }
             }
             .environment(\.pluginUI, plugins.ui)
             .modifier(PluginLinkPresentation(service: plugins.ui))
@@ -305,6 +332,15 @@ public struct MBRootView: View {
         NavigationStack(path: $searchPath) {
             VStack(spacing: 0) {
                 searchBar
+                if video.mode == .video, videoSearch != nil {
+                    Picker("搜索类型", selection: Binding(get: { searchScope }, set: changeSearchScope)) {
+                        Text("音乐").tag(SearchScope.tracks)
+                        Text("视频").tag(SearchScope.videos)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("search-scope")
+                    .padding(.horizontal, 16).padding(.bottom, 8)
+                }
                 if inputFocused && !suggestions.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack { ForEach(suggestions, id: \.self) { text in Button(text) { input = text; submit() }.buttonStyle(.bordered).frame(minHeight: 44) } }.padding(.horizontal, 20)
@@ -328,8 +364,11 @@ public struct MBRootView: View {
             .navigationDestination(for: MBPage.self) { destination($0) }
         }
         .onChange(of: input) { _, value in
-            if value.trimmingCharacters(in: .whitespacesAndNewlines) != search.query { search.cancel() }
-            if value.isEmpty { request = SearchRequest() }
+            if value.trimmingCharacters(in: .whitespacesAndNewlines) != search.query {
+                search.cancel()
+                if value.isEmpty { request = SearchRequest(model: search, query: "") }
+                else if request?.query != value { request = nil }
+            }
         }
     }
 
@@ -428,7 +467,7 @@ public struct MBRootView: View {
             ContentUnavailableView {
                 Label("搜索失败", systemImage: "wifi.exclamationmark")
             } description: { Text(LocalizedStringKey(message)) } actions: { Button("重试") { submit() }.buttonStyle(.borderedProminent) }
-        } else if search.tracks.isEmpty { ContentUnavailableView.search(text: search.query) }
+        } else if search.tracks.isEmpty && !search.hasMore { ContentUnavailableView.search(text: search.query) }
         else {
             List {
                 ForEach(Array(search.tracks.enumerated()), id: \.element.id) { index, track in
@@ -445,9 +484,9 @@ public struct MBRootView: View {
                 if search.hasMore {
                     VStack(spacing: 8) {
                         if let message = search.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
-                        Button { request = SearchRequest(query: search.query, more: true) } label: {
-                            if search.isLoading { ProgressView() } else { Text("加载更多") }
-                        }.disabled(search.isLoading)
+                        Button("加载更多") { request = SearchRequest(model: search, query: search.query, more: true) }
+                            .buttonStyle(.bordered).disabled(search.isLoading)
+                        if search.isLoading { ProgressView() }
                     }.frame(maxWidth: .infinity).listRowSeparator(.hidden)
                 }
             }.listStyle(.plain)
@@ -457,7 +496,7 @@ public struct MBRootView: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索视频、音乐、UP 主", text: $input)
+            TextField("搜索视频、音乐、UP 主", text: Binding(get: { input }, set: { input = $0 }))
                 .accessibilityLabel("搜索视频、音乐、UP 主")
                 .autocorrectionDisabled().focused($inputFocused)
                 .submitLabel(.search)
@@ -489,6 +528,7 @@ public struct MBRootView: View {
         video.updateTrack(nil)
         showingPlayer = false; showingQueue = false; commentTrack = nil
         inputFocused = false
+        search.cancel(); request = nil
         selectedSourceID = id
     }
     private func activateSource() async {
@@ -501,11 +541,19 @@ public struct MBRootView: View {
         else { chosen = DisabledMusicSource() }
         account.cancelSignIn()
         let accountSource: (any AccountSource)?
-        if let plugin = chosen as? PluginSource { accountSource = (try? await plugin.supports("signIn")) == true ? plugin : nil }
-        else { accountSource = chosen as? any AccountSource }
+        let videoSearchSource: PluginSource?
+        if let plugin = chosen as? PluginSource {
+            accountSource = (try? await plugin.supports("signIn")) == true ? plugin : nil
+            videoSearchSource = (try? await plugin.supports("searchVideos")) == true ? plugin : nil
+        } else {
+            accountSource = chosen as? any AccountSource
+            videoSearchSource = nil
+        }
         guard id == selectedSourceID, !Task.isCancelled else { return }
-        source = chosen; path = []; searchPath = []; input = ""; request = SearchRequest()
-        search = SearchModel(source: chosen)
+        trackSearch.cancel(); videoSearch?.cancel()
+        source = chosen; path = []; searchPath = []; searchInputs = [:]; request = nil; searchScope = .tracks
+        trackSearch = SearchModel(source: chosen)
+        videoSearch = videoSearchSource.map { SearchModel(videoSource: $0) }
         home = (chosen as? any DiscoverySource).map { DiscoveryModel(source: $0) }
         account = AccountModel(source: accountSource)
         await account.restore()
@@ -514,6 +562,10 @@ public struct MBRootView: View {
 
     private func chooseMode(_ mode: PlaybackMode) {
         Task { await video.choose(mode) }
+    }
+    private func changeSearchScope(_ scope: SearchScope) {
+        guard scope != searchScope else { return }
+        search.cancel(); request = nil; searchScope = scope
     }
     private func showVideo() {
         if selectedTab == .search { if searchPath.last != .video { searchPath.append(.video) } }
@@ -530,13 +582,14 @@ public struct MBRootView: View {
     private func submit() {
         inputFocused = false; video.browse(); searchPath = []
         if !demo { preferences.recordSearch(input) }
-        request = SearchRequest(query: input)
+        request = SearchRequest(model: search, query: input)
     }
 }
 
 private struct SearchRequest {
     let id = UUID()
-    var query = ""
+    let model: SearchModel
+    let query: String
     var more = false
 }
 

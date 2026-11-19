@@ -72,5 +72,6 @@ struct SettingsView: View {
                 Button("清空搜索记录", role: .destructive) { preferences.values.searchHistory = [] }
             }
         }.id(preferences.values.language).accessibilityIdentifier("settings-sheet")
+            .modifier(PluginPreparationPresentation(model: plugins))
     }
 }

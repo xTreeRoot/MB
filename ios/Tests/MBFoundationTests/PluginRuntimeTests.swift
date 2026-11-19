@@ -2,7 +2,7 @@ import Foundation
 @testable import MBFoundation
 import Testing
 
-private func withPlugin(_ source: String, extra: [String: String] = [:], perform: (PluginRuntime, URL, PluginManifest) async throws -> Void) async throws {
+private func withPlugin(_ source: String, extra: [String: String] = [:], isolation: isolated (any Actor)? = #isolation, perform: (PluginRuntime, URL, PluginManifest) async throws -> Void) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -11,6 +11,42 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
     let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(#"{"id":"fixture","name":"Fixture","version":"1.0.0","permissions":{"network":["api.example.test"]}}"#.utf8))
     let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, settings: ["quality": "high"])
     try await perform(runtime, root, manifest)
+}
+
+@Test @MainActor func pluginVideoSearchUsesRawOffsetsAndKeepsTrackSearchIndependent() async throws {
+    try await withPlugin("""
+    export function search({query,kind,offset}) {
+      if (kind !== 'tracks' || offset !== 0) throw Error('unexpected track request');
+      return {tracks:[{id:'music',name:query}],more:false};
+    }
+    export function searchVideos({query,offset}) {
+      const video = {id:'first',name:query};
+      if (offset === 0) return {tracks:[{},video,video],more:true};
+      if (offset === 3) return {tracks:[{},video],more:true};
+      if (offset === 5) return {tracks:[{id:'next',name:query}],more:false};
+      throw Error('unexpected video offset ' + offset);
+    }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let music = SearchModel(source: source)
+        let videos = SearchModel(videoSource: source)
+        try await #require(source.supports("searchVideos"))
+        await videos.search(" video ")
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first"])
+        #expect(videos.hasMore)
+        await music.search("music")
+        await videos.loadMore()
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first"])
+        #expect(videos.hasMore)
+        await videos.loadMore()
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first", "next"])
+        #expect(!videos.hasMore)
+        #expect(videos.query == "video")
+        #expect(music.query == "music")
+        #expect(music.tracks.map(\.sourceTrackID) == ["music"])
+        await videos.search("new")
+        #expect(videos.tracks.map(\.title) == ["new"])
+    }
 }
 
 @Test func pluginRunsRealESModulesAsyncTimersStorageAndCrypto() async throws {

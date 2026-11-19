@@ -250,6 +250,11 @@
 "从文件夹安装" = "Install from Folder";
 "从 GitHub 安装" = "Install from GitHub";
 "正在检查插件" = "Checking Plugin";
+"插件检查失败" = "Plugin Check Failed";
+"搜索类型" = "Search Type";
+"音乐" = "Music";
+"视频" = "Video";
+"确定" = "OK";
 "安装插件" = "Install Plugin";
 "网络权限" = "Network Permissions";
 "名称" = "Name";

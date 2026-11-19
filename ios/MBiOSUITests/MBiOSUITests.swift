@@ -515,6 +515,87 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(renamed.waitForNonExistence(timeout: 5))
     }
 
+    @MainActor func testPluginCheckPresentationRequiresConfirmationAndRecoversFromFailure() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--plugin-check-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("设置", app: app)
+        app.buttons["settings-plugins"].tap()
+        let github = app.buttons["plugin-install-github"]
+        let checking = app.staticTexts["plugin-checking"]
+        let install = app.buttons["安装"]
+        for repo in ["fixture/failure", "fixture/success"] {
+            XCTAssertTrue(github.waitForExistence(timeout: 5))
+            github.tap()
+            let alert = app.alerts.firstMatch
+            let field = alert.textFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
+            if repo == "fixture/success" { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "fixture/failure".count)) }
+            field.typeText(repo)
+            alert.buttons["检查"].tap()
+            XCTAssertTrue(checking.waitForExistence(timeout: 3))
+            XCTAssertFalse(github.isHittable)
+            XCTAssertFalse(install.exists)
+            capture("插件-居中检查-\(repo.hasSuffix("failure") ? "失败路径" : "成功路径")", app: app)
+            XCTAssertTrue(checking.waitForNonExistence(timeout: 10))
+            if repo == "fixture/failure" {
+                XCTAssertTrue(app.staticTexts["插件检查失败"].exists)
+                XCTAssertFalse(install.exists)
+                capture("插件-检查失败弹窗", app: app)
+                app.buttons["dismiss-plugin-check-error"].tap()
+            } else {
+                XCTAssertTrue(install.waitForExistence(timeout: 5))
+                capture("插件-权限确认", app: app)
+                app.buttons["取消"].tap()
+                XCTAssertTrue(install.waitForNonExistence(timeout: 5))
+            }
+        }
+        XCTAssertTrue(github.isHittable)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.exists)
+    }
+
+    @MainActor func testPluginVideoSearchKeepsMusicAndVideoResultsSeparate() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--plugin-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("设置", app: app)
+        app.buttons["settings-plugins"].tap()
+        XCTAssertTrue(app.buttons["安装"].waitForExistence(timeout: 5)); app.buttons["安装"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.waitForExistence(timeout: 5))
+        selectTab("发现", app: app)
+        chooseMode("视频模式", app: app)
+        selectTab("搜索", app: app)
+        let videos = app.segmentedControls["search-scope"].buttons["视频"]
+        XCTAssertFalse(videos.exists)
+        app.buttons["切换播放模式"].tap()
+        if app.buttons["音源"].exists { app.buttons["音源"].tap() }
+        app.buttons["示例插件"].tap()
+        XCTAssertTrue(videos.waitForExistence(timeout: 5))
+        let field = app.textFields["搜索视频、音乐、UP 主"]
+        field.tap(); field.typeText("music\n")
+        let musicResult = app.buttons["选择 music · 插件结果"]
+        XCTAssertTrue(musicResult.waitForExistence(timeout: 5))
+        videos.tap()
+        XCTAssertFalse(musicResult.exists)
+        field.tap(); field.typeText("clip\n")
+        XCTAssertTrue(app.buttons["选择 clip · 视频结果"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["返回浏览"].exists)
+        app.buttons["加载更多"].tap()
+        let next = app.buttons["选择 clip · 更多视频"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        capture("插件-独立视频搜索", app: app)
+        app.segmentedControls["search-scope"].buttons["音乐"].tap()
+        XCTAssertTrue(musicResult.waitForExistence(timeout: 5))
+        videos.tap()
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["返回浏览"].exists)
+        next.tap()
+        XCTAssertTrue(app.buttons["返回浏览"].waitForExistence(timeout: 5))
+    }
+
     @MainActor func testPluginEntitiesPlaylistSelectionAndManagementCapture() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
