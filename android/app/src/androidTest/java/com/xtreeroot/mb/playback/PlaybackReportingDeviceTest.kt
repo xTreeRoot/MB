@@ -2,16 +2,26 @@ package com.xtreeroot.mb.playback
 
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionToken
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xtreeroot.mb.MBApplication
+import com.xtreeroot.mb.MainActivity
+import com.xtreeroot.mb.local.PortableAsset
+import com.xtreeroot.mb.local.PortableImport
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.plugin.InstalledPlugin
@@ -19,15 +29,18 @@ import com.xtreeroot.mb.plugin.PluginSource
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -62,6 +75,86 @@ class PlaybackReportingDeviceTest {
     }
 
     private val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as MBApplication
+
+    @Test fun tappingALibrarySongReconnectsAfterAServiceFailure() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val automation = instrumentation.uiAutomation
+        val service = ComponentName(app, PlaybackService::class.java)
+        val original = app.packageManager.getComponentEnabledSetting(service)
+        val wav = app.local.catalog.temporaryFile()
+        val audio = wave(16).also { UUID.randomUUID().toString().encodeToByteArray().copyInto(it, 128) }
+        val id = MessageDigest.getInstance("SHA-256").digest(audio).toHexString()
+        wav.writeBytes(audio)
+        val asset = PortableAsset("mb-import-$id.audio", audio.size.toLong(), id)
+        val track = try {
+            app.local.restoreImport(wav, PortableImport(id, "000 MB Reconnect QA ${id.take(8)}", asset, "", false, 0)).track
+        } finally { wav.delete() }
+        var activity: MainActivity? = null
+        var playerFuture: ListenableFuture<MediaController>? = null
+        fun findInTree(node: AccessibilityNodeInfo, labels: Set<String>): AccessibilityNodeInfo? {
+            if (node.text?.toString() in labels || node.contentDescription?.toString() in labels) return node
+            return (0 until node.childCount).firstNotNullOfOrNull { index ->
+                node.getChild(index)?.let { findInTree(it, labels) }
+            }
+        }
+        suspend fun findNode(vararg labels: String): AccessibilityNodeInfo = withTimeoutOrNull(10_000) {
+            val targets = labels.toSet()
+            var node: AccessibilityNodeInfo?
+            do {
+                node = automation.rootInActiveWindow?.let { findInTree(it, targets) }
+                if (node == null) delay(50)
+            } while (node == null)
+            checkNotNull(node)
+        } ?: error("Missing UI element: ${labels.joinToString()}")
+        fun tap(node: AccessibilityNodeInfo) {
+            val bounds = Rect().also(node::getBoundsInScreen)
+            val time = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(time, SystemClock.uptimeMillis(), action,
+                    bounds.centerX().toFloat(), bounds.centerY().toFloat(), 0)
+                try {
+                    event.source = InputDevice.SOURCE_TOUCHSCREEN
+                    assertTrue(automation.injectInputEvent(event, true))
+                } finally { event.recycle() }
+            }
+        }
+        try {
+            val serviceIntent = Intent(app, PlaybackService::class.java)
+            withContext(Dispatchers.Main) { app.stopService(serviceIntent) }
+            eventually { app.videoPlayback.value == null }
+            check(!playbackStorage.contains("queue")) { "Run on a dedicated installation with an empty queue" }
+            app.packageManager.setComponentEnabledSetting(service, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            findNode("无法连接播放服务", "Can't connect to playback service")
+            tap(findNode("资料库", "Library"))
+            findNode("本地资料库", "Local Library")
+            val song = findNode(track.title)
+            app.packageManager.setComponentEnabledSetting(service, original, PackageManager.DONT_KILL_APP)
+            val discovery = Intent(MediaSessionService.SERVICE_INTERFACE).setPackage(app.packageName)
+            eventually { app.packageManager.queryIntentServices(discovery, 0).any { it.serviceInfo.name == service.className } }
+            tap(song)
+            val attempt = withContext(Dispatchers.Main) { MediaController.Builder(app, SessionToken(app, service)).buildAsync() }
+            playerFuture = attempt
+            val player = withContext(Dispatchers.IO) { attempt.get(10, TimeUnit.SECONDS) }
+            try { eventually { player.isPlaying && player.currentMediaItem?.mediaId == track.id && player.currentPosition > 0 } }
+            catch (timeout: TimeoutCancellationException) {
+                val actual = withContext(Dispatchers.Main) { player.currentMediaItem?.mediaId }
+                throw AssertionError("Tapping the library song did not start playback after the service recovered: expected ${track.id}, got $actual", timeout)
+            }
+        } finally {
+            app.packageManager.setComponentEnabledSetting(service, original, PackageManager.DONT_KILL_APP)
+            withContext(Dispatchers.Main) {
+                playerFuture?.let { attempt ->
+                    if (attempt.isDone) runCatching { attempt.get() }.getOrNull()?.let { player ->
+                        if (player.currentMediaItem?.mediaId == track.id) { player.pause(); player.clearMediaItems() }
+                    }
+                    MediaController.releaseFuture(attempt)
+                }
+                activity?.finish()
+            }
+            app.local.delete(track.sourceTrackId)
+        }
+    }
 
     @Test fun selectingASongReconnectsAfterPlaybackServiceBecomesAvailable() = runBlocking {
         val service = ComponentName(app, PlaybackService::class.java)

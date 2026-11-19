@@ -384,24 +384,24 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                                 CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
                                     when {
                                         visibleCatalog != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
-                                            visibleCatalog, catalog, playback.connected, select, player::play)
+                                            visibleCatalog, catalog, select, player::play)
                                         tab != Tab.Library && sourceId == null -> EmptyMessage(mb("没有可用音源", "No available sources"))
-                                        category != null -> CategoryView(browser, checkNotNull(category), playback.connected, select)
+                                        category != null -> CategoryView(browser, checkNotNull(category), select)
                                         else -> when (tab) {
-                                        Tab.Discover -> Discover(browser, playback.connected, select, openCategory)
+                                        Tab.Discover -> Discover(browser, select, openCategory)
                                         Tab.Search -> {
                                             val id = activeSource?.id
                                             if (id != null) searchUiState.SaveableStateProvider(id) {
-                                                Search(browser, playback.connected, id, pluginSource, pluginSource?.let { catalog::search },
+                                                Search(browser, id, pluginSource, pluginSource?.let { catalog::search },
                                                     openCategory.takeIf { activeSource === app.bilibili }, select)
                                             }
                                             else EmptyMessage(mb("没有可用音源", "No available sources"))
                                         }
-                                        Tab.Library -> LocalLibraryView(playback.connected, select, selectGroup, saved)
+                                        Tab.Library -> LocalLibraryView(select, selectGroup, saved)
                                         Tab.Account -> if (pluginSource != null) PluginPersonalContent(pluginSource, catalog, pluginAccount, pluginUser)
                                         else if (accountRoute == null) AccountView(account) { route ->
                                             routes = ArrayList(routes + route)
-                                        } else AccountLibraryView(library.pages, playback.connected, { routes = ArrayList(routes + it) }, select)
+                                        } else AccountLibraryView(library.pages, { routes = ArrayList(routes + it) }, select)
                                     }
                                     }
                                 }

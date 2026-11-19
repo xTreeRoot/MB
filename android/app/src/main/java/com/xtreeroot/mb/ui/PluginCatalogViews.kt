@@ -67,12 +67,12 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun PluginCatalogBrowser(source: PluginSource, destination: CatalogDestination, navigator: PluginCatalogNavigator,
-                                 connected: Boolean, play: (List<Track>, Track) -> Unit,
+                                 play: (List<Track>, Track) -> Unit,
                                  playStation: (List<Track>, Track, PlaybackStation) -> Unit) {
     key(destination) {
         when (destination) {
-            is CatalogDestination.Content -> PluginCatalogContent(source, destination, navigator, connected, play, playStation)
-            is CatalogDestination.Search -> PluginTypedSearch(source, destination, navigator, connected, play)
+            is CatalogDestination.Content -> PluginCatalogContent(source, destination, navigator, play, playStation)
+            is CatalogDestination.Search -> PluginTypedSearch(source, destination, navigator, play)
         }
     }
 }
@@ -96,7 +96,7 @@ internal fun catalogTitle(destination: CatalogDestination, source: PluginSource)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PluginCatalogContent(source: PluginSource, destination: CatalogDestination.Content, navigator: PluginCatalogNavigator,
-                                 connected: Boolean, play: (List<Track>, Track) -> Unit,
+                                 play: (List<Track>, Track) -> Unit,
                                  playStation: ((List<Track>, Track, PlaybackStation) -> Unit)? = null) {
     val request = destination.request
     val pager = destination.pager
@@ -162,7 +162,7 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
             }
             val firstPlayable = tracks.firstOrNull { !it.isUnavailable }
             if (entity != null && firstPlayable != null) item(span = { GridItemSpan(maxLineSpan) }) {
-                TextButton(onClick = { select(tracks, firstPlayable) }, enabled = connected) { Text(mb("播放全部", "Play All")) }
+                TextButton(onClick = { select(tracks, firstPlayable) }) { Text(mb("播放全部", "Play All")) }
             }
             var trackIndex = 0
             page.sections.forEach { section ->
@@ -172,9 +172,9 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
                 section.tracks.forEach { track ->
                     val index = trackIndex++
                     val playSection = { select(if (entity != null) tracks else section.tracks, track) }
-                    if (section.videos || videoMode && entity?.editable != true) item { PluginVideoCard(track, connected, playSection) }
+                    if (section.videos || videoMode && entity?.editable != true) item { PluginVideoCard(track, playSection) }
                     else item(span = { GridItemSpan(maxLineSpan) }) {
-                        TrackRow(track, connected, actions = {
+                        TrackRow(track, actions = {
                             if (entity?.editable == true && ("removeFromPlaylist" in capabilities || "movePlaylistTrack" in capabilities && index > 0)) {
                                 PluginPlaylistTrackMenu(track, changing,
                                     remove = if ("removeFromPlaylist" in capabilities) ({
@@ -310,7 +310,7 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
 
 @Composable
 private fun PluginTypedSearch(source: PluginSource, destination: CatalogDestination.Search, navigator: PluginCatalogNavigator,
-                              connected: Boolean, play: (List<Track>, Track) -> Unit) {
+                              play: (List<Track>, Track) -> Unit) {
     var kinds by remember { mutableStateOf(emptyList<PluginSearchKind>()) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(source) {
@@ -334,7 +334,7 @@ private fun PluginTypedSearch(source: PluginSource, destination: CatalogDestinat
         }
         val result = destination.results
         if (result == null) EmptyMessage(mb("搜索音源", "Search Source"))
-        else key(result) { PluginCatalogContent(source, result, navigator, connected, play) }
+        else key(result) { PluginCatalogContent(source, result, navigator, play) }
     }
 }
 
@@ -419,8 +419,8 @@ private fun CatalogLinkRow(link: PluginCatalogLink, open: (PluginCatalogRequest)
 }
 
 @Composable
-private fun PluginVideoCard(track: Track, connected: Boolean, play: () -> Unit) {
-    Column(Modifier.padding(8.dp).clickable(enabled = connected && !track.isUnavailable, onClick = play)) {
+private fun PluginVideoCard(track: Track, play: () -> Unit) {
+    Column(Modifier.padding(8.dp).clickable(enabled = !track.isUnavailable, onClick = play)) {
         Artwork(track, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

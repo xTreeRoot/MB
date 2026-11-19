@@ -78,7 +78,6 @@ internal fun DiscoveryCategory.title(): String = when (this) {
 @Composable
 internal fun Discover(
     model: BrowseModel,
-    connected: Boolean,
     play: (List<Track>, Track) -> Unit,
     open: (DiscoveryCategory) -> Unit,
 ) {
@@ -112,7 +111,7 @@ internal fun Discover(
                             val lead = section.category == DiscoveryCategory.Recommended
                             val width = if (lead) 236.dp else if (wideCovers) 168.dp else 136.dp
                             Column(Modifier.width(width).clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = connected && !track.isUnavailable) { play(section.tracks, track) }) {
+                                .clickable(enabled = !track.isUnavailable) { play(section.tracks, track) }) {
                                 Box {
                                     Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (wideCovers || lead) 16f / 9f else 1f))
                                     TrackActionsButton(track, Modifier.align(Alignment.TopEnd), onArtwork = true)
@@ -128,8 +127,8 @@ internal fun Discover(
                 }
                 else -> items(section.tracks.take(3), key = { "${section.category}-${it.id}" }) { track ->
                     val rank = section.tracks.indexOf(track) + 1
-                    if (wideCovers) VideoPreviewRow(track, connected) { play(section.tracks, track) }
-                    else TrackRow(track, connected, rank = rank) { play(section.tracks, track) }
+                    if (wideCovers) VideoPreviewRow(track) { play(section.tracks, track) }
+                    else TrackRow(track, rank = rank) { play(section.tracks, track) }
                 }
             }
         }
@@ -137,7 +136,7 @@ internal fun Discover(
 }
 
 @Composable
-internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory, connected: Boolean,
+internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory,
                            play: (List<Track>, Track) -> Unit) {
     val details by model.details.collectAsStateWithLifecycle()
     val tracks = details.value?.takeIf { it.category == category }?.tracks.orEmpty()
@@ -148,16 +147,17 @@ internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory, conne
             details.loading && tracks.isEmpty() -> item { Loading() }
             !details.loading && tracks.isEmpty() -> item { EmptyMessage(mb("暂无内容", "No Content")) }
         }
-        if (tracks.isNotEmpty()) item {
-            Button(enabled = connected, onClick = { play(tracks, tracks.first()) },
+        val first = tracks.firstOrNull { !it.isUnavailable }
+        if (first != null) item {
+            Button(onClick = { play(tracks, first) },
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { Text(mb("播放全部", "Play All")) }
         }
-        items(tracks, key = Track::id) { track -> BrowsingTrackRow(track, connected) { play(tracks, track) } }
+        items(tracks, key = Track::id) { track -> BrowsingTrackRow(track) { play(tracks, track) } }
     }
 }
 
 @Composable
-internal fun Search(model: BrowseModel, connected: Boolean, activeSource: String, plugin: PluginSource?,
+internal fun Search(model: BrowseModel, activeSource: String, plugin: PluginSource?,
                     openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
     var supportsVideos by remember(plugin) { mutableStateOf(false) }
     LaunchedEffect(plugin) {
@@ -181,12 +181,12 @@ internal fun Search(model: BrowseModel, connected: Boolean, activeSource: String
     }) else null
     val state = rememberSaveableStateHolder()
     state.SaveableStateProvider(mode.name) {
-        SearchResults(model, mode, connected, activeSource, plugin, changeScope, openCatalog, openCategory, play)
+        SearchResults(model, mode, activeSource, plugin, changeScope, openCatalog, openCategory, play)
     }
 }
 
 @Composable
-private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Boolean, activeSource: String,
+private fun SearchResults(model: BrowseModel, mode: SearchScope, activeSource: String,
                           suggestionSource: SuggestionSource?, changeScope: ((SearchScope) -> Unit)?,
                           openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
     val pages = model.searchPages(mode)
@@ -222,7 +222,7 @@ private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Bool
                 }
             }
             items(result.value.tracks, key = Track::id) { track ->
-                BrowsingTrackRow(track, connected && track.sourceId == activeSource) { play(result.value.tracks, track) }
+                BrowsingTrackRow(track, enabled = track.sourceId == activeSource) { play(result.value.tracks, track) }
             }
             when {
                 result.loading -> item { Loading() }
@@ -235,13 +235,13 @@ private fun SearchResults(model: BrowseModel, mode: SearchScope, connected: Bool
 }
 
 @Composable
-internal fun BrowsingTrackRow(track: Track, connected: Boolean, play: () -> Unit) {
-    if (LocalVideoBrowse.current) VideoPreviewRow(track, connected, play = play) else TrackRow(track, connected, play = play)
+internal fun BrowsingTrackRow(track: Track, enabled: Boolean = true, play: () -> Unit) {
+    if (LocalVideoBrowse.current) VideoPreviewRow(track, enabled, play = play) else TrackRow(track, enabled, play = play)
 }
 
 @Composable
-internal fun VideoPreviewRow(track: Track, connected: Boolean, selectedTrack: Boolean = false, play: () -> Unit) {
-    ListItem(modifier = Modifier.clickable(enabled = connected && !track.isUnavailable, onClick = play)
+internal fun VideoPreviewRow(track: Track, enabled: Boolean = true, selectedTrack: Boolean = false, play: () -> Unit) {
+    ListItem(modifier = Modifier.clickable(enabled = enabled && !track.isUnavailable, onClick = play)
         .semantics { selected = selectedTrack },
         headlineContent = { Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
             color = if (selectedTrack) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },

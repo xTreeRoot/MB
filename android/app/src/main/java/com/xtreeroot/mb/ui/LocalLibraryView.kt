@@ -118,7 +118,7 @@ private enum class Category(val chinese: String, val english: String) {
 private enum class LibraryPage { Downloads, Playlists, DataLocation }
 
 @Composable
-internal fun LocalLibraryView(connected: Boolean, play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit, saved: SavedLibraryModel,
+internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit, saved: SavedLibraryModel,
                               model: LocalLibraryModel = viewModel()) {
     val state by model.library.collectAsStateWithLifecycle()
     val portable by saved.portable.status.collectAsStateWithLifecycle()
@@ -146,8 +146,8 @@ internal fun LocalLibraryView(connected: Boolean, play: (List<Track>, Track) -> 
     fun closeCollection() { collectionId = null; collectionQuery = "" }
     BackHandler(page != null || collectionId != null) { if (page != null) page = null else closeCollection() }
     when (page) {
-        LibraryPage.Downloads -> { DownloadsPage(saved, connected, play) { page = null }; return }
-        LibraryPage.Playlists -> { PlaylistsPage(saved, index, connected, play, playGroup) { page = null }; return }
+        LibraryPage.Downloads -> { DownloadsPage(saved, play) { page = null }; return }
+        LibraryPage.Playlists -> { PlaylistsPage(saved, index, play, playGroup) { page = null }; return }
         LibraryPage.DataLocation -> { DataLocationPage(saved.portable) { page = null }; return }
         null -> Unit
     }
@@ -212,13 +212,13 @@ internal fun LocalLibraryView(connected: Boolean, play: (List<Track>, Track) -> 
                     modifier = Modifier.clickable { collectionId = group.id })
             }
         } else {
-            if (entries.isNotEmpty()) item { LocalPlaybackButtons(matching, connected, playGroup) }
+            if (entries.isNotEmpty()) item { LocalPlaybackButtons(matching, playGroup) }
             if (!state.loading && matching.isEmpty()) item { EmptyMessage(mb("暂无本地曲目", "No Local Tracks")) }
             items(matching, key = Track::id) { track ->
                 var menu by remember { mutableStateOf(false) }
                 val trackActions = LocalTrackActions.current
                 val favorite = (activity[track.id]?.likedAt ?: 0) > 0
-                TrackRow(track, connected, actions = {
+                TrackRow(track, actions = {
                     Box {
                         IconButton(enabled = !state.loading, onClick = { menu = true }) {
                             Icon(Icons.Default.MoreVert, mb("操作 ${track.title}", "Actions for ${track.title}"))
@@ -256,8 +256,8 @@ internal fun LocalMusicSearch(query: String, change: (String) -> Unit, label: St
 }
 
 @Composable
-internal fun LocalPlaybackButtons(tracks: List<Track>, connected: Boolean, play: (List<Track>, Boolean) -> Unit) {
-    val enabled = connected && tracks.any { !it.isUnavailable }
+internal fun LocalPlaybackButtons(tracks: List<Track>, play: (List<Track>, Boolean) -> Unit) {
+    val enabled = tracks.any { !it.isUnavailable }
     FlowRow(Modifier.padding(horizontal = 8.dp)) {
         TextButton(onClick = { play(tracks, false) }, enabled = enabled) { Text(mb("播放全部", "Play All")) }
         TextButton(onClick = { play(tracks, true) }, enabled = enabled) { Text(mb("随机播放", "Shuffle Play")) }

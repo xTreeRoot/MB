@@ -85,7 +85,7 @@ internal fun DataLocationPage(library: PortableLibrary, back: () -> Unit) {
 }
 
 @Composable
-internal fun DownloadsPage(saved: SavedLibraryModel, connected: Boolean, play: (List<Track>, Track) -> Unit, back: () -> Unit) {
+internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) -> Unit, back: () -> Unit) {
     val context = LocalContext.current
     val offline by saved.offline.collectAsStateWithLifecycle()
     val transfers by saved.transfers.collectAsStateWithLifecycle()
@@ -124,7 +124,7 @@ internal fun DownloadsPage(saved: SavedLibraryModel, connected: Boolean, play: (
         item { Text(mb("已下载", "Downloaded"), Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium) }
         if (tracks.isEmpty()) item { EmptyMessage(mb("暂无下载", "No Downloads")) }
         items(tracks, key = Track::id) { track ->
-            TrackRow(track, connected, actions = {
+            TrackRow(track, actions = {
                 SavedTrackMenu(track, more = { actions(track) }) {
                     DropdownMenuItem(text = { Text(mb("删除下载", "Delete Download")) }, onClick = { it(); remove = track.id })
                 }
@@ -142,7 +142,7 @@ internal fun DownloadsPage(saved: SavedLibraryModel, connected: Boolean, play: (
 }
 
 @Composable
-internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex, connected: Boolean,
+internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
                            play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit, back: () -> Unit) {
     val playlists by saved.playlists.collectAsStateWithLifecycle()
     val available = remember(library) { library.songs.associateBy(Track::id) }
@@ -182,13 +182,13 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex, c
             val tracks = current.trackIds.mapNotNull(available::get)
             val matching = library.filter(tracks, trackQuery)
             item { LocalMusicSearch(trackQuery, { trackQuery = it }, mb("在此页面搜索", "Search This Page")) }
-            if (tracks.isNotEmpty()) item { LocalPlaybackButtons(matching, connected, playGroup) }
+            if (tracks.isNotEmpty()) item { LocalPlaybackButtons(matching, playGroup) }
             item { TextButton(onClick = { chooseTracks = true }) { Text(mb("添加歌曲", "Add Songs")) } }
             if (tracks.isEmpty()) item { EmptyMessage(mb("歌单暂无歌曲", "This Playlist Is Empty")) }
             else if (matching.isEmpty()) item { EmptyMessage(mb("没有匹配的歌曲", "No Matching Songs")) }
             items(matching, key = Track::id) { track ->
                 val index = tracks.indexOf(track)
-                TrackRow(track, connected, actions = {
+                TrackRow(track, actions = {
                     SavedTrackMenu(track, more = { actions(track) }) { close ->
                         DropdownMenuItem(text = { Text(mb("上移", "Move Up")) }, enabled = trackQuery.isBlank() && index > 0, onClick = {
                             close(); saved.move(current.id, track.id, -1, available.keys)

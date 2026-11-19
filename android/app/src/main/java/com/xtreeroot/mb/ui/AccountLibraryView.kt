@@ -31,7 +31,7 @@ internal fun LibraryRoute.title(): String = when (this) {
 }
 
 @Composable
-internal fun AccountLibraryView(model: LibraryPages, connected: Boolean, open: (LibraryRoute) -> Unit,
+internal fun AccountLibraryView(model: LibraryPages, open: (LibraryRoute) -> Unit,
                                 play: (List<Track>, Track) -> Unit) {
     val state by model.state.collectAsStateWithLifecycle()
     val page = state.value
@@ -45,11 +45,12 @@ internal fun AccountLibraryView(model: LibraryPages, connected: Boolean, open: (
                         modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
                 }, modifier = Modifier.clickable { open(link.route) })
         }
-        if (page.tracks.isNotEmpty()) item {
-            Button(enabled = connected, onClick = { play(page.tracks, page.tracks.first()) },
+        val first = page.tracks.firstOrNull { !it.isUnavailable }
+        if (first != null) item {
+            Button(onClick = { play(page.tracks, first) },
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { Text(mb("播放全部", "Play All")) }
         }
-        items(page.tracks, key = Track::id) { track -> TrackRow(track, connected) { play(page.tracks, track) } }
+        items(page.tracks, key = Track::id) { track -> TrackRow(track) { play(page.tracks, track) } }
         when {
             state.loading -> if (!refreshing) item { Loading() }
             state.error != null -> if (state.retryingAppend) item { Retry(checkNotNull(state.error), model::retry) }
