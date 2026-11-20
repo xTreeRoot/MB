@@ -26,6 +26,7 @@ internal class SavedLibraryModel(application: Application) : AndroidViewModel(ap
     private val store = app.offline.store
     private val playlistStore = app.playlists
     private val activityState = MutableStateFlow(emptyMap<String, LocalTrackActivity>())
+    private val refreshingState = MutableStateFlow(false)
     private val notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = notices.asSharedFlow()
     val offline = store.snapshot
@@ -34,15 +35,27 @@ internal class SavedLibraryModel(application: Application) : AndroidViewModel(ap
     val playlists = playlistStore.playlists
     val portable = app.portableLibrary
     val activity = activityState.asStateFlow()
+    val refreshing = refreshingState.asStateFlow()
 
     init {
-        runIO { store.refresh(); playlistStore.refresh() }
+        refresh()
         viewModelScope.launch {
             app.local.catalog.changes.collect {
                 try { activityState.value = app.local.catalog.activity().associateBy(LocalTrackActivity::trackId) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { report(failure) }
             }
+        }
+    }
+
+    fun refresh() {
+        if (refreshingState.value) return
+        refreshingState.value = true
+        viewModelScope.launch {
+            try { withContext(Dispatchers.IO) { store.refresh(); playlistStore.refresh() } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { report(failure) }
+            finally { refreshingState.value = false }
         }
     }
 

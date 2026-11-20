@@ -1,7 +1,12 @@
 package com.xtreeroot.mb.local
 
 import com.xtreeroot.mb.music.MediaResource
+import com.xtreeroot.mb.music.SourceResponseFailure
 import com.xtreeroot.mb.music.Track
+import com.xtreeroot.mb.music.isMediaAddressUnavailable
+import com.xtreeroot.mb.music.isMediaConnectionFailure
+import com.xtreeroot.mb.music.maxMediaBackupAddresses
+import java.io.EOFException
 import java.io.File
 import java.io.IOException
 import java.net.URL
@@ -11,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,49 +78,87 @@ internal class OfflineTransfers(
         val staged = store.staging()
         try {
             transfer(resource, staged, ticket?.maximumBytes ?: 8L * 1024 * 1024 * 1024, progress)
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            currentCoroutineContext().ensureActive()
             store.save(staged, track, resource.fileExtension, ticket)
         } finally { staged.delete() }
     }
 
     private suspend fun transfer(resource: MediaResource, destination: File, maximum: Long,
                                   progress: (Long, Long) -> Unit) {
-        val context = kotlinx.coroutines.currentCoroutineContext()
-        val address = URL(resource.url)
-        if (address.protocol != "https" || address.host.isBlank() || address.userInfo != null) {
-            throw IOException("音频地址不受支持")
-        }
-        val connection = open(address) as HttpsURLConnection
-        try {
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = 12_000
-            connection.readTimeout = 15_000
-            resource.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            if (connection.responseCode != 200) throw IOException("没有收到完整的音频响应")
-            val mime = connection.contentType.orEmpty().substringBefore(';').lowercase()
-            if (mime.startsWith("text/") || mime == "application/json") throw IOException("响应不是音频")
-            val expected = connection.contentLengthLong
-            if (expected > maximum) throw IOException("音频超过保存上限")
-            var received = 0L
-            var reported = 0L
-            connection.inputStream.use { input ->
-                destination.outputStream().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        context.ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        received += count
-                        if (received > maximum) throw IOException("音频超过保存上限")
-                        output.write(buffer, 0, count)
-                        if (received - reported >= 128 * 1024) { reported = received; progress(received, expected) }
-                    }
-                    output.fd.sync()
-                }
+        val context = currentCoroutineContext()
+        val addresses = listOf(resource.url) + resource.backupUrls.take(maxMediaBackupAddresses)
+        for ((index, address) in addresses.withIndex()) {
+            try {
+                transferFrom(URL(address), resource.headers, destination, maximum, progress)
+                return
+            } catch (failure: IOException) {
+                context.ensureActive()
+                val retry = if (failure is SourceResponseFailure) failure.kind == SourceResponseFailure.Kind.HTTP &&
+                    failure.code.isMediaAddressUnavailable()
+                    else failure.isMediaConnectionFailure()
+                if (!retry || index == addresses.lastIndex) throw failure
+                progress(0, -1)
             }
-            if (received <= 0 || (expected >= 0 && received != expected)) throw IOException("音频响应不完整")
-            progress(received, expected)
-        } finally { connection.disconnect() }
+        }
     }
+
+    private suspend fun transferFrom(initial: URL, initialHeaders: Map<String, String>, destination: File, maximum: Long,
+                                      progress: (Long, Long) -> Unit) {
+        var address = initial
+        var headers = initialHeaders
+        repeat(10) {
+            currentCoroutineContext().ensureActive()
+            if (address.protocol != "https" || address.host.isBlank() || address.userInfo != null) {
+                throw IOException("音频地址不受支持")
+            }
+            val connection = open(address) as HttpsURLConnection
+            val next = try {
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = 12_000
+                connection.readTimeout = 15_000
+                headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                connection.setRequestProperty("Accept-Encoding", "identity")
+                when (val status = connection.responseCode) {
+                    200 -> { writeAudio(connection, destination, maximum, progress); return }
+                    301, 302, 303, 307, 308 -> URL(address, connection.getHeaderField("Location")?.takeIf(String::isNotBlank)
+                        ?: throw IOException("音频重定向缺少地址"))
+                    else -> throw SourceResponseFailure(SourceResponseFailure.Kind.HTTP, status, "没有收到完整的音频响应")
+                }
+            } finally { connection.disconnect() }
+            if (address.protocol != next.protocol || !address.host.equals(next.host, ignoreCase = true) ||
+                address.effectivePort != next.effectivePort) headers = emptyMap()
+            address = next
+        }
+        throw IOException("音频重定向次数过多")
+    }
+
+    private suspend fun writeAudio(connection: HttpsURLConnection, destination: File, maximum: Long,
+                                    progress: (Long, Long) -> Unit) {
+        val context = currentCoroutineContext()
+        val mime = connection.contentType.orEmpty().substringBefore(';').lowercase()
+        if (mime.startsWith("text/") || mime == "application/json") throw IOException("响应不是音频")
+        val expected = connection.contentLengthLong
+        if (expected > maximum) throw IOException("音频超过保存上限")
+        var received = 0L
+        var reported = 0L
+        connection.inputStream.use { input ->
+            destination.outputStream().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    context.ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    received += count
+                    if (received > maximum) throw IOException("音频超过保存上限")
+                    output.write(buffer, 0, count)
+                    if (received - reported >= 128 * 1024) { reported = received; progress(received, expected) }
+                }
+                if (received <= 0 || (expected >= 0 && received != expected)) throw EOFException("音频响应不完整")
+                output.fd.sync()
+            }
+        }
+        progress(received, expected)
+    }
+
+    private val URL.effectivePort get() = if (port == -1) defaultPort else port
 }

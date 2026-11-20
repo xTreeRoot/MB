@@ -6,8 +6,10 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -41,6 +43,29 @@ class LocalLibrarySearchDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val automation = instrumentation.uiAutomation
     private val app = instrumentation.targetContext.applicationContext as MBApplication
+
+    @Test fun pullingToRefreshFindsNewLocalAudioWithoutLosingTheSearch() = runBlocking {
+        val query = "Orbit Fixture"
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        var imported: Track? = null
+        try {
+            tap("资料库", "Library")
+            setQuery(query)
+            val empty = node("没有匹配的本地内容", "No Matching Library Items")
+            imported = addTrack("Orbit Fixture Recording", "Fixture Artist", "", "")
+            val bounds = Rect().also(empty::getBoundsInScreen)
+            val screen = Rect().also(checkNotNull(automation.rootInActiveWindow)::getBoundsInScreen)
+            val end = minOf(bounds.centerY() + screen.height() / 3, screen.bottom - 40)
+            automation.executeShellCommand("input swipe ${bounds.centerX()} ${bounds.centerY()} ${bounds.centerX()} $end 420")
+                .let { ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() } }
+            node(imported.title)
+            expectQuery(query)
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+            imported?.let { app.local.delete(it.sourceTrackId) }
+        }
+    }
 
     @Test fun libraryHomeCreatesOpensRenamesAndDeletesAPlaylistWithoutRemovingAudio() = runBlocking {
         val initial = "Rain Room Fixture"

@@ -123,6 +123,7 @@ internal fun DataLocationPage(library: PortableLibrary, back: () -> Unit) {
 internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) -> Unit, back: () -> Unit) {
     val context = LocalContext.current
     val offline by saved.offline.collectAsStateWithLifecycle()
+    val refreshing by saved.refreshing.collectAsStateWithLifecycle()
     val transfers by saved.transfers.collectAsStateWithLifecycle()
     val error by saved.transferError.collectAsStateWithLifecycle()
     var cacheMenu by remember { mutableStateOf(false) }
@@ -131,7 +132,7 @@ internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) 
     val actions = LocalTrackActions.current
     val tracks = offline.downloads.map { it.track }
     val cacheSize = android.text.format.Formatter.formatShortFileSize(context, offline.cacheBytes)
-    LazyColumn(Modifier.fillMaxSize()) {
+    RefreshableList(refreshing = refreshing, refresh = saved::refresh) {
         item { LibraryPageHeader(mb("下载与缓存", "Downloads & Cache"), back) }
         item {
             ListItem(headlineContent = { Text(mb("播放缓存", "Playback Cache")) }, supportingContent = { Text(mb("已用 $cacheSize", "$cacheSize used")) }, trailingContent = {

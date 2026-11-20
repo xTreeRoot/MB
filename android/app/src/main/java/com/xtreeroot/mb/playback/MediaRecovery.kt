@@ -17,12 +17,13 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
 import com.xtreeroot.mb.music.SourceResponseFailure
-import java.io.EOFException
+import com.xtreeroot.mb.music.isMediaAddressUnavailable
+import com.xtreeroot.mb.music.isMediaConnectionFailure
+import com.xtreeroot.mb.music.maxMediaBackupAddresses
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
 import java.net.ProtocolException
-import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
@@ -103,7 +104,7 @@ internal class MediaAddressDataSource(private val upstream: DataSource) : DataSo
     override fun open(dataSpec: DataSpec): Long {
         if (backupUrls.isEmpty()) return upstream.open(dataSpec)
         openedAddress?.let { return upstream.open(dataSpec.withUri(it)) }
-        val addresses = listOf(dataSpec.uri) + backupUrls.take(2).map(Uri::parse)
+        val addresses = listOf(dataSpec.uri) + backupUrls.take(maxMediaBackupAddresses).map(Uri::parse)
         for ((index, address) in addresses.withIndex()) {
             try {
                 val length = upstream.open(dataSpec.withUri(address))
@@ -119,9 +120,8 @@ internal class MediaAddressDataSource(private val upstream: DataSource) : DataSo
 
     private fun canTryBackup(error: IOException): Boolean = mediaCauses(error).any { cause ->
         when (cause) {
-            is MediaFetchFailure -> cause.status in setOf(401, 403, 404, 410, 429) || cause.status?.let { it in 500..599 } == true
-            is UnknownHostException, is SocketException, is SocketTimeoutException, is EOFException -> true
-            else -> false
+            is MediaFetchFailure -> cause.status?.isMediaAddressUnavailable() == true
+            else -> cause.isMediaConnectionFailure()
         }
     }
 }
@@ -133,7 +133,7 @@ internal fun mediaRecovery(error: Throwable): MediaRecovery? {
     if (failure != null) return failure.recovery
     return MediaRecovery.Reopen.takeIf {
         mediaCauses(remote).any { cause ->
-            cause is SocketException || cause is SocketTimeoutException || cause is UnknownHostException || cause is EOFException ||
+            cause.isMediaConnectionFailure() ||
                 (cause is ProtocolException && remote.type == HttpDataSource.HttpDataSourceException.TYPE_READ)
         }
     }

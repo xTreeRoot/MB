@@ -13,13 +13,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -145,6 +143,7 @@ private enum class LibraryPage { Downloads, Playlists, DataLocation }
 internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit, saved: SavedLibraryModel,
                               model: LocalLibraryModel = viewModel()) {
     val state by model.library.collectAsStateWithLifecycle()
+    val refreshing by saved.refreshing.collectAsStateWithLifecycle()
     val portable by saved.portable.status.collectAsStateWithLifecycle()
     val offline by saved.offline.collectAsStateWithLifecycle()
     val activity by saved.activity.collectAsStateWithLifecycle()
@@ -204,7 +203,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     val matchedPlaylists = if (searching) playlists.filter { matchesLocalMusic(it.name, query) } else emptyList()
     val songsById = remember(index) { index.songs.associateBy(Track::id) }
     val listState = key(activeCategory, collectionId) { rememberLazyListState() }
-    LazyColumn(Modifier.fillMaxSize(), state = listState) {
+    RefreshableList(refreshing = refreshing || state.loading, refresh = { model.refresh(); saved.refresh() }, state = listState) {
         item(key = "local-controls") {
             Column {
                 if (collectionId != null) {
@@ -242,7 +241,6 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
                 }
             }
         }
-        if (state.loading) item { Loading() }
         state.error?.let { error -> item { Retry(error, model::refresh) } }
         if (!searching && collectionId == null && category == Category.Songs && index.recentAdditions.isNotEmpty()) {
             item(key = "recent-additions") { RecentAdditions(index.recentAdditions, play) }
