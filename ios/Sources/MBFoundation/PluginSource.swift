@@ -47,10 +47,16 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         let key = ResponseCache.key([manifest.id, manifest.version ?? "", scope, method, String(decoding: try encoder.encode(arguments), as: UTF8.self)])
         let runtime = runtime
         let data = try await runtime.catalogCache.data(key: key, lifetime: 6 * 3600) {
-            try JSONEncoder().encode(try await runtime.invoke(method, arguments: arguments))
+            try await self.catalogData(method, arguments: arguments, generation: generation)
         }
         guard generation == accountGeneration else { throw CancellationError() }
         return try JSONDecoder().decode(PluginJSON.self, from: data)
+    }
+    private func catalogData(_ method: String, arguments: PluginJSON, generation: Int) async throws -> Data {
+        guard generation == accountGeneration else { throw CancellationError() }
+        let value = try await runtime.invoke(method, arguments: arguments)
+        guard generation == accountGeneration else { throw CancellationError() }
+        return try JSONEncoder().encode(value)
     }
     public func invalidateCatalog() async { await runtime.catalogCache.invalidate() }
     public func mutate(_ method: String, arguments: PluginJSON) async throws {

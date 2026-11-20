@@ -223,3 +223,28 @@ func qrCookieRejectsUntrustedCallback(_ callback: String) throws {
     try await source.signOut()
     await #expect(throws: BilibiliError.signInRequired) { try await source.library(.liked, cursor: nil) }
 }
+
+@Test func personalLibraryDoesNotPersistRowsArrivingAfterSignOut() async throws {
+    let gate = PollGate()
+    let store = SessionMemory(BilibiliSession(cookie: testCookie, active: true))
+    let source = BilibiliSource(transport: { request in
+        let url = try #require(request.url)
+        let body: String
+        if url.path == "/x/web-interface/nav" { body = loggedIn }
+        else {
+            #expect(url.path == "/x/space/like/video")
+            await gate.pause()
+            body = #"{"code":0,"data":{"list":[]}}"#
+        }
+        return (Data(body.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
+    }, now: { Date(timeIntervalSince1970: 1_702_204_169) }, sessionStore: store)
+    let pending = Task { try await source.library(.liked, cursor: nil) }
+    await gate.wait()
+    try await source.signOut()
+    await gate.release()
+    await #expect(throws: CancellationError.self) { try await pending.value }
+    let route = String(decoding: try JSONEncoder().encode(LibraryRoute.liked), as: UTF8.self)
+    let key = ResponseCache.key(["user:42", route, ""])
+    let result = try await source.libraryCache.data(key: key, lifetime: 3600) { Data("new".utf8) }
+    #expect(result == Data("new".utf8))
+}
