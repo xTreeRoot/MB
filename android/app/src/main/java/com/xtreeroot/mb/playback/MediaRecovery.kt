@@ -11,6 +11,8 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
+import com.xtreeroot.mb.music.PlaybackIssue
+import com.xtreeroot.mb.music.PlaybackIssueException
 import java.io.EOFException
 import java.io.IOException
 import java.net.ProtocolException
@@ -104,8 +106,12 @@ internal fun guardedMediaClient(client: OkHttpClient, guard: MediaRangeGuard): O
 @OptIn(UnstableApi::class)
 internal fun ProgressiveMediaSource.Factory.recoverOutsideLoader() = setLoadErrorHandlingPolicy(
     object : DefaultLoadErrorHandlingPolicy() {
-        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long =
-            if (mediaCauses(loadErrorInfo.exception).any { it is HttpDataSource.HttpDataSourceException }) C.TIME_UNSET
-            else super.getRetryDelayMsFor(loadErrorInfo)
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long {
+            val stop = mediaCauses(loadErrorInfo.exception).any { failure ->
+                failure is HttpDataSource.HttpDataSourceException ||
+                    failure is PlaybackIssueException && failure.issue != PlaybackIssue.Network && failure.issue != PlaybackIssue.Unknown
+            }
+            return if (stop) C.TIME_UNSET else super.getRetryDelayMsFor(loadErrorInfo)
+        }
     },
 )

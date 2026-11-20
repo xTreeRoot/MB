@@ -80,7 +80,12 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
     }
     val compat = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         when (result.resultCode) {
-            Activity.RESULT_OK -> result.data?.getStringExtra(CompatPluginBrowserActivity.cookieKey)?.let(onCookies) ?: close()
+            Activity.RESULT_OK -> result.data?.getStringExtra(CompatPluginBrowserActivity.cookieKey)?.let(onCookies)
+                ?: fail(PluginBrowserIssue.Startup)
+            Activity.RESULT_CANCELED -> {
+                if (result.data?.getBooleanExtra(CompatPluginBrowserActivity.userCancelledKey, false) == true) close()
+                else fail(PluginBrowserIssue.Startup)
+            }
             CompatPluginBrowserActivity.failed -> {
                 val pageError = result.data?.getStringExtra(CompatPluginBrowserActivity.documentErrorKey)
                 if (pageError != null) onDocumentError(pageError) else {
@@ -88,7 +93,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
                     fail(PluginBrowserIssue.entries.firstOrNull { it.name == name } ?: PluginBrowserIssue.Startup)
                 }
             }
-            else -> close()
+            else -> fail(PluginBrowserIssue.Startup)
         }
     }
     fun openCompat() {

@@ -45,7 +45,7 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-        val page = intent.page() ?: return finish()
+        val page = intent.page() ?: return finishWithIssue(PluginBrowserIssue.Startup)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             return finishWithIssue(PluginBrowserIssue.UnsupportedProvider)
         }
@@ -76,9 +76,9 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
             val dark = intent.getBooleanExtra("dark", false)
             CompositionLocalProvider(LocalMBEnglish provides english) {
                 MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                    BackHandler { complete(Activity.RESULT_CANCELED) }
+                    BackHandler(onBack = ::cancel)
                     if (!closing.value) PluginBrowserPanel(page, mb("取消", "Cancel").takeIf { page.signIn != null }
-                        ?: mb("完成", "Done"), close = { complete(Activity.RESULT_CANCELED) },
+                        ?: mb("完成", "Done"), close = ::cancel,
                         create = PluginBrowserSession::createInDisposableProcess,
                         onFailure = { issue ->
                             val result = if (issue == PluginBrowserIssue.Startup) startupIssue() else issue
@@ -92,7 +92,9 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         }
     }
 
-    private fun complete(result: Int, data: Intent? = null) {
+    private fun cancel() = complete(Activity.RESULT_CANCELED, Intent().putExtra(userCancelledKey, true))
+
+    private fun complete(result: Int, data: Intent) {
         if (closing.value) return
         setResult(result, data)
         closing.value = true
@@ -121,6 +123,7 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         const val cookieKey = "completed-cookies"
         const val issueKey = "browser-issue"
         const val documentErrorKey = "browser-document-error"
+        const val userCancelledKey = "browser-user-cancelled"
 
         fun prepareProcess() {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || directorySuffix != null) return

@@ -1,10 +1,12 @@
 package com.xtreeroot.mb.plugin
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -108,6 +110,49 @@ class PluginBrowserSessionTest {
                         assertEquals(CompatPluginBrowserActivity.failed, failure.resultCode)
                         assertEquals(PluginBrowserIssue.Navigation.name,
                             failure.data?.getStringExtra(CompatPluginBrowserActivity.issueKey))
+                    } finally { launcher.unregister() }
+                }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test fun compatibilityBrowserDistinguishesAnInvalidLaunchFromUserCancellation() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
+        val automation = instrumentation.uiAutomation
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val target = URI("https://example.invalid/")
+        val request = PluginWebSignIn("Compatibility cancellation fixture", target, target, setOf("session"), null,
+            html = "<p>Waiting for cancellation</p>")
+        val page = PluginBrowserPage(request.title, target, request.id, request)
+        try {
+            withTimeout(15_000) {
+                withContext(Dispatchers.Main) {
+                    val results = Channel<ActivityResult>(Channel.UNLIMITED)
+                    val launcher = activity.activityResultRegistry.register("browser-cancel-fixture",
+                        ActivityResultContracts.StartActivityForResult()) { results.trySend(it) }
+                    try {
+                        launcher.launch(Intent(context, CompatPluginBrowserActivity::class.java))
+                        val invalid = results.receive()
+                        assertEquals(CompatPluginBrowserActivity.failed, invalid.resultCode)
+                        assertEquals(PluginBrowserIssue.Startup.name, invalid.data?.getStringExtra(CompatPluginBrowserActivity.issueKey))
+
+                        launcher.launch(CompatPluginBrowserActivity.intent(context, page, english = true, dark = false))
+                        fun hasCancel(node: AccessibilityNodeInfo): Boolean =
+                            (node.isVisibleToUser && node.text?.toString() == "Cancel") ||
+                                (0 until node.childCount).any { index -> node.getChild(index)?.let(::hasCancel) == true }
+                        withContext(Dispatchers.IO) {
+                            while (automation.rootInActiveWindow?.let(::hasCancel) != true) delay(50)
+                            automation.executeShellCommand("input keyevent KEYCODE_BACK").let {
+                                ParcelFileDescriptor.AutoCloseInputStream(it).use { stream -> stream.readBytes() }
+                            }
+                        }
+                        val cancelled = results.receive()
+                        assertEquals(Activity.RESULT_CANCELED, cancelled.resultCode)
+                        assertTrue(cancelled.data?.getBooleanExtra(CompatPluginBrowserActivity.userCancelledKey, false) == true)
                     } finally { launcher.unregister() }
                 }
             }

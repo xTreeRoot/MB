@@ -77,6 +77,35 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PlaybackReportingDeviceTest {
+    @Test fun signInRequiredIsReportedWithoutReissuingTheAudioRequest() = runBlocking {
+        withFixture { player ->
+            val restricted = first.copy(sourceTrackId = "restricted", title = "Restricted")
+            suspend fun attempts() = source.search("streamAttempts", 1).tracks.single().title.toInt()
+            assertEquals(0, attempts())
+            withContext(Dispatchers.Main) {
+                player.setMediaItems(listOf(restricted.mediaItem(), second.mediaItem()), 0, 12_000)
+                player.prepare()
+                player.play()
+            }
+            eventually { player.playerError != null && app.trackPlaybackIssues.values.value[restricted.playbackKey]?.issue == PlaybackIssue.SignIn }
+            assertEquals("An explicit login requirement is not a transient network failure", 1, attempts())
+            withContext(Dispatchers.Main) {
+                assertEquals(12_000L, player.currentPosition)
+                player.prepare()
+                player.play()
+            }
+            withTimeout(8_000) { while (attempts() < 2) delay(20) }
+            eventually { player.playerError != null }
+            assertEquals(2, attempts())
+            withContext(Dispatchers.Main) {
+                player.seekToDefaultPosition(1)
+                player.prepare()
+                player.play()
+            }
+            eventually { player.isPlaying && player.currentMediaItem?.mediaId == second.id && player.currentPosition > 100 }
+        }
+    }
+
     @Test fun unavailableSourceDoesNotPreventAnotherSongFromPlaying() = runBlocking {
         withFixture { player ->
             val removed = first.copy(sourceId = "removed-fixture", title = "Removed")
@@ -1329,6 +1358,10 @@ class PlaybackReportingDeviceTest {
             zip.write("""
                 export function stream({id}) {
                     if (id === 'pending') return new Promise(() => {});
+                    if (id === 'restricted') {
+                        host.storage.set('streamAttempts', (host.storage.get('streamAttempts') ?? 0) + 1);
+                        throw Object.assign(new Error('Sign in first'), {code: 'signIn'});
+                    }
                     throw new Error('Fixture audio uses a local copy');
                 }
                 export function played({id}) {
@@ -1349,6 +1382,7 @@ class PlaybackReportingDeviceTest {
                 }
                 export function search({query}) {
                     if (query === 'station') return {tracks: [{id: 'station', name: host.storage.get('stationRequest')}]};
+                    if (query === 'streamAttempts') return {tracks: [{id: 'attempts', name: String(host.storage.get('streamAttempts') ?? 0)}]};
                     return {tracks: (host.storage.get('plays') ?? []).map((name, index) => ({id: String(index), name}))};
                 }
             """.trimIndent().encodeToByteArray())
