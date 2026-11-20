@@ -13,16 +13,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,13 +50,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtreeroot.mb.local.LocalPlaylist
 import com.xtreeroot.mb.local.LocalMusicIndex
 import com.xtreeroot.mb.local.OfflineMediaStore
 import com.xtreeroot.mb.local.PortableLibrary
+import com.xtreeroot.mb.local.Transfer
 import com.xtreeroot.mb.local.matchesLocalMusic
 import com.xtreeroot.mb.music.Track
 import java.text.DateFormat
@@ -150,13 +157,7 @@ internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) 
             TextButton(enabled = offline.cacheBytes > 0, onClick = { clear = true }) { Text(mb("清空播放缓存", "Clear Playback Cache")) }
         }
         error?.let { message -> item { EmptyMessage(message) } }
-        items(transfers.values.toList(), key = { "transfer:${it.track.id}" }) { transfer ->
-            ListItem(headlineContent = { Text(transfer.track.title, maxLines = 1) }, supportingContent = {
-                if (transfer.expected > 0) LinearProgressIndicator(progress = {
-                    (transfer.received.toFloat() / transfer.expected).coerceIn(0f, 1f)
-                }, modifier = Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
-            }, trailingContent = { TextButton(onClick = { saved.cancel(transfer.track.id) }) { Text(mb("取消下载", "Cancel Download")) } })
-        }
+        activeDownloadSection(transfers, saved::cancel)
         item { Text(mb("已下载", "Downloaded"), Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium) }
         if (tracks.isEmpty()) item { EmptyMessage(mb("暂无下载", "No Downloads")) }
         items(tracks, key = Track::id) { track ->
@@ -175,6 +176,30 @@ internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) 
         mb("仅删除此音频的离线副本。", "Only the offline copy of this track will be deleted."), mb("删除", "Delete"), { remove = null }) {
         remove = null; saved.removeDownload(id)
     } }
+}
+
+internal fun LazyListScope.activeDownloadSection(transfers: Map<String, Transfer>, cancel: (String) -> Unit) {
+    if (transfers.isEmpty()) return
+    item(key = "active-downloads") {
+        Text(mb("正在下载", "Downloading"), Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp).semantics { heading() },
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+    items(transfers.values.toList(), key = { "transfer:${it.track.id}" }) { transfer ->
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 8.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(transfer.track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium)
+                val indicator = Modifier.fillMaxWidth().height(3.dp)
+                if (transfer.expected > 0) LinearProgressIndicator(progress = {
+                    (transfer.received.toFloat() / transfer.expected).coerceIn(0f, 1f)
+                }, modifier = indicator) else LinearProgressIndicator(indicator)
+            }
+            IconButton(onClick = { cancel(transfer.track.id) }) {
+                Icon(Icons.Default.Close, mb("取消下载：${transfer.track.title}", "Cancel Download: ${transfer.track.title}"))
+            }
+        }
+    }
 }
 
 @Composable

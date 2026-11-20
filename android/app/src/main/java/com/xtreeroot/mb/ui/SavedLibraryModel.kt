@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.local.LocalPlaylist
 import com.xtreeroot.mb.local.LocalTrackActivity
+import com.xtreeroot.mb.local.OfflineTransfers
 import com.xtreeroot.mb.local.localSourceId
 import com.xtreeroot.mb.music.Track
 import java.io.File
@@ -29,17 +30,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal class SavedLibraryModel(application: Application) : AndroidViewModel(application) {
+internal class SavedLibraryModel(application: Application, private val downloads: OfflineTransfers) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, (application as MBApplication).offline)
+
     private val app = application as MBApplication
-    private val store = app.offline.store
+    private val store = downloads.store
     private val playlistStore = app.playlists
     private val activityState = MutableStateFlow(emptyMap<String, LocalTrackActivity>())
     private val refreshingState = MutableStateFlow(false)
     private val notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = notices.asSharedFlow()
     val offline = store.snapshot
-    val transfers = app.offline.transfers
-    val transferError = app.offline.error
+    val transfers = downloads.transfers
+    val transferError = downloads.error
     val playlists = playlistStore.playlists
     val portable = app.portableLibrary
     val activity = activityState.asStateFlow()
@@ -74,8 +77,8 @@ internal class SavedLibraryModel(application: Application) : AndroidViewModel(ap
             catch (failure: Exception) { report(failure) }
         }
     }
-    fun download(track: Track) = app.offline.download(track)
-    fun cancel(id: String) = app.offline.cancel(id)
+    fun download(track: Track) = downloads.download(track)
+    fun cancel(id: String) = downloads.cancel(id)
     fun removeDownload(id: String) = runIO { store.removeDownload(id) }
     fun clearCache() = runIO { store.clearCache() }
     fun setLimit(mb: Int) = runIO { store.setLimit(mb) }

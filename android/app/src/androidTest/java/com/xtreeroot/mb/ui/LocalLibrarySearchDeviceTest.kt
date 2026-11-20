@@ -15,13 +15,18 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.compose.setContent
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.MainActivity
 import com.xtreeroot.mb.local.LocalTrack
+import com.xtreeroot.mb.local.OfflineMediaStore
+import com.xtreeroot.mb.local.OfflineTransfers
 import com.xtreeroot.mb.local.localSourceId
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.playback.PlaybackService
@@ -34,6 +39,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -50,6 +56,50 @@ class LocalLibrarySearchDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val automation = instrumentation.uiAutomation
     private val app = instrumentation.targetContext.applicationContext as MBApplication
+
+    @Test fun homeCanCancelAnActiveDownloadWithoutLosingItsSearch() = runBlocking {
+        val directory = File(app.cacheDir, "active-download-${UUID.randomUUID()}")
+        val store = OfflineMediaStore(directory)
+        val testTrack = Track("fixture", "active-download", "Evening Session", "Fixture Artist")
+        val resolving = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val transfers = OfflineTransfers(store, { error("Unexpected network request") }) {
+            resolving.complete(Unit)
+            try { awaitCancellation() } finally { cancelled.complete(Unit) }
+        }
+        val screen = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            val saved = withContext(Dispatchers.Main) {
+                val factory = viewModelFactory { initializer { SavedLibraryModel(app, transfers) } }
+                ViewModelProvider(screen, factory)["active-download", SavedLibraryModel::class.java].also { model ->
+                    screen.setContent { MBRoot(saved = model) }
+                }
+            }
+            tap("资料库", "Library")
+            setQuery("Search stays here")
+            expectQuery("Search stays here")
+            withContext(Dispatchers.Main) { saved.download(testTrack) }
+            withTimeout(5_000) { resolving.await() }
+            node(testTrack.title)
+            capture("activeDownloadScreenshot", "android-library-active-download.png")
+            tap("取消下载：${testTrack.title}", "Cancel Download: ${testTrack.title}")
+            withTimeout(5_000) {
+                cancelled.await()
+                while (transfers.transfers.value.isNotEmpty()) delay(25)
+            }
+            expectQuery("Search stays here")
+            node("没有匹配的本地内容", "No Matching Library Items")
+            withTimeout(5_000) {
+                while (find { it.text?.toString() == testTrack.title } != null) delay(25)
+            }
+            assertTrue(store.snapshot.value.downloads.isEmpty())
+            assertNull(transfers.error.value)
+        } finally {
+            withContext(Dispatchers.Main) { transfers.cancel(testTrack.id); screen.finish() }
+            directory.deleteRecursively()
+        }
+    }
 
     @Test fun pullingToRefreshFindsNewLocalAudioWithoutLosingTheSearch() = runBlocking {
         val query = "Orbit Fixture"

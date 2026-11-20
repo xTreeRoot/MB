@@ -146,6 +146,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     val refreshing by saved.refreshing.collectAsStateWithLifecycle()
     val portable by saved.portable.status.collectAsStateWithLifecycle()
     val offline by saved.offline.collectAsStateWithLifecycle()
+    val transfers by saved.transfers.collectAsStateWithLifecycle()
     val activity by saved.activity.collectAsStateWithLifecycle()
     val playlists by saved.playlists.collectAsStateWithLifecycle()
     var category by rememberSaveable { mutableStateOf(Category.Songs) }
@@ -242,6 +243,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
             }
         }
         state.error?.let { error -> item { Retry(error, model::refresh) } }
+        if (collectionId == null) activeDownloadSection(transfers, saved::cancel)
         if (!searching && collectionId == null && category == Category.Songs && index.recentAdditions.isNotEmpty()) {
             item(key = "recent-additions") { RecentAdditions(index.recentAdditions, play) }
         }
