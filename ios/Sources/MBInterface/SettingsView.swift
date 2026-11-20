@@ -11,9 +11,13 @@ struct SettingsView: View {
     let platform: String
     @Environment(\.dismiss) private var dismiss
     @State private var clearingHistory = false
+    @State private var appUpdates = AppUpdateModel()
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink("检查版本") { AppUpdateView(model: appUpdates) }.accessibilityIdentifier("settings-app-updates")
+                }
                 Section("显示") {
                     Picker("语言", selection: $preferences.values.language) {
                         ForEach(AppLanguage.allCases) { language in Text(LocalizedStringKey(language.title)).tag(language) }

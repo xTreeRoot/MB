@@ -156,6 +156,53 @@ public actor NetworkClient {
         throw NetworkFailure.redirect
     }
 
+    /// 保留逐跳代理与取消策略，流式写入并校验公开发布资产；失败不留下可分享文件。
+    public func downloadVerifiedFile(for original: URLRequest, size: Int, sha256: String,
+                                     progress: @escaping @Sendable (Double) -> Void,
+                                     permitting: @Sendable (URL) -> Bool) async throws -> URL {
+        var request = original
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            let destination = try Self.url(request)
+            guard permitting(destination) else { throw URLError(.noPermissionsToReadFile) }
+            let session = policy.usesSystemProxy(for: destination) ? system : direct
+            let (stream, response) = try await session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse else { throw NetworkFailure.response }
+            if let next = try Self.redirect(request, response: http) { request = next; continue }
+            guard http.statusCode == 200 else { throw NetworkFailure.http(http.statusCode) }
+            var verifier = try VerifiedDownload(size: size, sha256: sha256)
+            guard response.expectedContentLength <= Int64(size) else { throw AppUpdateFailure.archive }
+            let directory = FileManager.default.temporaryDirectory
+            let free = try directory.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity ?? 0
+            guard free > size + (64 << 20) else { throw CocoaError(.fileWriteOutOfSpace) }
+            let target = directory.appendingPathComponent("mb-update-\(UUID()).download")
+            guard FileManager.default.createFile(atPath: target.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+            do {
+                let file = try FileHandle(forWritingTo: target)
+                defer { try? file.close() }
+                var buffer = Data(); buffer.reserveCapacity(64 << 10)
+                for try await byte in stream {
+                    buffer.append(byte)
+                    if buffer.count == 64 << 10 {
+                        try Task.checkCancellation()
+                        try verifier.consume(buffer); try file.write(contentsOf: buffer)
+                        progress(Double(verifier.written) / Double(size))
+                        buffer.removeAll(keepingCapacity: true)
+                    }
+                }
+                try Task.checkCancellation()
+                try verifier.consume(buffer); try verifier.finish()
+                try file.write(contentsOf: buffer); progress(1)
+                return target
+            } catch {
+                try? FileManager.default.removeItem(at: target)
+                throw error
+            }
+        }
+        throw NetworkFailure.redirect
+    }
+
+
     static func redirect(_ request: URLRequest, response: HTTPURLResponse) throws -> URLRequest? {
         guard [301, 302, 303, 307, 308].contains(response.statusCode) else { return nil }
         guard let location = response.value(forHTTPHeaderField: "Location"),

@@ -2,6 +2,32 @@ import XCTest
 import UIKit
 
 final class MBiOSUITests: XCTestCase {
+    @MainActor func testAppUpdateSettingsCanOpenAndReturnWithoutLosingSettings() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        XCUIDevice.shared.orientation = .portrait
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let account = UIDevice.current.userInterfaceIdiom == .pad ? app.buttons["我的"].firstMatch : app.tabBars.buttons["我的"].firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 10))
+        // iOS 26 模拟器的极短合成点击可在玻璃导航层被丢弃，发送完整按下/抬起手势，不重试业务动作。
+        account.press(forDuration: 0.15)
+        let settings = app.buttons["open-settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5)); settings.press(forDuration: 0.15)
+        let entry = app.buttons["settings-app-updates"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.press(forDuration: 0.15)
+        let check = app.buttons["check-app-version"]
+        XCTAssertTrue(check.waitForExistence(timeout: 5))
+        XCTAssertTrue(check.isEnabled)
+        XCTAssertTrue(app.staticTexts["ios-update-signing-note"].exists)
+        XCTAssertFalse(app.progressIndicators.firstMatch.exists, "进入页面不会自动发起下载")
+        capture("版本更新-检查入口与签名交接说明", app: app)
+        app.navigationBars["检查版本"].buttons["BackButton"].press(forDuration: 0.15)
+        XCTAssertTrue(app.buttons["settings-app-updates"].waitForExistence(timeout: 5))
+        app.buttons["dismiss-settings"].press(forDuration: 0.15)
+        XCTAssertTrue(app.buttons["open-settings"].waitForExistence(timeout: 5))
+    }
+
     /// 手动联网回归，需先安装原版网易云插件；不扫码确认，不改变账号。
     @MainActor func testNeteaseQRCodeRetryAndPlaybackSurviveRelaunch() throws {
         continueAfterFailure = false
