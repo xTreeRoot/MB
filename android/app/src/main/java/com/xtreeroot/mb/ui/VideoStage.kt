@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LocalContentColor
@@ -44,6 +48,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -101,18 +106,29 @@ internal fun VideoStage(state: VideoFrameState?, playback: PlaybackState, toggle
         }
         val modifier = Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing)
         val exit = mb("退出全屏", "Exit Fullscreen")
+        val header: @Composable BoxScope.() -> Unit = {
+            Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(
+                listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent))).padding(end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { setFullScreen(false) }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, exit, tint = Color.White)
+                }
+                Text(playback.current?.title ?: mb("视频播放", "Video Playback"), Modifier.weight(1f), color = Color.White,
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         if (error != null) Box(modifier, contentAlignment = Alignment.Center) {
             Retry(error, retry)
-            TextButton(onClick = { setFullScreen(false) }, modifier = Modifier.align(Alignment.TopEnd)) { Text(exit, color = Color.White) }
-        } else VideoFrame(state?.player, state?.loading != false, playback, toggle, seek, exit, { setFullScreen(false) }, modifier)
-    } else VideoFrame(state?.player, state?.loading != false, playback, toggle, seek, mb("全屏", "Fullscreen"),
-        { setFullScreen(true) }, Modifier.fillMaxSize(), topBar)
+            header()
+        } else VideoFrame(state?.player, state?.loading != false, playback, toggle, seek, modifier, topBar = header)
+    } else VideoFrame(state?.player, state?.loading != false, playback, toggle, seek, Modifier.fillMaxSize(),
+        enterFullscreen = { setFullScreen(true) }, topBar = topBar)
 }
 
 @OptIn(UnstableApi::class)
 @Composable
 private fun VideoFrame(engine: Player?, loading: Boolean, playback: PlaybackState, toggle: () -> Unit,
-                       seek: (Long) -> Unit, action: String, fullscreen: () -> Unit, modifier: Modifier,
+                       seek: (Long) -> Unit, modifier: Modifier, enterFullscreen: (() -> Unit)? = null,
                        topBar: @Composable BoxScope.() -> Unit = {}) {
     var visible by remember(playback.current?.id, playback.index) { mutableStateOf(true) }
     var revision by remember { mutableIntStateOf(0) }
@@ -154,7 +170,9 @@ private fun VideoFrame(engine: Player?, loading: Boolean, playback: PlaybackStat
                         Column(Modifier.weight(1f).padding(bottom = 6.dp)) {
                             PlayerProgress(playback, smoke = false, seek = { seek(it); revision += 1 }, interactions = interactions)
                         }
-                        TextButton(onClick = fullscreen) { Text(action, color = Color.White) }
+                        if (enterFullscreen != null) TextButton(onClick = enterFullscreen) {
+                            Text(mb("全屏", "Fullscreen"), color = Color.White)
+                        }
                     }
                 }
             }

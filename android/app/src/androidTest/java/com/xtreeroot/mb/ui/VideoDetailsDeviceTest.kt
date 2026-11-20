@@ -2,6 +2,8 @@ package com.xtreeroot.mb.ui
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.media.AudioManager
+import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
@@ -140,6 +142,101 @@ class VideoDetailsDeviceTest {
             withContext(Dispatchers.Main) { model?.clear(); activity?.finish() }
             tracks.forEach { app.offline.store.removeDownload(it.id) }
         }
+    }
+
+    @Test fun videoQueueChangesSystemMediaVolumeAndReflectsExternalChanges() = runBlocking {
+        val audio = app.getSystemService(AudioManager::class.java)
+        val stream = AudioManager.STREAM_MUSIC
+        val originalVolume = audio.getStreamVolume(stream)
+        val targetVolume = audio.getStreamMaxVolume(stream) / 3
+        val externalVolume = targetVolume + 1
+        val preferences = app.settings.values.value
+        val track = Track("volume-fixture", "video", "Volume Fixture", "Fixture Artist")
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            audio.setStreamVolume(stream, externalVolume, 0)
+            withContext(Dispatchers.Main) {
+                val model = ViewModelProvider(activity)[PlaybackModel::class.java]
+                activity.setContent {
+                    MaterialTheme(colorScheme = musicDark) {
+                        CompositionLocalProvider(LocalMBEnglish provides true) {
+                            Surface {
+                                VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,
+                                    accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, openMusic = {})
+                            }
+                        }
+                    }
+                }
+            }
+            await(track.title)
+            assertTrue(matches("System Media Volume").isEmpty())
+            tap("Queue")
+            awaitVolume(externalVolume)
+            await("System Media Volume") { node ->
+                generateSequence(node) { it.parent }.firstOrNull { parent ->
+                    parent.actionList.contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS)
+                }?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id, Bundle().apply {
+                    putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, targetVolume.toFloat())
+                }) == true
+            }
+            withTimeout(5_000) { while (audio.getStreamVolume(stream) != targetVolume) delay(25) }
+            awaitVolume(targetVolume)
+            assertEquals(preferences.volume, app.settings.values.value.volume)
+            audio.setStreamVolume(stream, externalVolume, 0)
+            awaitVolume(externalVolume)
+            captureVideoControl("android-video-system-media-volume.png")
+            tap("Info")
+            await("Previous")
+            assertTrue(matches("System Media Volume").isEmpty())
+        } finally {
+            audio.setStreamVolume(stream, originalVolume, 0)
+            withContext(Dispatchers.Main) { activity.finish() }
+        }
+    }
+
+    @Test fun fullScreenVideoShowsTheCurrentTitleAndAnAccessibleExit() = runBlocking {
+        val track = Track("full-screen-fixture", "video", "Full Screen Fixture", "Fixture Artist")
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            withContext(Dispatchers.Main) {
+                val model = ViewModelProvider(activity)[PlaybackModel::class.java]
+                val preferences = app.settings.values.value
+                val fullScreen = mutableStateOf(false)
+                activity.setContent {
+                    MaterialTheme(colorScheme = musicDark) {
+                        CompositionLocalProvider(LocalMBEnglish provides true) {
+                            Surface {
+                                VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,
+                                    accountId = null, fullScreen = fullScreen.value, setFullScreen = { fullScreen.value = it },
+                                    browse = {}, openMusic = {})
+                            }
+                        }
+                    }
+                }
+            }
+            tap("Fullscreen")
+            await("Exit Fullscreen")
+            await(track.title)
+            captureVideoControl("android-video-fullscreen-title.png")
+            tap("Exit Fullscreen")
+            await("Queue")
+            assertTrue(matches("Exit Fullscreen").isEmpty())
+        } finally {
+            withContext(Dispatchers.Main) { activity.finish() }
+        }
+    }
+
+    private fun captureVideoControl(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("videoControlsScreenshot") != "true") return
+        val frame = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        try { File(app.cacheDir, name).outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+        finally { frame.recycle() }
+    }
+
+    private suspend fun awaitVolume(expected: Int) = await("System Media Volume") { node ->
+        generateSequence(node) { it.parent }.firstNotNullOfOrNull { it.rangeInfo }?.current == expected.toFloat()
     }
 
     private fun matches(text: String): List<AccessibilityNodeInfo> {

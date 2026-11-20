@@ -80,7 +80,8 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
         WatchPicture(track, state, model, browse, openMusic, frame, fullScreen, setFullScreen, modifier)
     }
     val information: @Composable (Modifier) -> Unit = { modifier ->
-        VideoInformation(track, state, model, preferences, accountId != null, source, commentPages, selected, { selected = it }, modifier)
+        VideoInformation(track, state, model, preferences, accountId != null, source, commentPages, selected, { selected = it },
+            showSystemVolume = !fullScreen, modifier = modifier)
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         if (maxWidth >= 600.dp && maxWidth > maxHeight) {
@@ -122,7 +123,7 @@ private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackMode
 @Composable
 private fun VideoInformation(track: Track, state: PlaybackState, model: PlaybackModel, preferences: AppPreferences,
                              signedIn: Boolean, source: InteractionSource?, commentPages: CommentPages?,
-                             selected: VideoDetailTab, select: (VideoDetailTab) -> Unit, modifier: Modifier) {
+                             selected: VideoDetailTab, select: (VideoDetailTab) -> Unit, showSystemVolume: Boolean, modifier: Modifier) {
     val total = commentPages?.state?.collectAsStateWithLifecycle()?.value
         ?.takeIf { it.capabilities?.comments == true }?.page?.total ?: 0
     val numberLocale = if (LocalMBEnglish.current) Locale.US else Locale.SIMPLIFIED_CHINESE
@@ -172,6 +173,7 @@ private fun VideoInformation(track: Track, state: PlaybackState, model: Playback
             VideoDetailTab.Captions -> VideoCaptions(track, state, model, preferences)
             VideoDetailTab.Queue -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 videoQueue(state, model::select)
+                if (showSystemVolume) item { SystemMediaVolume() }
             }
         }
     }
