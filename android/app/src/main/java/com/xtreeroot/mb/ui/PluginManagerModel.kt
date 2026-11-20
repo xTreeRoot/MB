@@ -12,10 +12,8 @@ import com.xtreeroot.mb.plugin.PluginException
 import com.xtreeroot.mb.plugin.PluginRepository
 import com.xtreeroot.mb.plugin.PluginUpdateReport
 import com.xtreeroot.mb.plugin.PluginUpdates
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -35,37 +33,21 @@ internal data class PluginManagerState(
     val check: PluginCheck? = null,
     val batchReview: Boolean = false,
     val updateReport: PluginUpdateReport? = null,
-    val updateNotices: Map<UUID, String> = emptyMap(),
     val importReview: List<PendingPlugin>? = null,
     val importReport: PluginUpdateReport? = null,
 )
 
 internal class PluginManagerModel(application: Application) : AndroidViewModel(application) {
     private val app = application as MBApplication
-    private val updates = PluginUpdates(app.plugins, app.pluginPackages::latestRelease, app.pluginPackages::download)
+    private val updates = PluginUpdates(app.plugins, app.pluginPackages::latestRevision, app.pluginPackages::download)
     private val mutable = MutableStateFlow(PluginManagerState())
     private var retryPreparation: (suspend () -> PendingPlugin)? = null
     private var approval: CompletableDeferred<Boolean>? = null
-    private var updateNoticeCheck: Job? = null
     val state = mutable.asStateFlow()
 
     init {
         viewModelScope.launch { app.installedPlugins.collect { items -> mutable.update { it.copy(installed = items) } } }
         run { app.refreshPlugins() }
-    }
-
-    fun refreshUpdateNotices() {
-        if (updateNoticeCheck?.isActive == true) return
-        updateNoticeCheck = viewModelScope.launch {
-            try {
-                val notices = app.pluginUpdateNotices.check(app.plugins.installed())
-                mutable.update { it.copy(updateNotices = notices) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                mutable.update { it.copy(updateNotices = emptyMap()) }
-            }
-        }
     }
 
     fun openRepository(repository: String) { mutable.update { it.copy(requestedRepository = repository) } }
@@ -82,14 +64,15 @@ internal class PluginManagerModel(application: Application) : AndroidViewModel(a
 
     fun prepareGitHub(input: String) = prepare {
         val repo = PluginRepository.parse(input)
-        app.plugins.prepareArchive(repo) { app.pluginPackages.download(repo, it) }
+        val remote = app.pluginPackages.latestRevision(repo)
+        app.plugins.prepareArchive(repo, remoteRevision = remote.revision) { app.pluginPackages.download(remote, it) }
     }
 
     fun importGitHub(input: String) = run {
         mutable.update { it.copy(check = PluginCheck.Checking, importReport = null) }
         try {
             val repositories = app.pluginPackages.repositories(input)
-            val report = GitHubPluginImport(app.plugins, app.pluginPackages::download, app.bilibili.id)
+            val report = GitHubPluginImport(app.plugins, app.pluginPackages::latestRevision, app.pluginPackages::download, app.bilibili.id)
                 .run(repositories, ::reviewImport)
             mutable.update { it.copy(importReport = report) }
             app.refreshPlugins()
@@ -98,7 +81,7 @@ internal class PluginManagerModel(application: Application) : AndroidViewModel(a
 
     fun dismissImportReport() { mutable.update { it.copy(importReport = null) } }
 
-    fun checkUpdates(plugin: InstalledPlugin? = null) = scanUpdates(plugin?.let(::listOf)) { report ->
+    fun update(plugin: InstalledPlugin? = null) = scanUpdates(plugin?.let(::listOf)) { report ->
         val update = report.available.singleOrNull()
         if (plugin == null || update == null) mutable.update { it.copy(updateReport = report) }
         else {
@@ -167,7 +150,7 @@ internal class PluginManagerModel(application: Application) : AndroidViewModel(a
 
     private fun scanUpdates(targets: List<InstalledPlugin>? = null, operation: suspend (PluginUpdateReport) -> Unit) = run {
         mutable.update { it.copy(check = PluginCheck.Checking, updateReport = null) }
-        try { operation(updates.check(targets ?: app.plugins.installed())) }
+        try { operation(updates.compare(targets ?: app.plugins.installed())) }
         finally { mutable.update { it.copy(check = null) } }
     }
 

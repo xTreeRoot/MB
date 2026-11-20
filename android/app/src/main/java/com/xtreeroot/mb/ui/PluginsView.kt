@@ -81,7 +81,6 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
             if (state.installed.isNotEmpty()) item {
                 val canUpdate = !state.busy && state.installed.any { it.repository != null }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { model.checkUpdates() }, enabled = canUpdate) { Text(mb("检测更新", "Check Updates")) }
                     TextButton(onClick = model::updateAll, enabled = canUpdate) { Text(mb("一键全部更新", "Update All")) }
                 }
             }
@@ -91,9 +90,7 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
                         val status = if (plugin.enabled) mb("已启用", "Enabled") else mb("已停用", "Disabled")
                         Column {
                             Text(listOfNotNull(plugin.manifest.version, status).joinToString(" · "))
-                            state.updateNotices[plugin.revision]?.let { version ->
-                                Text(mb("可更新至 $version", "Update available: $version"), color = MaterialTheme.colorScheme.primary)
-                            }
+
                         }
                     },
                     trailingContent = {
@@ -154,13 +151,14 @@ private fun PluginUpdateResultDialog(report: PluginUpdateReport, imported: Boole
     },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (report.available.isEmpty() && report.installed.isEmpty() && report.skipped.isEmpty() && report.failures.isEmpty()) {
+                if (report.available.isEmpty() && report.installed.isEmpty() && report.skipped.isEmpty() && report.failures.isEmpty() && report.unchanged.isEmpty()) {
                     item { Text(mb("没有可用更新", "No updates available")) }
                 }
-                items(report.available) { update -> Text("${update.plugin.manifest.name} → ${update.release.version}") }
+                items(report.available) { update -> Text("${update.plugin.manifest.name} → ${update.release.revision.take(12)}") }
                 items(report.installed) { name ->
                     Text(if (imported) mb("已导入：$name", "Imported: $name") else mb("已更新：$name", "Updated: $name"))
                 }
+                items(report.unchanged) { name -> Text(mb("已是最新：$name", "Up to date: $name")) }
                 items(report.skipped) { name -> Text(mb("已跳过：$name", "Skipped: $name")) }
                 items(report.failures) { failure ->
                     val detail = failure.detail ?: mb("未知错误", "Unknown error")
@@ -264,7 +262,7 @@ private fun PluginSettingsView(plugin: InstalledPlugin, model: PluginManagerMode
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (plugin.repository != null) TextButton(onClick = { model.checkUpdates(plugin) }, enabled = !state.busy) { Text(mb("检查更新", "Check for updates")) }
+                if (plugin.repository != null) TextButton(onClick = { model.update(plugin) }, enabled = !state.busy) { Text(mb("更新插件", "Update Plugin")) }
                 TextButton(onClick = { remove(plugin) }, enabled = !state.busy) { Text(mb("删除", "Delete")) }
             }
         }

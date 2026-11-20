@@ -28,6 +28,7 @@ internal data class InstalledPlugin(
     val dataDirectory: File,
     val repository: String?,
     val enabled: Boolean,
+    val remoteRevision: String? = null,
 ) {
     val id: String get() = manifest.id
 }
@@ -38,6 +39,7 @@ internal data class PendingPlugin(
     val directory: File,
     val repository: String?,
     val replaces: InstalledPlugin?,
+    val remoteRevision: String? = null,
 )
 
 internal class PluginInstaller(private val root: File) {
@@ -62,19 +64,19 @@ internal class PluginInstaller(private val root: File) {
         } }
     })
 
-    suspend fun prepareArchive(repository: String? = null, expected: InstalledPlugin? = null,
-                               download: suspend (File) -> Unit): PendingPlugin = prepare(repository, expected) { staging, folder ->
+    suspend fun prepareArchive(repository: String? = null, expected: InstalledPlugin? = null, remoteRevision: String? = null,
+                               download: suspend (File) -> Unit): PendingPlugin = prepare(repository, expected, remoteRevision) { staging, folder ->
         val archive = File(staging, "source.zip")
         download(archive)
         PluginPackage.unzip(archive, folder)
         archive.delete()
     }
 
-    suspend fun prepareTree(resolver: ContentResolver, tree: Uri): PendingPlugin = prepare(null, null) { _, folder ->
+    suspend fun prepareTree(resolver: ContentResolver, tree: Uri): PendingPlugin = prepare(null, null, null) { _, folder ->
         PluginPackage.copyTree(resolver, tree, folder)
     }
 
-    private suspend fun prepare(repository: String?, expected: InstalledPlugin?,
+    private suspend fun prepare(repository: String?, expected: InstalledPlugin?, remoteRevision: String?,
                                 extract: suspend (File, File) -> Unit): PendingPlugin = withContext(Dispatchers.IO) {
         locked { Unit }
         val token = UUID.randomUUID()
@@ -93,7 +95,7 @@ internal class PluginInstaller(private val root: File) {
                 if (expected != null && current?.revision != expected.revision) throw PluginException("Plugin changed while checking for updates")
                 current
             }
-            PendingPlugin(token, manifest, directory, repository, replaces)
+            PendingPlugin(token, manifest, directory, repository?.let(PluginRepository::parse), replaces, remoteRevision)
         } catch (error: Throwable) {
             staging.deleteRecursively()
             throw error
@@ -122,7 +124,8 @@ internal class PluginInstaller(private val root: File) {
                 if (verified.isNotEmpty()) writeAtomic(settings, JSONObject(verified).toString())
             }
             index.put(manifest.id, JSONObject().put("revision", candidate.token.toString())
-                .put("repository", candidate.repository ?: JSONObject.NULL).put("enabled", enabled))
+                .put("repository", candidate.repository ?: JSONObject.NULL).put("enabled", enabled)
+                .put("remoteRevision", candidate.remoteRevision ?: JSONObject.NULL))
             writeAtomic(indexFile, index.toString())
         } catch (error: Throwable) {
             Files.move(target.toPath(), folder.toPath(), ATOMIC_MOVE)
@@ -194,8 +197,8 @@ internal class PluginInstaller(private val root: File) {
         val directory = File(code, revision.toString())
         val manifest = PluginPackage.readManifest(directory)
         if (id != manifest.id) throw PluginException("Installed plugin ID does not match")
-        val source = record.opt("repository") as? String
-        return InstalledPlugin(manifest, revision, directory, File(data, id), source, record.getBoolean("enabled"))
+        val source = (record.opt("repository") as? String)?.let { runCatching { PluginRepository.parse(it) }.getOrNull() }
+        return InstalledPlugin(manifest, revision, directory, File(data, id), source, record.getBoolean("enabled"), record.opt("remoteRevision") as? String)
     }
 
     private fun checkRevision(index: JSONObject, current: InstalledPlugin) {

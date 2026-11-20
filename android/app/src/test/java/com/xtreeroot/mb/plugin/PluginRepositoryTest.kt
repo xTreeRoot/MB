@@ -40,10 +40,10 @@ class PluginRepositoryTest {
 
     @Test fun repositoryAndInstallLinksAreStrict() {
         assertEquals("octocat/player", PluginRepository.parse("octocat/player"))
-        assertEquals("octocat/player", PluginRepository.parse("https://github.com/octocat/player/tree/main"))
+        assertEquals("octocat/player", PluginRepository.parse("https://github.com/octocat/player.git/"))
         assertEquals("octocat/player", PluginRepository.fromInstallLink("mb://install-plugin?repo=octocat%2Fplayer"))
         assertEquals("octocat/player", PluginRepository.fromInstallLink("mygo-music://install-plugin?repo=octocat%2Fplayer"))
-        listOf("octocat", "../repo", "octocat/../repo", "https://github.com.evil.test/octocat/player", "octocat/player#fragment")
+        listOf("octocat", "../repo", "octocat/../repo", "https://github.com.evil.test/octocat/player", "octocat/player#fragment", "https://github.com/octocat/player/tree/main", "https://github.com/octocat/player?q=1")
             .forEach { value -> assertThrows(PluginException::class.java) { PluginRepository.parse(value) } }
         listOf(
             "https://install-plugin?repo=octocat%2Fplayer",

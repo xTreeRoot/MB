@@ -17,12 +17,15 @@ internal object PluginRepository {
         val repo = if ("://" in text) {
             val url = uri(text)
             if (!url.onGitHub("github.com")) throw PluginException("Invalid GitHub repository")
-            url.path.orEmpty().split('/').filter(String::isNotEmpty).take(2).joinToString("/")
+            val parts = url.path.orEmpty().split('/').filter(String::isNotEmpty)
+            if (parts.size != 2 || url.rawQuery != null || url.rawFragment != null) throw PluginException("Invalid GitHub repository")
+            parts.joinToString("/")
         } else text
-        if (!repository.matches(repo) || ".." in repo || repo.split('/').any { it == "." }) {
+        val normalized = repo.removeSuffix(".git")
+        if (!repository.matches(normalized) || ".." in normalized || normalized.split('/').any { it == "." }) {
             throw PluginException("Use owner/repository or a GitHub repository URL")
         }
-        return repo
+        return normalized
     }
 
     fun fromInstallLink(input: String): String? = runCatching {
@@ -86,46 +89,17 @@ internal class GitHubPluginPackages(private val transport: PluginHttpTransport, 
         return repositories.values.toList().ifEmpty { throw PluginException("No repositories in this GitHub Stars list") }
     }
 
-    suspend fun download(input: String, output: File) {
+    /** 按默认分支的固定 SHA 下载，避免旧 Release 和相同版本号漏掉更新。 */
+    suspend fun latestRevision(input: String): GitHubPluginRevision {
         val base = repositoryUrl(input)
-        val release = latestRelease(base)
-        if (release != null) download(release, output)
-        else {
-            val repository = checkNotNull(metadata(uri(base.toString())))
-            val branch = repository.opt("default_branch") as? String ?: throw PluginException("GitHub repository has no default branch")
-            downloadArchive(uri(base.newBuilder().addPathSegment("zipball").addPathSegment(branch).build().toString()), output)
-        }
+        val result = checkNotNull(metadata(uri(base.newBuilder().addPathSegments("commits/HEAD").build().toString())))
+        val sha = (result.opt("sha") as? String)?.takeIf { Regex("[0-9a-f]{40}").matches(it) }
+            ?: throw PluginException("GitHub commit response has no valid SHA")
+        val archive = uri(base.newBuilder().addPathSegment("zipball").addPathSegment(sha).build().toString())
+        return GitHubPluginRevision(sha, archive)
     }
 
-    suspend fun latestRelease(input: String): GitHubPluginRelease? {
-        val base = repositoryUrl(input)
-        val release = latestRelease(base)
-        if (release == null) metadata(uri(base.toString()))
-        return release
-    }
-
-    suspend fun latestReleaseVersion(input: String): String? = releaseMetadata(repositoryUrl(input))?.let(::releaseVersion)
-
-    private suspend fun latestRelease(base: HttpUrl): GitHubPluginRelease? {
-        val result = releaseMetadata(base) ?: return null
-        val version = releaseVersion(result)
-        val assets = result.optJSONArray("assets")
-        val names = List(assets?.length() ?: 0) { assets?.optJSONObject(it)?.optString("name").orEmpty() }
-        val asset = PluginRepository.assetIndex(names, abis)?.let { index ->
-            assets?.optJSONObject(index)?.opt("browser_download_url") as? String
-        }?.let(::uri)?.takeIf { it.onGitHub("github.com") }
-        val archive = asset ?: (result.opt("zipball_url") as? String)?.let(::uri)?.takeIf { it.onGitHub("api.github.com") }
-            ?: throw PluginException("GitHub release has no plugin archive")
-        return GitHubPluginRelease(version, archive)
-    }
-
-    private suspend fun releaseMetadata(base: HttpUrl): JSONObject? =
-        metadata(uri(base.newBuilder().addPathSegments("releases/latest").build().toString()), allowMissing = true)
-
-    private fun releaseVersion(result: JSONObject): String = (result.opt("tag_name") as? String)?.takeIf(String::isNotBlank)
-        ?: throw PluginException("GitHub release has no version tag")
-
-    suspend fun download(release: GitHubPluginRelease, output: File) = downloadArchive(release.archive, output)
+    suspend fun download(revision: GitHubPluginRevision, output: File) = downloadArchive(revision.archive, output)
 
     private fun repositoryUrl(input: String) = "https://api.github.com/repos/".toHttpUrl().newBuilder().apply {
         PluginRepository.parse(input).split('/').forEach { addPathSegment(it) }
@@ -152,7 +126,7 @@ internal class GitHubPluginPackages(private val transport: PluginHttpTransport, 
         }
 
     private fun request(address: URI) = PluginFetchRequest(address, "GET",
-        mapOf("User-Agent" to "MB-Android", "Accept" to "application/vnd.github+json"), null)
+        mapOf("User-Agent" to "MB-Android", "Accept" to "application/vnd.github+json", "Cache-Control" to "no-cache"), null)
 
     private fun allowedArchive(address: URI): Boolean = archiveHosts.any { address.onGitHub(it) }
 
@@ -162,7 +136,7 @@ internal class GitHubPluginPackages(private val transport: PluginHttpTransport, 
     }
 }
 
-internal data class GitHubPluginRelease(val version: String, val archive: URI)
+internal data class GitHubPluginRevision(val revision: String, val archive: URI)
 
 private fun URI.onGitHub(hostname: String): Boolean = scheme.equals("https", true) && host.equals(hostname, true) &&
     rawUserInfo == null && (port == -1 || port == 443)

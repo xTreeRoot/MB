@@ -173,6 +173,10 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
             }
             var trackIndex = 0
             page.sections.forEach { section ->
+                if (request == PluginCatalogRequest.Home) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { PluginDiscoverySection(section, navigator::open, select) }
+                    return@forEach
+                }
                 if (section.title.isNotBlank()) item(span = { GridItemSpan(maxLineSpan) }) {
                     Text(section.title, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
                 }

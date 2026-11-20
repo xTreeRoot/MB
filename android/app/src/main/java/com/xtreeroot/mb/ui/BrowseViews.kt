@@ -115,7 +115,7 @@ internal fun Discover(
             item(key = "header-${section.category}", span = { GridItemSpan(maxLineSpan) }) {
                 Row(Modifier.padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 3.dp).fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+                    Column {
                         Text(section.category.title(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         section.week?.let { Text(mb("第 $it 周", "Week $it"), style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -134,29 +134,14 @@ internal fun Discover(
                 wideCovers -> gridItems(section.tracks, key = { "${section.category}-${it.id}" }) { track ->
                     VideoCoverCard(track) { play(section.tracks, track) }
                 }
-                section.category != DiscoveryCategory.Chart -> item {
+                else -> item(span = { GridItemSpan(maxLineSpan) }) {
                     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(section.tracks, key = Track::id) { track ->
-                            val lead = section.category == DiscoveryCategory.Recommended
-                            val width = if (lead) 236.dp else 136.dp
-                            Column(Modifier.width(width).clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = !track.isUnavailable) { play(section.tracks, track) }) {
-                                Box {
-                                    Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (lead) 16f / 9f else 1f))
-                                    TrackActionsButton(track, Modifier.align(Alignment.TopEnd), onArtwork = true)
-                                }
-                                Spacer(Modifier.height(8.dp))
-                                Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    style = if (lead) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold)
-                                TrackSubtitle(track)
+                        items(section.tracks.chunked(2)) { pair ->
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                pair.forEach { track -> MusicCoverCard(track) { play(section.tracks, track) } }
                             }
                         }
                     }
-                }
-                else -> gridItems(section.tracks.take(3), key = { "${section.category}-${it.id}" }) { track ->
-                    val rank = section.tracks.indexOf(track) + 1
-                    TrackRow(track, rank = rank) { play(section.tracks, track) }
                 }
             }
         }

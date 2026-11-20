@@ -35,7 +35,6 @@ import com.xtreeroot.mb.plugin.PluginInstaller
 import com.xtreeroot.mb.plugin.PluginOAuthBroker
 import com.xtreeroot.mb.plugin.PluginRuntime
 import com.xtreeroot.mb.plugin.PluginSource
-import com.xtreeroot.mb.plugin.PluginUpdateNotices
 import com.xtreeroot.mb.plugin.PluginWebSignInBroker
 import com.xtreeroot.mb.plugin.isPluginBrowserProcess
 import com.xtreeroot.mb.plugin.PluginWebLink
@@ -87,7 +86,6 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     val plugins by lazy { PluginInstaller(File(filesDir, "plugins")) }
     val nodeClient by lazy { NodeClient(http) }
     val pluginPackages by lazy { GitHubPluginPackages(PluginHttpTransport(network.proxySelector), Build.SUPPORTED_ABIS.toList()) }
-    val pluginUpdateNotices by lazy { PluginUpdateNotices(File(filesDir, "plugins/updates.json"), pluginPackages::latestReleaseVersion) }
     private data class ActivePlugin(val revision: UUID, val source: PluginSource, val values: Map<String, String>, val language: String)
     private val synchronizePlugins = Mutex()
     private val activePlugins = MutableStateFlow(emptyMap<String, ActivePlugin>())

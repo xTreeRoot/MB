@@ -25,11 +25,6 @@ internal class MainActivity : ComponentActivity() {
         setContent { MBRoot(player = playback, plugins = plugins) }
     }
 
-    override fun onStart() {
-        super.onStart()
-        plugins.refreshUpdateNotices()
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

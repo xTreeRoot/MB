@@ -110,6 +110,40 @@ class VideoDetailsDeviceTest {
         }
     }
 
+    @Test fun musicDiscoveryUsesTwoRowsAndRetainsTheSectionQueue() = runBlocking {
+        val tracks = (1..4).map { Track("music-cards", "$it", "Music Card $it", "Fixture Artist") }
+        val category = DiscoveryCategory.Recommended
+        val source = object : DiscoverySource {
+            override val id = "music-cards"
+            override suspend fun home() = listOf(DiscoverySection(category, tracks))
+            override suspend fun discovery(category: DiscoveryCategory) = DiscoverySection(category, tracks)
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+        }
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val selection = mutableStateOf<Pair<List<Track>, Track>?>(null)
+        try {
+            withContext(Dispatchers.Main) {
+                val factory = viewModelFactory { initializer { BrowseModel(app, source) } }
+                val model = ViewModelProvider(activity, factory)["music-cards", BrowseModel::class.java]
+                model.refresh()
+                activity.setContent {
+                    MaterialTheme(colorScheme = musicDark) {
+                        CompositionLocalProvider(LocalMBEnglish provides true, LocalVideoBrowse provides false) {
+                            Surface { Discover(model, { queue, track -> selection.value = queue to track }, {}) }
+                        }
+                    }
+                }
+            }
+            tracks.forEach { await(it.title) }
+            val frames = tracks.map { Rect().also(matches(it.title).first()::getBoundsInScreen) }
+            assertTrue("First column should contain two rows: $frames", frames[0].bottom < frames[1].top && frames[0].left == frames[1].left)
+            assertTrue("Next column should align with first: $frames", frames[0].top == frames[2].top && frames[0].right < frames[2].left)
+            tap(tracks[1].title)
+            assertEquals(tracks to tracks[1], withContext(Dispatchers.Main) { selection.value })
+            captureVideoControl("android-music-discovery-two-rows.png")
+        } finally { withContext(Dispatchers.Main) { activity.finish() } }
+    }
+
     @Test fun videoTabsShareTheLoadedCommentPageAndResetOnTrackChange() = runBlocking {
         val id = "video-comments-${UUID.randomUUID()}"
         val plugin = app.plugins.install(app.plugins.prepareZip { fixtureZip(id).inputStream() })

@@ -62,6 +62,7 @@ internal class PluginSource(
         val parameters = arguments.keys().asSequence().sorted().flatMap { sequenceOf(it, arguments.get(it).toString()) }.toList()
         val key = DiskResponseCache.key(*(listOf(manifest.id, manifest.version.orEmpty(), account, method) + parameters).toTypedArray())
         val data = runtime.catalogCache.data(key) {
+            synchronized(accountCacheLock) { if (revision != accountGeneration) throw CancellationException() }
             val result = runtime.invoke(method, arguments)
             synchronized(accountCacheLock) { if (revision != accountGeneration) throw CancellationException() }
             result.toString().toByteArray(Charsets.UTF_8)

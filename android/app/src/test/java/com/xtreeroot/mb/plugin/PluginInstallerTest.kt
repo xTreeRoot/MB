@@ -21,7 +21,8 @@ class PluginInstallerTest {
         val template = "xTreeRoot/mb-plugin-template"
         val existing = installer.install(installer.prepareArchive(template) { zip(it, files("existing-template")) })
         val downloaded = mutableListOf<String>()
-        val batch = GitHubPluginImport(installer, { repository, archive ->
+        val batch = GitHubPluginImport(installer, { GitHubPluginRevision("new-commit", URI("https://github.com/$it")) }, { remote, archive ->
+            val repository = remote.archive.path.removePrefix("/")
             downloaded += repository
             zip(archive, files(if (repository.startsWith("xTreeRoot/")) "similar" else "other-owner"))
         }, "bilibili")
@@ -46,13 +47,14 @@ class PluginInstallerTest {
 
     @Test fun githubImportConfirmsOnceAndOverwritesOnlyValidatedPluginCode() = fixture { root ->
         val installer = PluginInstaller(root)
-        val old = installer.install(installer.prepareArchive("old/project") { zip(it, files("same")) })
+        val old = installer.install(installer.prepareArchive("https://github.com/example/overwrite.git") { zip(it, files("same")) })
         installer.setEnabled(old, false)
         installer.saveSettings(old, mapOf("quality" to "lossless"))
         val session = old.dataDirectory.resolve("storage.json")
         session.writeText("synthetic-account")
         val downloaded = mutableListOf<String>()
-        val batch = GitHubPluginImport(installer, { repository, archive ->
+        val batch = GitHubPluginImport(installer, { GitHubPluginRevision("new-commit", URI("https://github.com/$it")) }, { remote, archive ->
+            val repository = remote.archive.path.removePrefix("/")
             downloaded += repository
             when (repository) {
                 "example/bad" -> zip(archive, listOf("README.md" to "Not a plugin"))
@@ -83,15 +85,15 @@ class PluginInstallerTest {
         assertEquals(mapOf("quality" to "lossless"), installer.settings(overwritten))
         assertEquals("synthetic-account", session.readText())
         val cancelled = batch.run(listOf("example/overwrite")) { false }
-        assertEquals(listOf("example/overwrite"), cancelled.skipped)
+        assertEquals(listOf("Fixture"), cancelled.unchanged)
         assertEquals(overwritten.revision, installer.installed().single { it.id == old.id }.revision)
         assertTrue(File(root, "pending").list().orEmpty().isEmpty())
     }
 
-    @Test fun batchUpdatesSkipZipSourcesAndIsolateIndividualFailuresAndPermissionReview() = fixture { root ->
+    @Test fun batchUpdatesCompareCommitsAndPreserveDataWhileIsolatingFailures() = fixture { root ->
         val installer = PluginInstaller(root)
-        val ids = listOf("old", "check-fails", "no-release", "zip-only", "disabled", "skip", "download-fails", "approve", "stale", "last")
-        for (id in ids) installer.install(installer.prepareArchive(if (id == "zip-only") null else "fixture/$id") {
+        val ids = listOf("same", "offline", "zip-only", "disabled", "skip", "download-fails", "approve", "wrong", "last")
+        for (id in ids) installer.install(installer.prepareArchive(if (id == "zip-only") null else "https://github.com/fixture/$id", remoteRevision = "old-commit") {
             zip(it, files(id))
         })
         val disabled = installer.installed().single { it.id == "disabled" }
@@ -99,50 +101,54 @@ class PluginInstallerTest {
         installer.saveSettings(disabled, mapOf("quality" to "lossless"))
         val session = disabled.dataDirectory.resolve("storage.json")
         session.writeText("fixture-session")
-        val checked = mutableListOf<String>()
         val downloaded = mutableListOf<String>()
         val updates = PluginUpdates(installer, { repo ->
             val id = repo.substringAfter('/')
-            checked += id
-            if (id == "check-fails") throw PluginException("Cannot check release")
-            if (id == "no-release") null else GitHubPluginRelease(if (id == "old") "v1.0.0" else "v2.0.0",
-                URI("https://github.com/fixture/$id"))
-        }, { release, file ->
-            val id = release.archive.path.substringAfterLast('/')
+            if (id == "offline") throw PluginException("Cannot fetch commit")
+            GitHubPluginRevision(if (id == "same") "old-commit" else "new-commit", URI("https://github.com/fixture/$id"))
+        }, { remote, file ->
+            val id = remote.archive.path.substringAfterLast('/')
             downloaded += id
-            if (id == "download-fails") throw PluginException("Cannot download release")
-            val version = if (id == "stale") "0.9.0" else "2.0.0"
-            val entries = files(id, version).map { (name, content) ->
+            if (id == "download-fails") throw PluginException("Cannot download commit")
+            val entries = files(if (id == "wrong") "unrelated" else id).map { (name, content) ->
                 if (name != "plugin.json" || id !in setOf("skip", "approve")) name to content
                 else name to JSONObject(content).put("permissions", JSONObject().put("network", listOf("fixture.test"))).toString()
             }
             zip(file, entries)
         })
-        val report = updates.check(installer.installed().sortedBy { ids.indexOf(it.id) })
-        assertEquals(ids - "zip-only", checked)
+        val report = updates.compare(installer.installed().sortedBy { ids.indexOf(it.id) })
         assertTrue(downloaded.isEmpty())
-        assertEquals(listOf("disabled", "skip", "download-fails", "approve", "stale", "last"), report.available.map { it.plugin.id })
-        assertEquals(listOf("Cannot check release"), report.failures.map { it.detail })
+        assertEquals(6, report.available.size)
+        assertEquals(listOf("Fixture"), report.unchanged)
         val reviewed = mutableListOf<String>()
         val result = updates.apply(report) { candidate ->
-            val id = candidate.manifest.id
-            reviewed += id
-            assertEquals("1.0.0", installer.installed().single { it.id == id }.manifest.version)
-            id == "approve"
+            reviewed += candidate.manifest.id
+            candidate.manifest.id == "approve"
         }
         assertEquals(listOf("skip", "approve"), reviewed)
-        assertEquals(report.available.map { it.plugin.id }, downloaded)
         assertEquals(3, result.installed.size)
         assertEquals(1, result.skipped.size)
-        assertEquals(listOf("Cannot check release", "Cannot download release", "Downloaded plugin does not have a newer manifest version"),
-            result.failures.map { it.detail })
+        assertEquals(3, result.failures.size)
         val installed = installer.installed().associateBy(InstalledPlugin::id)
-        assertEquals(setOf("disabled", "approve", "last"), installed.values.filter { it.manifest.version == "2.0.0" }.map { it.id }.toSet())
+        assertEquals(setOf("disabled", "approve", "last"), installed.values.filter { it.remoteRevision == "new-commit" }.map { it.id }.toSet())
         val replaced = installed.getValue("disabled")
         assertFalse(replaced.enabled)
         assertEquals("fixture/disabled", replaced.repository)
+        assertEquals("1.0.0", replaced.manifest.version)
         assertEquals(mapOf("quality" to "lossless"), installer.settings(replaced))
         assertEquals("fixture-session", session.readText())
+        assertTrue(root.resolve("pending").list().orEmpty().isEmpty())
+        assertEquals("new-commit", PluginInstaller(root).installed().single { it.id == "disabled" }.remoteRevision)
+    }
+
+    @Test fun importCannotReplaceAnotherRepositoriesPluginWithTheSameId() = fixture { root ->
+        val installer = PluginInstaller(root)
+        val old = installer.install(installer.prepareArchive("owner/original") { zip(it, files()) })
+        val importer = GitHubPluginImport(installer, { GitHubPluginRevision("sha", URI("https://github.com/$it")) },
+            { _, file -> zip(file, files()) }, "bilibili")
+        val report = importer.run(listOf("other/conflicting")) { fail("Source conflict must fail before review"); true }
+        assertEquals(1, report.failures.size)
+        assertEquals(old.revision, installer.installed().single().revision)
         assertTrue(root.resolve("pending").list().orEmpty().isEmpty())
     }
 

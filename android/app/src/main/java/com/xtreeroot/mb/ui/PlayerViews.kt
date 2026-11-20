@@ -193,10 +193,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
         quietCommentAt(state.positionMs, captions.value, state.durationMs, hotComments)
     } else null
     val colors = MaterialTheme.colorScheme
-    Scaffold(
-        containerColor = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onBackground,
-        modifier = if (origin == null) Modifier else Modifier.onGloballyPositioned { frame = it.boundsInWindow() }.graphicsLayer {
+    Box((if (origin == null) Modifier else Modifier.onGloballyPositioned { frame = it.boundsInWindow() }.graphicsLayer {
             val destination = frame
             val progress = entrance.value
             if (destination == null) alpha = 0f else {
@@ -209,13 +206,20 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                 alpha = progress.coerceAtLeast(0.02f)
                 clip = true
             }
-        },
+        }).fillMaxSize().background(Brush.verticalGradient(listOf(colors.surfaceContainerLow, colors.background)))) {
+        if (preferences.fog) {
+            val bass by app.bassLevel.collectAsStateWithLifecycle()
+            PlaybackFog(track, if (state.playing) bass else 0f, animate, Modifier.matchParentSize())
+        }
+    Scaffold(
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onBackground,
         topBar = {
             TopAppBar(title = {
                 if (showToolbarTitle) Text(mb("正在播放", "Now Playing"), maxLines = 1, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             },
-                expandedHeight = 48.dp, colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surfaceContainerLow), navigationIcon = {
+                expandedHeight = 48.dp, colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent), navigationIcon = {
                 IconButton(onClick = close) { Icon(Icons.Default.KeyboardArrowDown, mb("关闭播放器", "Close Player")) }
             }, actions = {
                 if (supportsVideo) IconButton(onClick = model::watchCurrentVideo) {
@@ -237,12 +241,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
             })
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(colors.surfaceContainerLow, colors.background))),
-            contentAlignment = Alignment.Center) {
-            if (preferences.fog) {
-                val bass by app.bassLevel.collectAsStateWithLifecycle()
-                PlaybackFog(track, if (state.playing) bass else 0f, animate, Modifier.matchParentSize())
-            }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             val seekCurrent: (Long) -> Unit = { model.seekCurrent(state, it) }
             val showLyrics: @Composable (Boolean) -> Unit = { rhythm ->
                 when {
@@ -363,6 +362,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                 }
             }
         }
+    }
     }
     if (openComments && interaction != null) CommentsSheet(interaction, track, signedIn) { openComments = false }
 }
