@@ -52,6 +52,7 @@ internal data class PlaybackState(
     val seekable: Boolean = false,
     val connectionIssue: PlaybackConnectionIssue? = null,
     val audioFocusBlocked: Boolean = false,
+    val selectionRevision: Long = 0,
 ) {
     val current: Track? get() = tracks.getOrNull(index)
 }
@@ -74,6 +75,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var pendingRequest: PlaybackRequest? = null
+    private var selectionRevision = 0L
     val playback = state.asStateFlow()
     val captions = captionState.asStateFlow()
 
@@ -124,7 +126,10 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             controller = player
             Log.i(playbackLogTag, "controller connected")
             player.addListener(object : Player.Listener {
-                override fun onEvents(player: Player, events: Player.Events) = publish()
+                override fun onEvents(player: Player, events: Player.Events) {
+                    if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) selectionRevision++
+                    publish()
+                }
             })
             val request = pendingRequest
             pendingRequest = null
@@ -139,6 +144,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
 
     private fun connectionFailed(issue: PlaybackConnectionIssue) {
         Log.w(playbackLogTag, "controller failed: $issue")
+        selectionRevision++
         releaseController()
         contentSelection = null
         captionJob?.cancel()
@@ -147,7 +153,8 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         videoJob?.cancel()
         videoSource = null
         videoCapability = false
-        state.value = PlaybackState(presentation = state.value.presentation.update(false), connectionIssue = issue)
+        state.value = PlaybackState(presentation = state.value.presentation.update(false), connectionIssue = issue,
+            selectionRevision = selectionRevision)
     }
 
     private fun releaseController() {
@@ -200,6 +207,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         val playable = selection.tracks.filter(::canPlay)
         val index = playable.indexOfFirst { it.id == selected.id }
         if (index < 0) return
+        selectionRevision++
         contentSelection = selected.id to selection.mode
         player.setMediaItems(playable.mapIndexed { position, track ->
             val item = track.mediaItem()
@@ -304,9 +312,11 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     fun select(index: Int) {
         controller?.let { player ->
             if (index in 0 until player.mediaItemCount) {
+                selectionRevision++
                 contentSelection = null
                 player.seekToDefaultPosition(index)
                 start(player)
+                publish()
             }
         }
     }
@@ -351,12 +361,14 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         contentSelection = null
         controller?.clearMediaItems()
     }
-    fun seekCurrent(trackId: String, index: Int, positionMs: Long) {
+    fun seekCurrent(selection: PlaybackState, positionMs: Long) {
         val player = controller ?: return
-        if (player.currentMediaItemIndex != index || player.currentMediaItem?.mediaId != trackId) return
+        val trackId = selection.current?.id ?: return
+        if (selection.selectionRevision != selectionRevision || player.currentMediaItemIndex != selection.index ||
+            player.currentMediaItem?.mediaId != trackId) return
         when {
             player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) -> player.seekTo(positionMs)
-            player.canPositionUnpreparedItem -> player.seekTo(index, positionMs)
+            player.canPositionUnpreparedItem -> player.seekTo(selection.index, positionMs)
         }
     }
     fun previous() = step(forward = false)
@@ -428,7 +440,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
             error, connected = true, playing = player.isPlaying,
             videoAvailable = capability == true, presentation = presentation, station = app.stationStatus.value.station,
             seekable = player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) || player.canPositionUnpreparedItem,
-            audioFocusBlocked = audioFocusBlocked(player))
+            audioFocusBlocked = audioFocusBlocked(player), selectionRevision = selectionRevision)
     }
 }
 

@@ -15,7 +15,7 @@ import okio.Source
 import okio.Timeout
 import okio.buffer
 
-internal class MediaRangeGuard : Interceptor {
+internal class MediaRangeGuard(private val sequentialFile: SequentialAudioFile? = null) : Interceptor {
     internal data class Representation(val url: HttpUrl, val size: Long?, val etag: String?, val partial: Boolean)
     internal data class Prefix(val origin: HttpUrl, val representation: Representation, val bytes: ByteArray, val type: MediaType?)
     private var previous: Representation? = null
@@ -84,6 +84,7 @@ internal class MediaRangeGuard : Interceptor {
         val end = range?.groupValues?.get(2)?.takeIf(String::isNotEmpty)?.let { it.toLongOrNull() ?: throw MediaFetchFailure() }
             ?: Long.MAX_VALUE
         if (start > end) throw MediaFetchFailure()
+        sequentialFile?.open(this, incoming, start, end)?.let { return it }
         val known = previous
         val request = incoming.newBuilder().header("Accept-Encoding", "identity").removeHeader("If-Range")
         if (range != null && known?.etag != null) request.header("If-Range", known.etag)
@@ -129,7 +130,13 @@ internal class MediaRangeGuard : Interceptor {
                     (known.size != null && size != null && known.size != size))) throw MediaFetchFailure(MediaRecovery.RefreshAddress)
             if (response.code == 200 && start > 0) {
                 if (known?.partial == true && known.etag == null) throw MediaFetchFailure(MediaRecovery.RefreshAddress, 200)
-                if (start > 8L * 1024 * 1024 || (size != null && start > size)) throw MediaFetchFailure(status = 200)
+                if (size != null && start > size) throw MediaFetchFailure(status = 200)
+                if (start > 8L * 1024 * 1024) {
+                    val captured = sequentialFile?.capture(this, incoming, response, size, start, end, chain.call()::isCanceled)
+                        ?: throw MediaFetchFailure(status = 200)
+                    previous = next
+                    return captured
+                }
             }
             previous = next.copy(size = size ?: known?.size)
             if (length != null || size == null) return response

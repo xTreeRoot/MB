@@ -35,7 +35,7 @@ import kotlin.math.roundToLong
 @Composable
 internal fun PlayerProgress(state: PlaybackState, smoke: Boolean, seek: (Long) -> Unit,
                             interactions: MutableInteractionSource = remember { MutableInteractionSource() }) {
-    key(state.current?.id, state.index) {
+    key(state.selectionRevision, state.current?.id, state.index) {
         var draft by remember { mutableStateOf<Float?>(null) }
         val duration = state.durationMs.coerceAtLeast(0)
         val position = state.positionMs.coerceIn(0, duration)

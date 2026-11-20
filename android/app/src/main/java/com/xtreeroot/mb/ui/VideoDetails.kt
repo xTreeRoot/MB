@@ -59,7 +59,7 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
     val track = state.current ?: return
     var selected by rememberSaveable(track.id) { mutableStateOf(VideoDetailTab.Info) }
     val frame = rememberVideoFrame(track)
-    if (fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(track.id, state.index, it) }, model::retryVideo,
+    if (fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
         fullScreen = true, setFullScreen)
     val picture: @Composable (Modifier) -> Unit = { modifier ->
         WatchPicture(track, state, model, browse, openMusic, frame, fullScreen, setFullScreen, modifier)
@@ -89,7 +89,7 @@ private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackMode
                          openMusic: () -> Unit, frame: VideoFrameState?, fullScreen: Boolean, setFullScreen: (Boolean) -> Unit,
                          modifier: Modifier) {
     Box(modifier.aspectRatio(16f / 9f).background(Color.Black), contentAlignment = Alignment.Center) {
-        if (!fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(track.id, state.index, it) }, model::retryVideo,
+        if (!fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
             fullScreen = false, setFullScreen) {
             Row(Modifier.align(Alignment.TopCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent))),
@@ -167,7 +167,7 @@ private fun VideoCaptions(track: Track, state: PlaybackState, model: PlaybackMod
             captions.error != null -> Retry(checkNotNull(captions.error)) { model.loadCaptions(track) }
             captions.value.isEmpty() -> EmptyMessage(mb("暂无字幕", "No Captions"))
             else -> CaptionStage(captions.value, state.positionMs, preferences.lyricStyle, preferences.stageSparks,
-                ValueAnimator.areAnimatorsEnabled(), { model.seekCurrent(track.id, state.index, it) })
+                ValueAnimator.areAnimatorsEnabled(), { model.seekCurrent(state, it) })
         }
     }
 }

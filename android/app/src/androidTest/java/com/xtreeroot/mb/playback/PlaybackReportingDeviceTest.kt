@@ -257,7 +257,8 @@ class PlaybackReportingDeviceTest {
             }
             try {
                 eventually { model.playback.value.seekable && model.playback.value.current?.id == first.id }
-                withContext(Dispatchers.Main) { model.seekCurrent(first.id, 0, 20_000) }
+                val before = model.playback.value
+                withContext(Dispatchers.Main) { model.seekCurrent(before, 20_000) }
                 eventually { player.currentPosition == 20_000L }
                 withContext(Dispatchers.Main) {
                     assertEquals(Player.STATE_IDLE, player.playbackState)
@@ -266,7 +267,7 @@ class PlaybackReportingDeviceTest {
                 }
                 eventually { model.playback.value.current?.id == second.id && player.currentPosition == 5_000L }
                 withContext(Dispatchers.Main) {
-                    model.seekCurrent(first.id, 0, 40_000)
+                    model.seekCurrent(before, 40_000)
                     assertEquals(5_000L, player.currentPosition)
                     assertEquals(5_000L, model.playback.value.positionMs)
                     player.prepare()
@@ -274,6 +275,81 @@ class PlaybackReportingDeviceTest {
                 eventually { player.playbackState == Player.STATE_READY && player.currentPosition == 5_000L }
             } finally {
                 withContext(Dispatchers.Main) { store.clear() }
+            }
+        }
+    }
+
+    @Test fun reselectingTheSameSongRejectsAnOldScrubButAcceptsANewOne() = runBlocking {
+        withFixture { player ->
+            val store = ViewModelStore()
+            val model = withContext(Dispatchers.Main) {
+                player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 35_000)
+                player.prepare()
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            try {
+                eventually { model.playback.value.seekable && model.playback.value.positionMs == 35_000L }
+                val before = model.playback.value
+                withContext(Dispatchers.Main) { model.select(0) }
+                eventually { player.isPlaying && player.currentPosition in 0..2_000 }
+                withContext(Dispatchers.Main) { player.pause() }
+                eventually { model.playback.value.seekable && !model.playback.value.playWhenReady }
+                val parked = withContext(Dispatchers.Main) { player.currentPosition }
+                withContext(Dispatchers.Main) { model.seekCurrent(before, 55_000) }
+                delay(400)
+                withContext(Dispatchers.Main) {
+                    assertEquals(parked, player.currentPosition)
+                    model.seekCurrent(model.playback.value, 55_000)
+                }
+                eventually { player.playbackState == Player.STATE_READY && player.currentPosition == 55_000L && !player.playWhenReady }
+            } finally {
+                withContext(Dispatchers.Main) { store.clear() }
+            }
+        }
+    }
+
+    @Test fun playerShowsBufferingAndStillLetsTheUserPauseBeforeAudioArrives() = runBlocking {
+        assumeTrue(Build.VERSION.SDK_INT >= 30)
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            fun screenshot(stage: String) {
+                if (InstrumentationRegistry.getArguments().getString("playbackBufferScreenshot") != "true") return
+                val image = checkNotNull(automation.takeScreenshot())
+                try {
+                    File(app.cacheDir, "android-player-$stage-buffering.png").outputStream().use {
+                        assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it))
+                    }
+                } finally { image.recycle() }
+            }
+            try {
+                val waiting = first.copy(sourceTrackId = "pending", title = "Waiting audio")
+                withContext(Dispatchers.Main) {
+                    player.setMediaItems(listOf(waiting.mediaItem(), first.mediaItem()), 0, 0)
+                    player.prepare()
+                    player.play()
+                }
+                eventually { player.playbackState == Player.STATE_BUFFERING && player.playWhenReady }
+                val bufferingLabels = arrayOf("正在缓冲，暂停", "Buffering, Pause")
+                automation.queueNode(*bufferingLabels)
+                screenshot("mini")
+                automation.press(automation.queueNode("Waiting audio"))
+                automation.queueNode("关闭播放器", "Close Player")
+                val control = automation.queueNode(*bufferingLabels)
+                screenshot("full")
+                automation.press(control)
+                eventually { !player.playWhenReady }
+                automation.queueNode("播放", "Play")
+                withContext(Dispatchers.Main) { player.seekTo(1, 0); player.play() }
+                eventually { player.isPlaying && player.currentMediaItem?.mediaId == first.id && player.currentPosition > 100 }
+                automation.queueNode("暂停", "Pause")
+            } catch (failure: Exception) {
+                screenshot("failure")
+                throw failure
+            } finally {
+                instrumentation.runOnMainSync { activity.finish() }
             }
         }
     }
@@ -1251,6 +1327,10 @@ class PlaybackReportingDeviceTest {
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("index.js"))
             zip.write("""
+                export function stream({id}) {
+                    if (id === 'pending') return new Promise(() => {});
+                    throw new Error('Fixture audio uses a local copy');
+                }
                 export function played({id}) {
                     const reports = host.storage.get('plays') ?? [];
                     host.storage.set('plays', [...reports, id]);

@@ -150,7 +150,7 @@ private fun VideoFrame(engine: Player?, loading: Boolean, playback: PlaybackStat
                     Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f))))
                         .padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PlayButton(playback.playWhenReady, { currentToggle(); revision += 1 })
+                        PlayButton(playback, { currentToggle(); revision += 1 })
                         Column(Modifier.weight(1f).padding(bottom = 6.dp)) {
                             PlayerProgress(playback, smoke = false, seek = { seek(it); revision += 1 }, interactions = interactions)
                         }

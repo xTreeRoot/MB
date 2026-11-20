@@ -21,6 +21,7 @@ import com.xtreeroot.mb.music.StationPlaybackSource
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.music.VideoSource
+import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -83,6 +84,41 @@ class StreamingDeviceTest {
             assertEquals("bytes=$audioPrefixBytes-", requests[1])
             assertTrue(requests.drop(2).all { it.startsWith("bytes=") })
         } finally { withContext(Dispatchers.Main) { player.release() } }
+    }
+
+    @Test fun farSeeksOnAudioWithoutRangeSupportReuseOneVerifiedFileAndKeepPause() = runBlocking {
+        val audio = wave(590)
+        val requests = CopyOnWriteArrayList<Int>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += offset(request)
+            response(request, 200, audio).header("ETag", "\"full-fixture\"").build()
+        }.build()
+        val directory = File(instrumentation.targetContext.cacheDir, "sequential-audio-test")
+        val fallback = SequentialAudioFile(directory)
+        val guard = MediaRangeGuard(fallback)
+        val player = withContext(Dispatchers.Main) {
+            player(client, DataSource.Factory { guardedMediaHttp(client, guard) }).apply {
+                setMediaItem(MediaItem.fromUri("https://fixture.invalid/whole.wav"))
+                prepare()
+            }
+        }
+        try {
+            eventually { player.playbackState == Player.STATE_READY && player.isCurrentMediaItemSeekable }
+            withContext(Dispatchers.Main) { player.seekTo(535_000) }
+            eventually { player.playerError != null || (player.playbackState == Player.STATE_READY && player.currentPosition == 535_000L) }
+            withContext(Dispatchers.Main) { assertNull(player.playerError); assertFalse(player.playWhenReady) }
+            withContext(Dispatchers.Main) { player.seekTo(560_000) }
+            eventually { player.playbackState == Player.STATE_READY && player.currentPosition == 560_000L }
+            withContext(Dispatchers.Main) { assertFalse(player.isPlaying); player.play() }
+            eventually { player.isPlaying && player.currentPosition > 560_100 }
+            assertEquals(2, requests.size)
+            assertTrue(requests.last() > 8 * 1024 * 1024)
+        } finally {
+            withContext(Dispatchers.Main) { player.release() }
+            fallback.clear()
+            directory.deleteRecursively()
+        }
     }
 
     @Test fun expiresAtNonzeroOffsetAndRestartsAtLatestPositionWithoutStartingPausedAudio() = runBlocking {

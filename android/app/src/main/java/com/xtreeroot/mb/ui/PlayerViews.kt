@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,6 +71,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -97,14 +100,14 @@ private fun PlaybackState.failureMessage(): String? =
     if (audioFocusBlocked) mb("系统暂未允许播放音频", "System audio focus is unavailable") else error
 
 @Composable
-internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Unit, queue: () -> Unit,
-                        coverBounds: (Rect) -> Unit) {
+internal fun ColumnScope.MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Unit, queue: () -> Unit,
+                                    coverBounds: (Rect) -> Unit) {
     val track = state.current ?: return
     val failure = state.failureMessage()
     val colors = MaterialTheme.colorScheme
-    Surface(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(8.dp), color = colors.surfaceContainer, shadowElevation = 2.dp,
-        border = BorderStroke(0.5.dp, colors.outlineVariant)) {
+    Surface(Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 12.dp, vertical = 6.dp)
+        .widthIn(max = 680.dp).fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = colors.surfaceContainer,
+        shadowElevation = 2.dp, border = BorderStroke(0.5.dp, colors.outlineVariant.copy(alpha = 0.65f))) {
         Column {
             Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).clickable(onClick = open).padding(8.dp),
@@ -115,17 +118,18 @@ internal fun MiniPlayer(state: PlaybackState, open: () -> Unit, toggle: () -> Un
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         (failure ?: track.artist).takeIf(String::isNotBlank)?.let { subtitle ->
                             Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (failure == null) colors.onSurfaceVariant else colors.error)
                         }
                     }
                 }
-                PlayButton(state.playWhenReady && failure == null, toggle)
+                PlayButton(state, toggle)
                 IconButton(onClick = queue) { Icon(Icons.AutoMirrored.Filled.List, mb("播放队列", "Queue"), Modifier.size(20.dp)) }
             }
             if (state.durationMs > 0) {
                 val progress = (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f)
-                Box(Modifier.fillMaxWidth().height(2.dp).background(colors.outlineVariant)) {
-                    Box(Modifier.fillMaxWidth(progress).height(2.dp).background(colors.primary))
+                Box(Modifier.fillMaxWidth().height(2.dp)) {
+                    Box(Modifier.fillMaxWidth(progress).height(2.dp).background(colors.primary.copy(alpha = 0.72f), CircleShape))
                 }
             }
         }
@@ -239,7 +243,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                 val bass by app.bassLevel.collectAsStateWithLifecycle()
                 PlaybackFog(track, if (state.playing) bass else 0f, animate, Modifier.matchParentSize())
             }
-            val seekCurrent: (Long) -> Unit = { model.seekCurrent(track.id, state.index, it) }
+            val seekCurrent: (Long) -> Unit = { model.seekCurrent(state, it) }
             val showLyrics: @Composable (Boolean) -> Unit = { rhythm ->
                 when {
                     captions.loading -> Loading()
@@ -312,7 +316,7 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         IconButton(onClick = model::previous) {
                             Icon(painterResource(R.drawable.ic_media_previous), mb("上一首", "Previous"))
                         }
-                        PlayButton(state.playWhenReady && failure == null, model::toggle, prominent = !enlargedText)
+                        PlayButton(state, model::toggle, prominent = !enlargedText)
                         IconButton(onClick = model::next) {
                             Icon(painterResource(R.drawable.ic_media_next), mb("下一首", "Next"))
                         }
@@ -409,14 +413,28 @@ private fun PlayerModeControl(label: String, icon: Int, active: Boolean, enabled
 }
 
 @Composable
-internal fun PlayButton(playing: Boolean, toggle: () -> Unit, prominent: Boolean = false) {
+internal fun PlayButton(state: PlaybackState, toggle: () -> Unit, prominent: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val size = if (prominent) 32.dp else 24.dp
     val modifier = if (prominent) Modifier.size(60.dp).background(colors.primary, CircleShape) else Modifier
-    IconButton(onClick = toggle, modifier = modifier, colors = IconButtonDefaults.iconButtonColors(
-        contentColor = if (prominent) colors.onPrimary else colors.onSurface)) {
-        if (playing) Icon(painterResource(R.drawable.ic_media_pause), mb("暂停", "Pause"), Modifier.size(size))
-        else Icon(Icons.Default.PlayArrow, mb("播放", "Play"), Modifier.size(size))
+    val available = state.error == null && !state.audioFocusBlocked
+    val pausing = state.playWhenReady && available
+    val buffering = state.loading && pausing
+    val label = when {
+        buffering -> mb("正在缓冲，暂停", "Buffering, Pause")
+        pausing -> mb("暂停", "Pause")
+        else -> mb("播放", "Play")
+    }
+    val tint = if (prominent) colors.onPrimary else colors.onSurface
+    IconButton(onClick = toggle, modifier = modifier.semantics {
+        contentDescription = label
+    }, colors = IconButtonDefaults.iconButtonColors(contentColor = tint)) {
+        if (buffering) {
+            val indicator = Modifier.size(size).clearAndSetSemantics { }
+            if (ValueAnimator.areAnimatorsEnabled()) CircularProgressIndicator(indicator, color = tint, strokeWidth = 2.dp)
+            else CircularProgressIndicator(progress = { 0.25f }, modifier = indicator, color = tint, strokeWidth = 2.dp)
+        } else if (pausing) Icon(painterResource(R.drawable.ic_media_pause), null, Modifier.size(size))
+        else Icon(Icons.Default.PlayArrow, null, Modifier.size(size))
     }
 }
 

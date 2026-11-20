@@ -55,6 +55,7 @@ import com.xtreeroot.mb.music.activeCaption
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import android.database.sqlite.SQLiteException
@@ -99,6 +100,7 @@ internal class PlaybackService : MediaLibraryService() {
     private var player: ExoPlayer? = null
     private var video: VideoPlayback? = null
     private var stations: StationPlayback? = null
+    private var sequentialAudioFile: SequentialAudioFile? = null
     private var lastPortableQueueNotification = 0L
     private val checkpoint = object : Runnable {
         override fun run() {
@@ -110,6 +112,8 @@ internal class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         val app = application as MBApplication
+        val fallback = SequentialAudioFile(File(cacheDir, "sequential-audio"))
+        sequentialAudioFile = fallback
         val preparedLoads = ConcurrentHashMap.newKeySet<Uri>()
         val preloader = NextAudioPreloader<AudioTarget, PreparedAudio>(scope, SystemClock::elapsedRealtime) { target ->
             val identifier = target.uri.pathSegments.single()
@@ -120,7 +124,7 @@ internal class PlaybackService : MediaLibraryService() {
         fun dataSourceFactory(usePrepared: Boolean) = DataSource.Factory {
             var reader: OfflineMediaStore.Lease? = null
             var pinned: Pair<Uri, MediaResource>? = null
-            val guard = MediaRangeGuard()
+            val guard = MediaRangeGuard(fallback.takeIf { usePrepared })
             val upstream = DefaultDataSource.Factory(this) { guardedMediaHttp(app.http, guard) }
             val delegate = ResolvingDataSource.Factory(upstream) { spec ->
                 resolve(spec, { reader = it }) { uri, source, identifier, quality ->
@@ -178,6 +182,7 @@ internal class PlaybackService : MediaLibraryService() {
                 resolved.remove(item?.localConfiguration?.uri)
                 resolutionEpoch++
             }
+            fallback.clear()
             cacheJob?.cancel()
         }
         val recovery = AudioRecovery(scope, player, ::invalidateAddress)
@@ -492,6 +497,8 @@ internal class PlaybackService : MediaLibraryService() {
         session = null
         player = null
         current?.player?.release()
+        sequentialAudioFile?.clear()
+        sequentialAudioFile = null
         val retired = synchronized(locations) { locations.values.mapNotNull(AudioLocation::file).also { locations.clear() } }
         scope.launch(Dispatchers.IO + NonCancellable) { retired.forEach(OfflineMediaStore.Lease::close) }
         current?.release()
