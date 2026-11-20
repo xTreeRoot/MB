@@ -39,6 +39,7 @@ struct PluginCatalogPage: View {
     @State private var artworkPrefetch: Task<Void, Never>?
     @State private var offset = 0
     @State private var more = false
+    @State private var appendFailed = false
     @State private var capabilities: Set<String> = []
     @State private var changing = false
     @State private var enabled = false
@@ -118,12 +119,13 @@ struct PluginCatalogPage: View {
                 if capabilities.contains("renamePlaylist") { Button("重命名歌单") { name = content?.title ?? item.title; rename = true } }
                 if capabilities.contains("deletePlaylist") { Button("删除平台歌单", role: .destructive) { delete = true } }
             }
-            if more { Button("加载更多") { Task { await load(append: true) } }.disabled(loading) }
+            if more { PaginationFooter(page: "\(loadRevision):\(offset)", loading: loading, blocked: error != nil || changing) { await load(append: true) } }
             if loading { ProgressView() }
-            if let error { Text(error).foregroundStyle(.red); Button("重试") { Task { await load() } } }
+            if let error { Text(error).foregroundStyle(.red); Button("重试") { Task { await load(append: appendFailed) } } }
             if !loading && content?.sections.isEmpty != false && error == nil { ContentUnavailableView("暂无内容", systemImage: "music.note") }
         }
         .listStyle(.plain)
+        .modifier(PaginationViewport())
         .modifier(SkinSurface(list: true, enabled: request.isHome))
         .navigationTitle(title)
         .alert("歌单名称", isPresented: $rename) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("保存") { Task { await playlistName(create: false) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
@@ -193,6 +195,8 @@ struct PluginCatalogPage: View {
     }
     private func change(_ operation: () async throws -> Void) async { guard !changing else { return }; changing = true; defer { changing = false }; do { try await operation() } catch { self.error = error.localizedDescription } }
     private func load(append: Bool = false) async {
+        if append { guard more, !loading else { return } }
+        appendFailed = append
         loadRevision += 1
         let revision = loadRevision
         loading = true; error = nil

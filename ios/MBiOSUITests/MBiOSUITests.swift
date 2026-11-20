@@ -687,7 +687,7 @@ final class MBiOSUITests: XCTestCase {
         field.tap(); field.typeText("clip\n")
         XCTAssertTrue(app.buttons["选择 clip · 视频结果"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["返回浏览"].exists)
-        app.buttons["加载更多"].tap()
+        app.swipeUp()
         let next = app.buttons["选择 clip · 更多视频"]
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         capture("插件-独立视频搜索", app: app)
@@ -1193,5 +1193,58 @@ extension MBiOSUITests {
         capture("视频-全屏单击唤出控制条", app: app)
         app.buttons["退出全屏"].tap()
         XCUIDevice.shared.orientation = .portrait
+    }
+}
+
+extension MBiOSUITests {
+    @MainActor func testBottomPaginationLoadsSearchAndPersonalLibraryWithoutButton() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--demo-account", "--demo-pagination", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("搜索", app: app)
+        let field = app.textFields["搜索视频、音乐、UP 主"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap(); field.typeText("分页\n")
+        XCTAssertTrue(app.buttons["选择 分页示例 1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["加载更多"].exists)
+        let nextSearch = app.buttons["选择 分页示例 19"]
+        for _ in 0..<8 {
+            if nextSearch.exists && nextSearch.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(nextSearch.waitForExistence(timeout: 5))
+        capture("分页-搜索触底自动追加", app: app)
+        selectTab("我的", app: app)
+        app.buttons["点赞的视频"].tap()
+        XCTAssertTrue(app.buttons["播放 分页示例 1"].waitForExistence(timeout: 5))
+        let nextLibrary = app.buttons["播放 分页示例 19"]
+        for _ in 0..<8 {
+            if nextLibrary.exists && nextLibrary.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(nextLibrary.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["加载更多"].exists)
+        capture("分页-个人资源触底自动追加", app: app)
+    }
+
+    @MainActor func testPlayerActionCaptionsShareOneBaseline() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+        app.buttons["查看更多为你推荐"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        app.buttons["打开播放页，晚风里的片刻"].tap()
+        let captions = ["歌词", "评论点赞", "待播清单"].map { app.staticTexts[$0] }
+        XCTAssertTrue(captions[0].waitForExistence(timeout: 5))
+        let baseline = captions[0].frame.midY
+        for caption in captions { XCTAssertEqual(caption.frame.midY, baseline, accuracy: 1) }
+        let route = app.descendants(matching: .any)["player-audio-output"].firstMatch
+        XCTAssertTrue(route.exists)
+        // 三个普通图标与系统输出按钮都占同一 28pt 图标槽，标题底线相同。
+        XCTAssertEqual(route.frame.midY, app.buttons["字幕"].frame.minY + 14, accuracy: 4)
+        capture("播放-音频输出与操作图标对齐", app: app)
     }
 }

@@ -1,5 +1,7 @@
 # 页面核对与验证
 
+Build 25：远程插件直接比较更新、触底分页和播放器动作对齐，见 [验收记录](RemoteUpdates/README.md)。
+
 ## 紧凑页面与系统授权（2026-11-19）
 
 四页 hero 标题移除，音源独占一行；YouTube iOS 系统 OAuth 和 CarPlay 主标题歌词已实现。Swift 全量 162 项、最终相关回归 29 项、插件 Node 14 项及 iPhone 4 项 / iPad 2 项 UI 方法通过。26 张截图、源码摘要、流播结论和真机未验收范围见 [本轮验证](CompactOAuth/README.md)。

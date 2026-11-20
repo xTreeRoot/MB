@@ -73,16 +73,16 @@ struct TrackCommentsList: View {
                         }
                         if model.isLoading { ProgressView().frame(maxWidth: .infinity).padding() }
                         else if model.comments.isEmpty && model.errorMessage == nil { ContentUnavailableView("暂无评论", systemImage: "bubble.left.and.bubble.right") }
-                        if model.hasMore { Button("加载更多评论") { Task { await model.loadMore() } }.disabled(model.isLoading).frame(minHeight: 44) }
+                        if model.hasMore { PaginationFooter(page: "\(model.paginationGeneration):\(model.nextPage)", loading: model.isLoading, blocked: model.errorMessage != nil || model.isPosting) { await model.loadMore() } }
                     } header: {
                         if track != nil { Text("评论 · \(model.total)") }
                     }
                 }
                 if let message = model.errorMessage {
                     Text(LocalizedStringKey(message)).font(.subheadline).foregroundStyle(.red)
-                    Button("重试加载评论") { Task { await model.refresh() } }.frame(minHeight: 44)
+                    Button("重试加载评论") { Task { if model.hasMore { await model.loadMore() } else { await model.refresh() } } }.frame(minHeight: 44)
                 }
-            }.listStyle(.plain).scrollDismissesKeyboard(.interactively)
+            }.listStyle(.plain).modifier(PaginationViewport()).scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if model.capabilities.posting {
                     HStack(alignment: .bottom, spacing: 12) {

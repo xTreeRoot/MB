@@ -87,3 +87,8 @@ import Testing
     try await store.saveProxyHosts([])
     #expect(try await store.loadProxyHosts() == [])
 }
+
+@Test func pluginImportAcceptsRepositoryAddressesWithoutFetchingStarsHTML() async throws {
+    #expect(try await PluginStars.repositories("https://github.com/owner/repo.git") == ["owner/repo"])
+    #expect(try await PluginStars.repositories("owner/repo") == ["owner/repo"])
+}

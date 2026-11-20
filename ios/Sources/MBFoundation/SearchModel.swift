@@ -12,8 +12,9 @@ public final class SearchModel {
 
     @ObservationIgnored private let loadPage: @Sendable (String, Int) async throws -> (TrackPage, Int)
     @ObservationIgnored private let initialCursor: Int
-    @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var cursor: Int
+    private var generation = 0
+    public var paginationGeneration: Int { generation }
+    public private(set) var cursor: Int
 
     public init(source: any MusicSource) {
         initialCursor = 1; cursor = 1

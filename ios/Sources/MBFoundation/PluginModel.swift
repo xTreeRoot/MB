@@ -17,7 +17,6 @@ public enum PluginPreparation: Equatable {
     public private(set) var revision = 0
     public private(set) var disabled: Set<String> = []
     public private(set) var updates: [String: String] = [:]
-    public private(set) var checking = false
     public private(set) var updatingAll = false
     public private(set) var updateStatus: String?
     public private(set) var updateIssues: [String: String] = [:]
@@ -85,10 +84,10 @@ public enum PluginPreparation: Equatable {
         catch { errorMessage = error.localizedDescription }
     }
     public func update(_ plugin: InstalledPlugin) async {
-        guard !checking, plugin.repository != nil else { return }
+        guard plugin.repository != nil else { return }
         let current = installed.first(where: { $0.id == plugin.id }) ?? plugin
         await prepare {
-            let update = try await installer.prepareUpdate(current)
+            let update = try await prepareUpdate(current)
             if update == nil {
                 updates[current.id] = nil
                 updateIssues[current.id] = AppLocalization.text("已是最新版本")
@@ -97,31 +96,28 @@ public enum PluginPreparation: Equatable {
         }
     }
 
-    public func checkUpdates(force: Bool = false) async {
-        guard !busy, !checking, pending == nil else { return }
-        checking = true; updateStatus = nil; errorMessage = nil
-        defer { checking = false }
-        do {
-            let report = try await installer.checkUpdates(force: force)
-            updates = report.versions.filter { id, version in
-                installed.contains { $0.id == id && $0.repository != nil && !($0.revision?.hasPrefix(version) ?? false) }
-            }
-            let githubIDs = Set(installed.filter { $0.repository != nil }.map(\.id))
-            updateIssues = Dictionary(uniqueKeysWithValues: report.failed.filter { githubIDs.contains($0) }.map { ($0, AppLocalization.text("检测更新失败")) })
-            if force { updateStatus = AppLocalization.text("可更新 %lld 个 · 检测失败 %lld 个", arguments: [updates.count, updateIssues.count]) }
-        } catch { if force, !Task.isCancelled { reportError(error) } }
+    private func prepareUpdate(_ plugin: InstalledPlugin) async throws -> PendingPlugin? {
+        guard let repo = plugin.repository.flatMap(PluginInstaller.normalizedRepository) else { return nil }
+        let next = try await githubPreparation(installer, repo)
+        guard next.manifest.id == plugin.id,
+              next.repository.flatMap(PluginInstaller.normalizedRepository)?.caseInsensitiveCompare(repo) == .orderedSame else {
+            await installer.discard(next)
+            throw PluginFailure.invalid(AppLocalization.text("更新包的插件 ID 或来源不匹配"))
+        }
+        if PluginInstaller.isSameRevision(next, as: plugin) { await installer.discard(next); return nil }
+        return next
     }
 
     public func updateAll() async {
-        guard !busy, !checking, pending == nil else { return }
+        guard !busy, pending == nil else { return }
         let candidates = installed.filter { $0.repository != nil }
         guard !candidates.isEmpty else { return }
         updatingAll = true; updateStatus = nil; errorMessage = nil; updateIssues = [:]
         defer { updatingAll = false }
-        var updated = 0, review = 0, failed = 0
+        var updated = 0, unchanged = 0, review = 0, failed = 0
         for plugin in candidates where !Task.isCancelled {
             do {
-                guard let next = try await installer.prepareUpdate(plugin) else { updates[plugin.id] = nil; continue }
+                guard let next = try await prepareUpdate(plugin) else { updates[plugin.id] = nil; unchanged += 1; continue }
                 if Self.needsReview(from: plugin.manifest, to: next.manifest) {
                     updates[plugin.id] = next.manifest.version ?? next.revision.map { String($0.prefix(12)) } ?? ""
                     updateIssues[plugin.id] = AppLocalization.text("新增权限，请单独打开此更新确认")
@@ -139,11 +135,11 @@ public enum PluginPreparation: Equatable {
             }
         }
         if updated > 0 { await restore() }
-        updateStatus = AppLocalization.text("已更新 %lld 个 · 需确认权限 %lld 个 · 失败 %lld 个", arguments: [updated, review, failed])
+        updateStatus = AppLocalization.text("已更新 %lld 个 · 已是最新 %lld 个 · 需确认权限 %lld 个 · 失败 %lld 个", arguments: [updated, unchanged, review, failed])
     }
 
     public func reviewStars(_ address: String) async {
-        guard !busy, !checking, pending == nil else { return }
+        guard !busy, pending == nil else { return }
         starsBusy = true; starsStatus = nil
         defer { starsBusy = false }
         var entries: [PluginStarsEntry] = []
@@ -157,12 +153,22 @@ public enum PluginPreparation: Equatable {
                     let pending = try await githubPreparation(installer, repo)
                     let id = pending.manifest.id
                     let previous = existing.first { $0.id.caseInsensitiveCompare(id) == .orderedSame }
+                    let sameSource = existing.first { $0.repository?.caseInsensitiveCompare(repo) == .orderedSame }
+                    if sameSource != nil && sameSource?.id != id {
+                        await installer.discard(pending)
+                        throw PluginFailure.invalid(AppLocalization.text("远程仓库的插件 ID 与已安装版本不匹配"))
+                    }
                     if claimed.contains(id.lowercased()) || (previous != nil &&
                         (previous?.id != id || previous?.repository?.caseInsensitiveCompare(repo) != .orderedSame)) {
                         await installer.discard(pending)
                         throw PluginFailure.invalid(AppLocalization.text("该插件 ID 已被内置插件或其他来源占用"))
                     }
                     claimed.insert(id.lowercased())
+                    if let previous, PluginInstaller.isSameRevision(pending, as: previous) {
+                        await installer.discard(pending)
+                        entries.append(PluginStarsEntry(repository: repo, issue: AppLocalization.text("已是最新版本"), pending: nil))
+                        continue
+                    }
                     entries.append(PluginStarsEntry(repository: repo, issue: nil, pending: pending))
                 } catch {
                     entries.append(PluginStarsEntry(repository: repo, issue: error.localizedDescription, pending: nil))

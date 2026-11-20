@@ -29,6 +29,7 @@ enum PluginStars {
     private static var invalidAddress: PluginFailure { .invalid(AppLocalization.text("请输入公开的 GitHub 星标列表地址")) }
 
     static func repositories(_ input: String) async throws -> [String] {
+        if let repository = PluginInstaller.normalizedRepository(input) { return [repository] }
         let url = try address(input)
         var request = URLRequest(url: url)
         request.setValue("text/html", forHTTPHeaderField: "Accept")

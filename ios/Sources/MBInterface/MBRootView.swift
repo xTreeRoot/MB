@@ -178,7 +178,7 @@ public struct MBRootView: View {
             }
             .task {
                 await router.register(initialSource, id: initialSourceID)
-                if !demo { await plugins.restore(); await registerPlugins(); Task { await plugins.checkUpdates() } }
+                if !demo { await plugins.restore(); await registerPlugins() }
                 if !demo { systemPlayback.connect(playback) }
                 if !demo { await networkSettings.restore() }
                 if !demo { await preferences.restore(); if let saved = preferences.values.selectedSourceID { selectedSourceID = saved }; playback.setVolume(preferences.values.volume); playback.setNormalization(preferences.values.normalization) }
@@ -239,7 +239,6 @@ public struct MBRootView: View {
             .onChange(of: video.isBuffering) { _, _ in syncVideoClock() }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { Task { await playback.saveNow(); if !demo { await preferences.flush() } } }
-                else if !demo { Task { await plugins.checkUpdates() } }
             }
             .onChange(of: preferences.values) { _, _ in
                 AppLocalization.use(preferences.values.language)
@@ -523,12 +522,15 @@ public struct MBRootView: View {
                 if search.hasMore {
                     VStack(spacing: 8) {
                         if let message = search.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
-                        Button("加载更多") { request = SearchRequest(model: search, query: search.query, more: true) }
-                            .buttonStyle(.bordered).disabled(search.isLoading)
-                        if search.isLoading { ProgressView() }
+                        if search.errorMessage != nil {
+                            Button("重试") { request = SearchRequest(model: search, query: search.query, more: true) }
+                        }
+                        PaginationFooter(page: "\(search.paginationGeneration):\(search.cursor)", loading: search.isLoading, blocked: search.errorMessage != nil) {
+                            await search.loadMore()
+                        }.id(ObjectIdentifier(search))
                     }.frame(maxWidth: .infinity).listRowSeparator(.hidden)
                 }
-            }.listStyle(.plain).modifier(SkinSurface(list: true))
+            }.listStyle(.plain).modifier(PaginationViewport()).modifier(SkinSurface(list: true))
         }
     }
 

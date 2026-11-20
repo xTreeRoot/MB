@@ -54,16 +54,15 @@ struct PluginsView: View {
         List {
             Section {
                 Button("一键导入/覆盖", systemImage: "square.and.arrow.down.on.square") { stars = true }
-                    .disabled(model.busy || model.checking || model.pending != nil)
+                    .disabled(model.busy || model.pending != nil)
                     .accessibilityIdentifier("plugin-import-stars")
             }
             if model.installed.contains(where: { $0.repository != nil }) {
                 Section("插件更新") {
-                    Button("检测更新", systemImage: "arrow.clockwise") { Task { await model.checkUpdates(force: true) } }
-                        .disabled(model.busy || model.checking)
                     Button("全部更新", systemImage: "arrow.down.circle") { Task { await model.updateAll() } }
-                        .disabled(model.busy || model.checking)
-                    if model.checking || model.updatingAll { ProgressView(model.updatingAll ? "正在更新插件" : "正在检测插件更新") }
+                        .accessibilityIdentifier("plugin-update-all")
+                        .disabled(model.busy)
+                    if model.updatingAll { ProgressView("正在更新插件") }
                     if let status = model.updateStatus { Text(status).font(.caption).foregroundStyle(.secondary) }
                 }
             }
@@ -145,7 +144,7 @@ private struct PluginStarsView: View {
                 if let entries = model.starsEntries {
                     ForEach(entries, content: repositoryRow)
                 } else {
-                    TextField("GitHub 星标列表地址", text: $address)
+                    TextField("GitHub 仓库或星标列表地址", text: $address)
                         .autocorrectionDisabled().disabled(model.starsBusy)
                         .accessibilityIdentifier("plugin-stars-address")
                 }
@@ -231,7 +230,7 @@ private struct PluginSettingsView: View {
             Toggle("启用音源", isOn: Binding(get: { !model.disabled.contains(plugin.id) }, set: { enabled in Task { await model.setEnabled(plugin, enabled: enabled) } }))
                 .disabled(model.busy)
             if plugin.repository != nil {
-                Button(model.updates[plugin.id] == nil ? "检测更新" : "查看更新") { Task { await model.update(plugin) } }.disabled(model.busy || model.checking)
+                Button("更新插件") { Task { await model.update(plugin) } }.disabled(model.busy)
                 if let issue = model.updateIssues[plugin.id] { Text(issue).font(.caption).foregroundStyle(.secondary) }
             }
             Section("网络权限") { ForEach(plugin.manifest.permissions?.network ?? [], id: \.self) { Text($0).font(.caption.monospaced()) } }

@@ -200,17 +200,17 @@ struct NowPlayingView: View {
                 Spacer(minLength: 0)
             }
             #if os(iOS)
-            VStack(spacing: 0) {
-                AudioRoutePicker().frame(width: 44, height: 36).accessibilityLabel("音频输出")
+            VStack(spacing: 3) {
+                AudioRoutePicker().frame(width: 44, height: 28).accessibilityLabel("音频输出").accessibilityIdentifier("player-audio-output")
                 Text("音频输出").font(.caption2).accessibilityHidden(true)
-            }.frame(minWidth: 60)
+            }.frame(minWidth: 60, minHeight: 48)
             Spacer(minLength: 0)
             #endif
             Button { showingQueue = true } label: { actionLabel("待播清单", icon: "list.bullet") }.accessibilityLabel("队列").accessibilityValue("\(playback.queue.tracks.count)")
         }.foregroundStyle(.primary)
     }
     private func actionLabel(_ title: String, icon: String, active: Bool = false) -> some View {
-        VStack(spacing: 3) { Image(systemName: icon).font(.title3); Text(LocalizedStringKey(title)).font(.caption2) }
+        VStack(spacing: 3) { Image(systemName: icon).font(.title3).frame(width: 44, height: 28); Text(LocalizedStringKey(title)).font(.caption2) }
             .frame(minWidth: 60, minHeight: 48)
             .background(active ? MBTheme.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
     }

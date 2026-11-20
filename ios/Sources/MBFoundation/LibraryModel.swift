@@ -12,7 +12,8 @@ public final class LibraryModel {
     public private(set) var errorMessage: String?
     public private(set) var nextCursor: String?
     @ObservationIgnored private let source: any LibrarySource
-    @ObservationIgnored private var generation = 0
+    private var generation = 0
+    public var paginationGeneration: Int { generation }
     @ObservationIgnored private var failedCursor: String?
     @ObservationIgnored private var failedRefresh = false
     public init(source: any LibrarySource, route: LibraryRoute) {

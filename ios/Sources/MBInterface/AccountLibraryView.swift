@@ -151,11 +151,14 @@ struct LibraryPageView: View {
             else if model.tracks.isEmpty && model.links.isEmpty && model.errorMessage == nil {
                 ContentUnavailableView("暂无内容", systemImage: "tray")
             }
-            if model.nextCursor != nil {
-                Button("加载更多") { Task { await model.loadMore(); prefetchArtwork() } }.disabled(model.isLoading)
+            if let cursor = model.nextCursor {
+                PaginationFooter(page: "\(model.paginationGeneration):\(cursor)", loading: model.isLoading, blocked: model.errorMessage != nil) {
+                    await model.loadMore(); prefetchArtwork()
+                }
             }
         }
         .listStyle(.plain)
+        .modifier(PaginationViewport())
         .navigationTitle(Text(LocalizedStringKey(model.title)))
         .task { await model.restore(); prefetchArtwork() }
         .onDisappear { artworkPrefetch?.cancel() }

@@ -11,6 +11,9 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
         if query == "error" { throw DemoFailure.network }
         if query == "empty" { return TrackPage(tracks: [], hasMore: false) }
         if query == "loading" { try await Task.sleep(for: .seconds(120)) }
+        if ProcessInfo.processInfo.arguments.contains("--demo-pagination") {
+            return TrackPage(tracks: paginationTracks(page), hasMore: page == 1)
+        }
         return TrackPage(tracks: page == 1 ? DemoCatalog.tracks : [], hasMore: false)
     }
 
@@ -29,6 +32,9 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
     }
     public func signOut() async throws { await accountState.signOut() }
     public func library(_ route: LibraryRoute, cursor: String?) async throws -> LibraryPage {
+        if ProcessInfo.processInfo.arguments.contains("--demo-pagination"), route == .liked {
+            return LibraryPage(title: route.title, tracks: paginationTracks(cursor == nil ? 1 : 2), nextCursor: cursor == nil ? "2" : nil)
+        }
         switch route {
         case .favorites: return LibraryPage(title: route.title, links: [LibraryLink(id: "folder", title: "音乐收藏 · 示例", subtitle: "3 个视频", route: .folder("folder"))])
         case .following: return LibraryPage(title: route.title, links: [LibraryLink(id: "up", title: "示例 UP 主", subtitle: "关注列表 · 演示数据", route: .creator("up"))])
@@ -42,6 +48,13 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
     }
     public func postComment(trackID: String, text: String) async throws -> TrackComment {
         TrackComment(id: UUID().uuidString, author: "界面示例用户", text: text, date: Date(), likes: 0)
+    }
+
+    private func paginationTracks(_ page: Int) -> [Track] {
+        guard page <= 2 else { return [] }
+        return (page == 1 ? 1...18 : 19...21).map { index in
+            Track(sourceID: "demo", sourceTrackID: "page-\(index)", title: "分页示例 \(index)", artist: "MB 界面示例", durationMilliseconds: 180_000)
+        }
     }
 
 }

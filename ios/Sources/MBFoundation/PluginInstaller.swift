@@ -17,24 +17,21 @@ public struct PendingPlugin: Identifiable, Sendable {
     var revision: String? = nil
 }
 
-struct PluginUpdateCheck: Codable, Sendable {
-    let checked: Date
-    let versions: [String: String]
-    let failed: [String]
-}
-
 /// 安装先在临时目录检查，确认后原子替换代码，账号与设置留在独立数据目录。
 public actor PluginInstaller {
     private struct Origin: Codable { let repository: String?; let revision: String? }
     private struct Release: Sendable {
         let revision: String
         let address: URL
-        let isCommit: Bool
-        var label: String { isCommit ? String(revision.prefix(12)) : revision }
     }
     private let root: URL
+    private let fetch: @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)
     public init(directory: URL? = nil) {
         root = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MBMobile/plugins")
+        fetch = { try await NetworkClient.shared.data(for: $0, maximumBytes: $1) }
+    }
+    init(directory: URL, fetch: @escaping @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)) {
+        root = directory; self.fetch = fetch
     }
     public func installed() throws -> [InstalledPlugin] {
         let folder = root.appendingPathComponent("installed")
@@ -47,7 +44,8 @@ public actor PluginInstaller {
             let origin: Origin
             if let bytes = try? Data(contentsOf: originFile) { origin = try JSONDecoder().decode(Origin.self, from: bytes) }
             else { origin = Origin(repository: try? String(contentsOf: data.appendingPathComponent("repository.txt"), encoding: .utf8), revision: nil) }
-            return InstalledPlugin(manifest: manifest, directory: directory, dataDirectory: data, repository: origin.repository, revision: origin.revision)
+            return InstalledPlugin(manifest: manifest, directory: directory, dataDirectory: data,
+                                   repository: origin.repository.flatMap(Self.normalizedRepository), revision: origin.revision)
         }.sorted { $0.manifest.displayName.localizedStandardCompare($1.manifest.displayName) == .orderedAscending }
     }
     public func prepare(_ input: URL) throws -> PendingPlugin {
@@ -77,51 +75,47 @@ public actor PluginInstaller {
         return repo
     }
     public func prepareGitHub(_ input: String) async throws -> PendingPlugin {
-        let repo: String
-        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.hasPrefix("https://github.com/"), let url = URL(string: text) { repo = url.path.split(separator: "/").prefix(2).joined(separator: "/") }
-        else { repo = text }
-        guard repo.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil, !repo.contains("..") else { throw PluginFailure.invalid("Use owner/repository or a GitHub repository URL") }
+        guard let repo = Self.normalizedRepository(input) else { throw PluginFailure.invalid("Use owner/repository or a GitHub repository URL") }
         return try await prepareGitHub(repo, release: latest(repo))
     }
 
+    static func normalizedRepository(_ input: String) -> String? {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        var repo = text
+        if text.contains("://") {
+            guard let url = URL(string: text), url.scheme == "https", url.host == "github.com",
+                  url.user == nil, url.password == nil, url.port == nil, url.query == nil, url.fragment == nil else { return nil }
+            let parts = url.path.split(separator: "/")
+            guard parts.count == 2 else { return nil }
+            repo = parts.joined(separator: "/")
+        }
+        if repo.hasSuffix(".git") { repo = String(repo.dropLast(4)) }
+        guard repo.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil, !repo.contains("..") else { return nil }
+        return repo
+    }
+
+    /// 用默认分支的固定提交下载，避免旧 Release、相同版本号或移动的 HEAD 漏掉更新。
     private func latest(_ repo: String) async throws -> Release {
-        guard repo.range(of: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", options: .regularExpression) != nil, !repo.contains("..") else { throw NetworkFailure.response }
-        func github(_ address: String) async throws -> (Data, HTTPURLResponse) {
-            guard let url = URL(string: address) else { throw NetworkFailure.response }
-            var request = URLRequest(url: url)
-            request.setValue("MB-iOS", forHTTPHeaderField: "User-Agent")
-            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 2 * 1_024 * 1_024)
-            guard let response = response as? HTTPURLResponse else { throw NetworkFailure.response }
-            return (data, response)
-        }
-        let (data, response) = try await github("https://api.github.com/repos/" + repo + "/releases/latest")
-        if response.statusCode == 404 {
-            let (data, response) = try await github("https://api.github.com/repos/" + repo + "/commits/HEAD")
-            guard response.statusCode == 200 else { throw NetworkFailure.http(response.statusCode) }
-            let value = try JSONDecoder().decode(PluginJSON.self, from: data)
-            guard let sha = value["sha"].string, sha.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
-                  let url = URL(string: "https://api.github.com/repos/" + repo + "/zipball/" + sha) else { throw NetworkFailure.response }
-            return Release(revision: sha, address: url, isCommit: true)
-        }
+        let address = URL(string: "https://api.github.com/repos/" + repo + "/commits/HEAD")!
+        var request = URLRequest(url: address)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("MB-iOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await fetch(request, 2 * 1_024 * 1_024)
+        guard let response = response as? HTTPURLResponse else { throw NetworkFailure.response }
         guard response.statusCode == 200 else { throw NetworkFailure.http(response.statusCode) }
         let value = try JSONDecoder().decode(PluginJSON.self, from: data)
-        guard let tag = value["tag_name"].string, !tag.isEmpty, let zip = value["zipball_url"].string,
-              let archive = URL(string: zip), archive.scheme == "https", archive.host == "api.github.com" else { throw NetworkFailure.response }
-        let assets = value["assets"].array
-        if let index = Self.assetIndex(assets.map { $0["name"].string ?? "" }), let asset = assets[index]["browser_download_url"].string,
-           let url = URL(string: asset), url.scheme == "https", url.host == "github.com" {
-            return Release(revision: tag, address: url, isCommit: false)
-        }
-        return Release(revision: tag, address: archive, isCommit: false)
+        guard let sha = value["sha"].string, sha.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil,
+              let url = URL(string: "https://api.github.com/repos/" + repo + "/zipball/" + sha) else { throw NetworkFailure.response }
+        return Release(revision: sha, address: url)
     }
 
     private func prepareGitHub(_ repo: String, release: Release) async throws -> PendingPlugin {
         var request = URLRequest(url: release.address)
         request.setValue("MB-iOS", forHTTPHeaderField: "User-Agent")
-        let (bytes, result) = try await NetworkClient.shared.data(for: request, maximumBytes: 64 * 1_024 * 1_024)
-        guard let response = result as? HTTPURLResponse, response.statusCode == 200 else { throw NetworkFailure.response }
+        let (bytes, result) = try await fetch(request, 64 * 1_024 * 1_024)
+        guard let response = result as? HTTPURLResponse else { throw NetworkFailure.response }
+        guard response.statusCode == 200 else { throw NetworkFailure.http(response.statusCode) }
         guard bytes.count <= 64 * 1_024 * 1_024 else { throw PluginFailure.invalid("Plugin archive exceeds 64 MB") }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zip")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -129,23 +123,12 @@ public actor PluginInstaller {
         var pending = try prepare(file); pending.repository = repo; pending.revision = release.revision; return pending
     }
 
-    private func offersUpdate(_ release: Release, for plugin: InstalledPlugin) -> Bool {
-        if release.isCommit { return release.revision != plugin.revision }
-        if let revision = plugin.revision, revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) != nil { return true }
-        return Self.isNewer(release.revision, than: plugin.revision ?? plugin.manifest.version ?? "0.0.0")
+    /// 来源和 ID 都相同才覆盖；版本号相同但提交不同也属于更新。
+    static func isSameRevision(_ pending: PendingPlugin, as plugin: InstalledPlugin) -> Bool {
+        guard let current = plugin.revision, let next = pending.revision else { return false }
+        return current == next && plugin.repository.flatMap(normalizedRepository)?.lowercased() == pending.repository.flatMap(normalizedRepository)?.lowercased()
     }
 
-    func prepareUpdate(_ plugin: InstalledPlugin) async throws -> PendingPlugin? {
-        guard let repo = plugin.repository else { return nil }
-        let release = try await latest(repo)
-        guard offersUpdate(release, for: plugin) else { return nil }
-        let pending = try await prepareGitHub(repo, release: release)
-        guard pending.manifest.id == plugin.id else {
-            discard(pending)
-            throw PluginFailure.invalid(AppLocalization.text("更新包的插件 ID 不匹配"))
-        }
-        return pending
-    }
     static func assetIndex(_ names: [String]) -> Int? {
         var general: Int?
         for (index, name) in names.enumerated() {
@@ -182,23 +165,6 @@ public actor PluginInstaller {
     }
     public func discard(_ pending: PendingPlugin) { try? FileManager.default.removeItem(at: root.appendingPathComponent("pending/" + pending.id.uuidString)) }
     public func remove(_ plugin: InstalledPlugin) throws { try FileManager.default.removeItem(at: plugin.directory) }
-    func checkUpdates(force: Bool, now: Date = Date()) async throws -> PluginUpdateCheck {
-        let file = root.appendingPathComponent("updates.json")
-        if !force, let data = try? Data(contentsOf: file), let state = try? JSONDecoder().decode(PluginUpdateCheck.self, from: data), now.timeIntervalSince(state.checked) < 86_400 { return state }
-        var found: [String: String] = [:]
-        var failed: [String] = []
-        for plugin in try installed() {
-            guard let repo = plugin.repository else { continue }
-            do {
-                let release = try await latest(repo)
-                if offersUpdate(release, for: plugin) { found[plugin.id] = release.label }
-            } catch { try Task.checkCancellation(); failed.append(plugin.id) }
-        }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let result = PluginUpdateCheck(checked: now, versions: found, failed: failed)
-        try JSONEncoder().encode(result).write(to: file, options: .atomic)
-        return result
-    }
     static func isNewer(_ version: String, than current: String) -> Bool {
         let version = version.hasPrefix("v") ? String(version.dropFirst()) : version
         let current = current.hasPrefix("v") ? String(current.dropFirst()) : current
