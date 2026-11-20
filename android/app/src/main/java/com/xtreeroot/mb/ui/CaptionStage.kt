@@ -1,6 +1,9 @@
 package com.xtreeroot.mb.ui
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -23,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -47,13 +51,20 @@ internal fun CaptionStage(lines: List<CaptionLine>, position: Long, style: Lyric
                           animate: Boolean, seek: (Long) -> Unit) {
     val index = lines.activeCaption(position)
     val list = rememberLazyListState(initialFirstVisibleItemIndex = index.coerceAtLeast(0))
-    LaunchedEffect(index, animate) {
-        if (index < 0) return@LaunchedEffect
-        if (animate) list.animateScrollToItem(index) else list.scrollToItem(index)
-    }
+    val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize().semantics { testTag = "lyric-style-${style.name.lowercase()}" }) {
+        LaunchedEffect(index, lines, style, maxWidth, maxHeight, fontScale, animate) {
+            if (index < 0) return@LaunchedEffect
+            val alreadyVisible = list.layoutInfo.visibleItemsInfo.any { it.index == index }
+            if (!alreadyVisible) list.scrollToItem(index)
+            val layout = list.layoutInfo
+            val current = layout.visibleItemsInfo.firstOrNull { it.index == index } ?: return@LaunchedEffect
+            val viewportCenter = (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
+            val distance = current.offset + current.size / 2f - viewportCenter
+            if (animate && alreadyVisible) list.animateScrollBy(distance, tween(250)) else list.scrollBy(distance)
+        }
         LazyColumn(state = list, modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = (maxHeight / 2 - 26.dp).coerceAtLeast(12.dp))) {
+            contentPadding = PaddingValues(vertical = maxHeight / 2)) {
             itemsIndexed(lines, key = { lineIndex, line -> "${line.startMs}:$lineIndex" }) { lineIndex, line ->
                 val active = lineIndex == index
                 val words = remember(line) { line.timedWords() }

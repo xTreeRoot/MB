@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,6 +28,8 @@ import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.playback.wave
+import com.xtreeroot.mb.preferences.AppLanguage
+import com.xtreeroot.mb.preferences.PlaybackMode
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
@@ -126,7 +129,7 @@ class VideoDetailsDeviceTest {
                     MaterialTheme(colorScheme = musicDark) {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             VideoDetailsScreen(player, PlaybackState(tracks = tracks, index = selection.value), preferences,
-                                accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, openMusic = {})
+                                accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, chooseMode = {})
                         }
                     }
                 }
@@ -178,7 +181,7 @@ class VideoDetailsDeviceTest {
                             CompositionLocalProvider(LocalMBEnglish provides true) {
                                 Surface {
                                     VideoDetailsScreen(player, playback, preferences, accountId = null, fullScreen = false,
-                                        setFullScreen = {}, browse = {}, openMusic = {})
+                                        setFullScreen = {}, browse = {}, chooseMode = {})
                                 }
                             }
                         }
@@ -230,7 +233,7 @@ class VideoDetailsDeviceTest {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             Surface {
                                 VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,
-                                    accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, openMusic = {})
+                                    accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, chooseMode = {})
                             }
                         }
                     }
@@ -277,7 +280,7 @@ class VideoDetailsDeviceTest {
                             Surface {
                                 VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,
                                     accountId = null, fullScreen = fullScreen.value, setFullScreen = { fullScreen.value = it },
-                                    browse = {}, openMusic = {})
+                                    browse = {}, chooseMode = {})
                             }
                         }
                     }
@@ -295,6 +298,80 @@ class VideoDetailsDeviceTest {
         }
     }
 
+    @Test fun switchingFromVideoToMusicKeepsThePausedTrackAndQueue() = runBlocking {
+        val id = "video-mode-${UUID.randomUUID()}"
+        val plugin = app.plugins.install(app.plugins.prepareZip { fixtureZip(id).inputStream() })
+        val tracks = listOf(Track(id, "first", "First Mode Fixture", "Fixture Artist", durationMs = 30_000),
+            Track(id, "second", "Second Mode Fixture", "Fixture Artist", durationMs = 30_000))
+        val previous = app.settings.values.value
+        var activity: MainActivity? = null
+        var model: PlaybackModel? = null
+        try {
+            app.plugins.setEnabled(plugin, true)
+            app.refreshPlugins()
+            tracks.forEach { track ->
+                val staged = app.offline.store.staging()
+                try { staged.writeBytes(wave(30)); app.offline.store.save(staged, track, "wav") }
+                finally { staged.delete() }
+            }
+            val screen = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            activity = screen
+            val player = withContext(Dispatchers.Main) {
+                app.settings.update { it.copy(language = AppLanguage.English, playbackMode = PlaybackMode.Music,
+                    builtInEnabled = false, selectedSourceId = id) }
+                ViewModelProvider(screen)[PlaybackModel::class.java].also {
+                    model = it
+                    it.play(tracks, tracks.last())
+                }
+            }
+            withTimeout(5_000) {
+                while (player.playback.value.let { !it.playing || !it.videoAvailable }) delay(25)
+            }
+            withContext(Dispatchers.Main) {
+                player.toggle()
+                player.seekCurrent(player.playback.value, 6_000)
+                player.watchCurrentVideo()
+            }
+            await("Video Mode", ::isSelectedPlaybackMode)
+            assertEquals(PlaybackMode.Music, app.settings.values.value.playbackMode)
+            tap("Back to Browse")
+            await("Discover")
+            tap("Music Mode")
+            tap("Video Mode")
+            withTimeout(5_000) { while (app.settings.values.value.playbackMode != PlaybackMode.Video) delay(25) }
+            withContext(Dispatchers.Main) { player.watchCurrentVideo() }
+            await("Video Mode", ::isSelectedPlaybackMode)
+            tap("Back to Browse")
+            await("Discover")
+            assertEquals(PlaybackMode.Video, app.settings.values.value.playbackMode)
+            withContext(Dispatchers.Main) { player.watchCurrentVideo() }
+            await("Video Mode", ::isSelectedPlaybackMode)
+            captureVideoControl("android-video-playback-mode.png")
+            tap("Music Mode")
+            await("Now Playing")
+            withTimeout(5_000) { while (player.playback.value.positionMs != 6_000L) delay(25) }
+            val playback = player.playback.value
+            assertEquals(PlaybackMode.Music, app.settings.values.value.playbackMode)
+            assertEquals(tracks.map { it.id }, playback.tracks.map { it.id })
+            assertEquals(tracks.last().id, playback.current?.id)
+            assertFalse(playback.playWhenReady)
+        } finally {
+            withContext(Dispatchers.Main) {
+                model?.clear()
+                activity?.finish()
+                app.settings.update { previous }
+            }
+            tracks.forEach { app.offline.store.removeDownload(it.id) }
+            app.plugins.remove(plugin)
+            app.refreshPlugins()
+            plugin.dataDirectory.deleteRecursively()
+        }
+    }
+
+    private fun isSelectedPlaybackMode(node: AccessibilityNodeInfo): Boolean =
+        generateSequence(node) { it.parent }.firstOrNull { it.isCheckable }?.isChecked == true
+
     private fun captureVideoControl(name: String) {
         if (InstrumentationRegistry.getArguments().getString("videoControlsScreenshot") != "true") return
         val frame = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
@@ -303,7 +380,9 @@ class VideoDetailsDeviceTest {
     }
 
     private suspend fun awaitVolume(expected: Int) = await("System Media Volume") { node ->
-        generateSequence(node) { it.parent }.firstNotNullOfOrNull { it.rangeInfo }?.current == expected.toFloat()
+        generateSequence(node) { it.parent }.firstNotNullOfOrNull { item ->
+            if (item.refresh()) item.rangeInfo else null
+        }?.current == expected.toFloat()
     }
 
     private fun matches(text: String): List<AccessibilityNodeInfo> {
@@ -340,6 +419,7 @@ class VideoDetailsDeviceTest {
             zip.putNextEntry(ZipEntry("index.js"))
             zip.write("""
                 let firstRequests = 0;
+                export function video() { throw new Error('Fixture has no video stream'); }
                 export function comments({ trackId, offset }) {
                     const author = 'Fixture Listener';
                     if (trackId !== 'first') return {total: 17, more: false, comments: [{id: 'second', author, text: 'Only the second video'}]};

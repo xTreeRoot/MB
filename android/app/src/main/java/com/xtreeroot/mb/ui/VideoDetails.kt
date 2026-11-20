@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -48,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,12 +64,14 @@ import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.playback.VideoFrameState
 import com.xtreeroot.mb.preferences.AppPreferences
+import com.xtreeroot.mb.preferences.PlaybackMode
 import java.text.NumberFormat
 import java.util.Locale
 
 @Composable
 internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, preferences: AppPreferences, accountId: String?,
-                                fullScreen: Boolean, setFullScreen: (Boolean) -> Unit, browse: () -> Unit, openMusic: () -> Unit) {
+                                fullScreen: Boolean, setFullScreen: (Boolean) -> Unit, browse: () -> Unit,
+                                chooseMode: (PlaybackMode) -> Unit) {
     val track = state.current ?: return
     val app = LocalContext.current.applicationContext as MBApplication
     val source = app.playbackSource(track.sourceId) as? InteractionSource
@@ -77,24 +82,51 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
     if (fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
         fullScreen = true, setFullScreen)
     val picture: @Composable (Modifier) -> Unit = { modifier ->
-        WatchPicture(track, state, model, browse, openMusic, frame, fullScreen, setFullScreen, modifier)
+        WatchPicture(track, state, model, browse, frame, fullScreen, setFullScreen, modifier)
     }
     val information: @Composable (Modifier) -> Unit = { modifier ->
         VideoInformation(track, state, model, preferences, accountId != null, source, commentPages, selected, { selected = it },
             showSystemVolume = !fullScreen, modifier = modifier)
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        if (maxWidth >= 600.dp && maxWidth > maxHeight) {
-            val pictureWidth = minOf(maxWidth * 0.57f, maxHeight * (16f / 9f))
-            Row(Modifier.fillMaxSize()) {
-                picture(Modifier.width(pictureWidth))
-                information(Modifier.weight(1f).fillMaxHeight())
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+        VideoPlaybackModePicker(state.presentation.mode, chooseMode,
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp))
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            if (maxWidth >= 600.dp && maxWidth > maxHeight) {
+                val pictureWidth = minOf(maxWidth * 0.57f, maxHeight * (16f / 9f))
+                Row(Modifier.fillMaxSize()) {
+                    picture(Modifier.width(pictureWidth))
+                    information(Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                val pictureWidth = minOf(maxWidth, maxHeight * (0.62f * 16f / 9f))
+                Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    picture(Modifier.width(pictureWidth))
+                    information(Modifier.weight(1f))
+                }
             }
-        } else {
-            val pictureWidth = minOf(maxWidth, maxHeight * (0.62f * 16f / 9f))
-            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                picture(Modifier.width(pictureWidth))
-                information(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun VideoPlaybackModePicker(mode: PlaybackMode, choose: (PlaybackMode) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.selectableGroup().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        PlaybackMode.entries.forEach { option ->
+            val selected = option == mode
+            val label = when (option) {
+                PlaybackMode.Music -> mb("听歌模式", "Music Mode")
+                PlaybackMode.Video -> mb("视频模式", "Video Mode")
+            }
+            Box(Modifier.weight(1f).clip(RoundedCornerShape(9.dp))
+                .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                .selectable(selected, role = Role.RadioButton, onClick = { if (!selected) choose(option) })
+                .semantics { contentDescription = label }
+                .padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+                Text(label, color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelLarge, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -102,7 +134,7 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
 
 @Composable
 private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackModel, browse: () -> Unit,
-                         openMusic: () -> Unit, frame: VideoFrameState?, fullScreen: Boolean, setFullScreen: (Boolean) -> Unit,
+                         frame: VideoFrameState?, fullScreen: Boolean, setFullScreen: (Boolean) -> Unit,
                          modifier: Modifier) {
     Box(modifier.aspectRatio(16f / 9f).background(Color.Black), contentAlignment = Alignment.Center) {
         if (!fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
@@ -114,7 +146,6 @@ private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackMode
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, mb("返回浏览", "Back to Browse"), tint = Color.White)
                 }
                 Box(Modifier.weight(1f))
-                TextButton(onClick = openMusic) { Text(mb("听歌模式", "Music Player"), color = Color.White) }
             }
         }
     }

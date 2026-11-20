@@ -269,6 +269,14 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val select: (List<Track>, Track) -> Unit = { tracks, track ->
             player.play(tracks, track)
         }
+        val choosePlaybackMode: (PlaybackMode) -> Unit = { mode ->
+            settings.update { it.copy(playbackMode = mode) }
+            if (mode == PlaybackMode.Music && showVideo) {
+                showVideo = false
+                player.closeVideo()
+                showPlayer = true
+            }
+        }
         val selectGroup = player::playGroup
         val openCategory: (DiscoveryCategory) -> Unit = { chosen ->
             focus.clearFocus()
@@ -352,7 +360,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                 VideoDetailsScreen(player, playback, preferences, accountId = playbackAccount?.id, fullScreen = videoFullscreen,
                     setFullScreen = { videoFullscreen = it },
                     browse = { showVideo = false; player.closeVideo() },
-                    openMusic = { showVideo = false; player.closeVideo(); showPlayer = true })
+                    chooseMode = choosePlaybackMode)
             }
         } else AppearanceBackdrop(backgroundState.image, dark) { surface ->
             val atRoot = page == null && category == null && accountRoute == null && creatorRoute == null
@@ -381,7 +389,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                             SourceSwitcher(sourceNames, sourceId, switchSource)
                         }
                         if (creatorRoute == null && (tab == Tab.Discover || tab == Tab.Search)) {
-                            BrowsingModeSwitcher(preferences.playbackMode, compact = discoverRoot) { mode -> settings.update { it.copy(playbackMode = mode) } }
+                            BrowsingModeSwitcher(preferences.playbackMode, compact = discoverRoot, choose = choosePlaybackMode)
                         }
                         if (discoverRoot) {
                             DiscoverMore(refresh.takeIf { sourceId != null }, settings = { showSettings = true })
