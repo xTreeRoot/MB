@@ -8,8 +8,9 @@ import android.util.Log
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
@@ -28,7 +29,7 @@ internal data class PluginWebLink(val title: String, val url: URI, val id: UUID 
 
 internal const val pluginBrowserLogTag = "MBPluginBrowser"
 
-internal enum class PluginBrowserIssue { MissingProvider, UnsupportedProvider, Startup, Navigation, Renderer }
+internal enum class PluginBrowserIssue { MissingProvider, UnsupportedProvider, Startup, Navigation, ServerUnavailable, Renderer }
 
 @MainThread
 @SuppressLint("RequiresFeature")
@@ -153,6 +154,12 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
                         if (!request.isForMainFrame || session.closed || session.rendererExited) return
                         Log.w(pluginBrowserLogTag, "main frame error=${error.errorCode}")
                         onFailure(PluginBrowserIssue.Navigation)
+                    }
+
+                    override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+                        if (!request.isForMainFrame || session.closed || session.rendererExited || response.statusCode !in 500..599) return
+                        Log.w(pluginBrowserLogTag, "main frame HTTP status=${response.statusCode}")
+                        onFailure(PluginBrowserIssue.ServerUnavailable)
                     }
 
                     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

@@ -45,8 +45,12 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         val page = intent.page() ?: return finish()
-        if (!isPluginBrowserProcess(packageName) || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             return finishWithIssue(PluginBrowserIssue.UnsupportedProvider)
+        }
+        if (!isPluginBrowserProcess(packageName)) {
+            Log.w(pluginBrowserLogTag, "compat activity is outside the isolated process")
+            return finishWithIssue(PluginBrowserIssue.Startup)
         }
         val suffix = directorySuffix ?: return finishWithIssue(PluginBrowserIssue.Startup)
         if (attempt != null && attempt != page.id) return finishWithIssue(PluginBrowserIssue.Startup)

@@ -42,6 +42,21 @@ class PortableManifestTest {
         assertEquals(listOf(LocalTrackActivity("$localSourceId:$id", 1, 100)), PortableManifest.decode(manifest.encode()).activity)
     }
 
+    @Test fun preservesAdditionTimesAndAcceptsOlderBackupsWithoutThem() {
+        val updated = manifest.copy(imports = manifest.imports.map { it.copy(addedAt = 200) },
+            downloads = manifest.downloads.map { it.copy(addedAt = 300) })
+        val restored = PortableManifest.decode(updated.encode())
+        assertEquals(200L, restored.imports.single().addedAt)
+        assertEquals(300L, restored.downloads.single().addedAt)
+
+        val legacy = JSONObject(updated.encode().decodeToString())
+        legacy.getJSONArray("imports").getJSONObject(0).remove("addedAt")
+        legacy.getJSONArray("downloads").getJSONObject(0).remove("addedAt")
+        val older = PortableManifest.decode(legacy.toString().encodeToByteArray())
+        assertEquals(0L, older.imports.single().addedAt)
+        assertEquals(0L, older.downloads.single().addedAt)
+    }
+
     @Test fun roundTripsDownloadActivityAndExplicitUnlikeUsingFullTrackIds() {
         val entries = listOf(LocalTrackActivity(remote.id, 250, 350), LocalTrackActivity("other:${remote.sourceTrackId}", 0, 0))
         val restored = PortableManifest.decode(manifest.copy(activity = entries).encode())

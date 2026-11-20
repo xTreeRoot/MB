@@ -136,7 +136,7 @@ internal class PortableLibrary(private val context: Context, private val local: 
     }
 
     private fun latest(directory: PortableDocuments.PortableDirectory, files: Map<String, PortableDocument> = directory.files()): Checkpoint? {
-        val snapshots = files.values.filter { snapshotName.matches(it.name) }.sortedByDescending { it.name }
+        val snapshots = files.values.filter { PortableManifest.snapshotName.matches(it.name) }.sortedByDescending { it.name }
         for (snapshot in snapshots) {
             if (snapshot.size > PortableManifest.maxManifestBytes) continue
             val raw = directory.open(snapshot).use { input ->
@@ -202,12 +202,12 @@ internal class PortableLibrary(private val context: Context, private val local: 
             val id = item.track.sourceTrackId
             val history = activityById[item.track.id]
             PortableImport(id, item.track.title, store(local.catalog.file(id), "mb-import-$id.audio", id),
-                local.catalog.lyrics(id), (history?.likedAt ?: 0) > 0, history?.playedAt ?: 0, item.folderId)
+                local.catalog.lyrics(id), (history?.likedAt ?: 0) > 0, history?.playedAt ?: 0, item.folderId, item.addedAt)
         }
         val saved = offline.snapshot.value
         val downloads = saved.downloads.map { item ->
             val lease = offline.lease(item.track.id, downloadsOnly = true) ?: throw PortableFailure(PortableProblem.DownloadsChanged)
-            lease.use { PortableDownload(item.track, store(it.path, "mb-saved-${item.fileName}")) }
+            lease.use { PortableDownload(item.track, store(it.path, "mb-saved-${item.fileName}"), item.used) }
         }
         val queue = playback.getString("queue", null)?.let(QueueSnapshot::decode)
         val packages = plugins.installed().map { plugin ->
@@ -249,7 +249,7 @@ internal class PortableLibrary(private val context: Context, private val local: 
         val previous = prior?.doc?.name
         val keep = (knownAssets.keys + manifest.assets.map(PortableAsset::name)).toSet()
         files.values.filter { document ->
-            snapshotName.matches(document.name) && document.name != previous ||
+            PortableManifest.snapshotName.matches(document.name) && document.name != previous ||
                 (PortableAsset.importedName.matches(document.name) || PortableAsset.downloadedName.matches(document.name) ||
                     PortableAsset.backgroundName.matches(document.name) || PortablePlugin.fileName.matches(document.name)) && document.name !in keep
         }.forEach { document -> runCatching { directory.delete(document) } }
@@ -287,7 +287,7 @@ internal class PortableLibrary(private val context: Context, private val local: 
             }
             imports.asReversed().forEach { item -> local.restoreImport(File(staging, item.asset.name), item) }
             downloads.asReversed().forEach { item ->
-                offline.restoreDownload(File(staging, item.asset.name), item.track, item.asset.name.removePrefix("mb-saved-"))
+                offline.restoreDownload(File(staging, item.asset.name), item.track, item.asset.name.removePrefix("mb-saved-"), item.addedAt)
             }
             packages.forEach { item -> plugins.restoreArchive(item.id, item.repository, File(staging, item.asset.name), item.settings) }
             local.catalog.restoreActivity(manifest.activity)
@@ -314,8 +314,6 @@ internal class PortableLibrary(private val context: Context, private val local: 
     }.getOrDefault(emptyList())
 
     companion object {
-        private val snapshotName = Regex("mb-state-[0-9]{13}-[a-f0-9-]{36}\\.json")
-
         private class AssetLengthMismatch : IOException()
 
         private fun transfer(input: InputStream, output: OutputStream?, name: String, expected: Long,

@@ -30,7 +30,7 @@ class LocalMusicIndexTest {
         val first = imported("Id1", "Zénith", "AC, DC feat. Guest / ac, dc", "Live", "AC, DC; Ensemble")
         val second = imported("Id2", "Finale", "Guest", "LIVE", "AC, DC; Ensemble")
         val downloaded = Track("test", "pod", "Another Track", "Guest、Feature")
-        val index = LocalMusicIndex(listOf(first, second), listOf(downloaded), Locale.ENGLISH)
+        val index = LocalMusicIndex(listOf(first, second), listOf(download(downloaded, 1)), Locale.ENGLISH)
         assertEquals(setOf(first.track, second.track), index.artists.single { it.title == "AC, DC" }.tracks.toSet())
         assertEquals(2, index.artists.single { it.title == "AC, DC" }.tracks.size)
         assertEquals(setOf(first.track, second.track), index.artists.single { it.title == "Ensemble" }.tracks.toSet())
@@ -39,6 +39,19 @@ class LocalMusicIndexTest {
         assertEquals(listOf(downloaded), index.filter(index.songs, "feature another"))
         assertEquals(1, index.albums.size)
     }
+
+    @Test fun recentAdditionsMixesImportsAndDownloadsAndKeepsTheEightNewest() {
+        val imports = (1..9).map { rank ->
+            imported("import-$rank", "Imported $rank", "", "").copy(addedAt = rank * 100L)
+        }
+        val downloaded = Track("test", "downloaded", "Downloaded Track", "")
+        val index = LocalMusicIndex(imports, listOf(download(downloaded, 450)), Locale.ENGLISH)
+        assertEquals(imports.takeLast(5).reversed().map(LocalTrack::track) + downloaded +
+            imports.subList(2, 4).reversed().map(LocalTrack::track), index.recentAdditions)
+        assertEquals(10, index.songs.size)
+    }
+
+    private fun download(track: Track, addedAt: Long) = SavedAudio(track, "test.m4a", 1, true, addedAt)
 
     private fun imported(id: String, title: String, artist: String, album: String, albumArtist: String = "",
                          folder: String? = null, disc: Int = 1, number: Int = 1) =

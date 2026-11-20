@@ -9,13 +9,16 @@ internal data class LocalCollection(val id: String, val title: String, val artis
     val artwork: Track get() = tracks.firstOrNull { it.artworkUrl != null } ?: tracks.first()
 }
 
-internal class LocalMusicIndex(imports: List<LocalTrack>, downloads: List<Track>, locale: Locale) {
+internal class LocalMusicIndex(imports: List<LocalTrack>, downloads: List<SavedAudio>, locale: Locale) {
     private val nameOrder = Collator.getInstance(locale)
     private val tags = imports.associateBy { it.track.id }
     private val songOrder = compareBy<Track, String>(nameOrder, Track::title).thenBy(Track::id)
     private val albumOrder = compareBy<Track>({ tags[it.id]?.disc ?: 0 }, { tags[it.id]?.number ?: 0 }).then(songOrder)
     private val collectionOrder = compareBy<LocalCollection, String>(nameOrder, LocalCollection::title).thenBy(LocalCollection::id)
-    val songs = (imports.map(LocalTrack::track) + downloads).distinctBy(Track::id).sortedWith(songOrder)
+    private val additions = imports.map { it.track to it.addedAt } + downloads.map { it.track to it.used }
+    val songs = additions.map { it.first }.distinctBy(Track::id).sortedWith(songOrder)
+    val recentAdditions = additions.sortedWith(compareByDescending<Pair<Track, Long>> { it.second }.thenBy { it.first.id })
+        .asSequence().map { it.first }.distinctBy(Track::id).take(8).toList()
     val albums = imports.filter { it.album.isNotBlank() }.groupBy { item ->
         val owner = item.albumArtist.ifBlank { item.folderId ?: item.track.artist }
         "${item.album.lowercase()}\u0000${owner.lowercase()}"

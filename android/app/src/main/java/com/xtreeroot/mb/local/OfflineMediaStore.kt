@@ -67,7 +67,8 @@ internal class OfflineMediaStore(private val directory: File) {
     }
 
     @Synchronized
-    fun save(staged: File, track: Track, extension: String, cache: CacheTicket? = null, restoreName: String? = null) {
+    fun save(staged: File, track: Track, extension: String, cache: CacheTicket? = null, restoreName: String? = null,
+             restoredAddedAt: Long = 0) {
         val current = load()
         val size = staged.length()
         if (size <= 0) throw IOException("没有收到完整的音频")
@@ -75,7 +76,8 @@ internal class OfflineMediaStore(private val directory: File) {
                 current.entries.any { it.track.id == track.id })) return
         val suffix = extension.takeIf { it in audioExtensions } ?: "m4a"
         val name = restoreName?.takeIf { validName.matches(it) && !file(it).exists() } ?: "${UUID.randomUUID()}.$suffix"
-        val entry = SavedAudio(track, name, size, cache == null, stamp(current))
+        val now = stamp(current)
+        val entry = SavedAudio(track, name, size, cache == null, restoredAddedAt.takeIf { it in 1..now } ?: now)
         val destination = file(entry.fileName)
         directory.mkdirs()
         Files.move(staged.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
@@ -89,9 +91,9 @@ internal class OfflineMediaStore(private val directory: File) {
     }
 
     @Synchronized
-    fun restoreDownload(staged: File, track: Track, fileName: String) {
+    fun restoreDownload(staged: File, track: Track, fileName: String, addedAt: Long = 0) {
         if (!hasIntactDownload(track.id)) {
-            save(staged, track, fileName.substringAfterLast('.'), restoreName = fileName)
+            save(staged, track, fileName.substringAfterLast('.'), restoreName = fileName, restoredAddedAt = addedAt)
         }
     }
 

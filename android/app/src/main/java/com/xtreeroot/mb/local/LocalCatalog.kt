@@ -22,6 +22,7 @@ internal data class LocalTrack(
     val disc: Int,
     val number: Int,
     val folderId: String? = null,
+    val addedAt: Long = 0,
 )
 
 internal data class LocalTrackActivity(val trackId: String, val likedAt: Long, val playedAt: Long)
@@ -88,7 +89,7 @@ internal class LocalCatalog(context: Context, databaseName: String = "local-libr
                 put("folder_id", track.folderId)
                 put("artwork", if (cover != null) 1 else 0)
                 put("lyrics", lyrics)
-                put("added", System.currentTimeMillis())
+                put("added", track.addedAt.takeIf { it > 0 } ?: System.currentTimeMillis())
             })
         } catch (failure: Exception) {
             cover?.delete()
@@ -167,7 +168,7 @@ internal class LocalCatalog(context: Context, databaseName: String = "local-libr
         val cover = if (number("artwork") > 0) Uri.fromFile(image(id)).toString() else null
         val track = Track(localSourceId, id, text("title"), text("artist"), cover, number("duration"))
         return LocalTrack(track, text("album"), text("album_artist"), text("year"), number("disc").toInt(),
-            number("track_number").toInt(), getString(getColumnIndexOrThrow("folder_id")))
+            number("track_number").toInt(), getString(getColumnIndexOrThrow("folder_id")), number("added"))
     }
 
     companion object {

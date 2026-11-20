@@ -1,6 +1,6 @@
 # MB Android
 
-安卓客户端在 `android` 分支独立开发。0.1.6 对照 iOS 0.1.0 Build 23（`8c6522c`）。发行 APK 保留 0.1.5 的签名，可覆盖安装，不需要先卸载。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
+安卓客户端在 `android` 分支独立开发。0.1.7 预览版对照 iOS 0.1.0 Build 23（`8c6522c`）。发行 APK 保留 0.1.6 的签名，可覆盖安装，不需要先卸载。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
 
 ## 终端构建
 
@@ -15,7 +15,7 @@ cd android
 
 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。以上命令不会启动 IDE 或模拟器。显式执行设备测试时，只用独立的无窗口模拟器或用户指定的设备；不复用手机端生产账号。
 
-原生音频与 QuickJS 宿主测试需另构建 `:app:assembleDebugAndroidTest`。把两个 APK 安装到选定的测试设备后，用 `adb -s <测试设备序列号> shell am instrument -w com.xtreeroot.mb.test/androidx.test.runner.AndroidJUnitRunner` 运行。测试使用生成的 PCM 波形和固定插件响应，不要求联网或账号。
+原生音频与 QuickJS 宿主测试需另构建 `:app:assembleDebugAndroidTest`。把两个 APK 安装到专用的干净测试设备或模拟器用户后，用 `adb -s <测试设备序列号> shell am instrument -w com.xtreeroot.mb.test/androidx.test.runner.AndroidJUnitRunner` 运行。播放回归需要初始队列为空。测试使用生成的 PCM 波形和固定插件响应，不要求联网或账号。
 
 ## 卸载后保留资料库
 
@@ -39,7 +39,7 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。以上命令不�
 - Android Auto 媒体入口复用手机的播放队列；选中当前曲目可从原进度继续，空队列没有续播项。语音播放只匹配当前队列内的歌名和歌手，不访问插件目录或个人页面。实际车机连接尚未验收。
 - 在 **设置 → 外观** 选择本机背景图。MB 将图片降采样并另存为 PNG，删除原图不影响当前背景。连接独立数据目录后，只备份这份 PNG，不保存原图路径；重装恢复时不会覆盖已经设置的背景。可在同一处恢复默认背景。
 - 在 **设置 → 插件** 检测更新或一键全部更新。只处理有 GitHub 来源的外部插件（含停用项）；安装包新增网络权限时仍需单独确认。插件更新保留原启用状态、设置和私有数据。删除插件需确认，只移除安装文件，内置音源只可停用。
-- 插件网页登录不使用系统浏览器已有的登录状态。系统 WebView 不支持独立配置时，Android 9 及以上改用独立进程和一次性数据目录；没有可用的 WebView 时仍需在系统设置里启用提供程序。
+- 插件网页登录不使用系统浏览器已有的登录状态。系统 WebView 不支持独立配置时，Android 9 及以上改用独立进程和一次性数据目录；没有可用的 WebView 时仍需在系统设置里启用提供程序。登录主页面的网络错误或 HTTP 5xx 会单独提示，不应据此更新 WebView；图片或嵌入框架失败不结束会话。
 - 插件可在其 `signIn` 中调用 `host.oauthSignIn({authorizationEndpoint, tokenEndpoint, clientID, redirectURI, scopes})`。它打开系统浏览器，以 PKCE 和单次 `state` 换取 JSON 令牌，回跳须在服务端注册为 `com.xtreeroot.mb:/oauth2redirect`。需使用适配 Android 的客户端配置，不支持直接套用现有 YouTube 插件里的 iOS OAuth 客户端和回跳。
 - 播放失败时，完整播放器会显示错误码，媒体请求返回 HTTP 状态时也会显示状态码。系统拒绝音频焦点时，迷你和完整播放器会提示；可暂停占用音频的应用，再点播放，队列和进度不变。排查时可同时试播一首已导入的本地音频，区分本地播放与平台取流，不需要提供 Cookie 或带签名的媒体地址。
 - 已授权的调试设备可在复现后运行 `adb -s <设备序列号> logcat -d -s MBPlayback:I MBPluginBrowser:I '*:S'`。这两个日志标签记录播放服务连接、播放错误码、WebView 提供程序和启动阶段，不记录曲目、请求地址、账号或 Cookie。

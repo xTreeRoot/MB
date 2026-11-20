@@ -1,10 +1,13 @@
 package com.xtreeroot.mb.plugin
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.test.platform.app.InstrumentationRegistry
@@ -134,6 +137,35 @@ class PluginBrowserSessionTest {
                     assertEquals(PluginBrowserIssue.Navigation, issues.receive())
                 } finally { browser.clear() }
             }
+        }
+    }
+
+    @Test fun profileBrowserReportsMainDocument503ButNotSubresourceFailures() = runBlocking {
+        withContext(Dispatchers.Main) {
+            assumeTrue(PluginBrowserSession.available())
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val issues = mutableListOf<PluginBrowserIssue>()
+            val browser = PluginBrowserSession.create(context, onFailure = { issues.add(it) })
+            fun httpError(path: String, mainFrame: Boolean, status: Int, reason: String) {
+                val request = object : WebResourceRequest {
+                    override fun getUrl(): Uri = Uri.parse("https://fixture.invalid/$path")
+                    override fun isForMainFrame(): Boolean = mainFrame
+                    override fun isRedirect(): Boolean = false
+                    override fun hasGesture(): Boolean = false
+                    override fun getMethod(): String = "GET"
+                    override fun getRequestHeaders(): Map<String, String> = emptyMap()
+                }
+                browser.view.webViewClient.onReceivedHttpError(browser.view, request,
+                    WebResourceResponse("text/html", "UTF-8", status, reason, emptyMap(), null))
+            }
+            try {
+                httpError("image.png", false, 503, "Service Unavailable")
+                httpError("frame", false, 503, "Service Unavailable")
+                httpError("sign-in", true, 401, "Unauthorized")
+                assertTrue(issues.isEmpty())
+                httpError("sign-in", true, 503, "Service Unavailable")
+                assertEquals(listOf(PluginBrowserIssue.ServerUnavailable), issues)
+            } finally { browser.clear() }
         }
     }
 

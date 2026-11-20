@@ -87,12 +87,16 @@ class OfflineMediaStoreTest {
 
     @Test
     fun restoresDownloadsBeforeThePrivateStoreExistsAndKeepsTheirPortableNames() {
-        val store = OfflineMediaStore(File(folder.root, "not-created-yet"))
+        val directory = File(folder.root, "not-created-yet")
+        val store = OfflineMediaStore(directory)
         val staged = folder.newFile().apply { writeText("saved audio") }
         val name = "11111111-1111-1111-1111-111111111111.m4a"
         val track = track("restored")
-        store.restoreDownload(staged, track, name)
+        store.restoreDownload(staged, track, name, addedAt = 450)
         assertEquals(name, store.snapshot.value.downloads.single().fileName)
+        val reopened = OfflineMediaStore(directory)
+        checkNotNull(reopened.lease(track.id)).use { assertEquals("saved audio", it.path.readText()) }
+        assertEquals(450L, reopened.snapshot.value.downloads.single().used)
         assertEquals("saved audio", store.lease(track.id)?.use { it.path.readText() })
     }
 

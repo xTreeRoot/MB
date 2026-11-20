@@ -29,8 +29,8 @@ internal data class PortableAsset(val name: String, val bytes: Long, val digest:
 }
 
 internal data class PortableImport(val id: String, val title: String, val asset: PortableAsset, val lyrics: String,
-                                   val favorite: Boolean, val lastPlayed: Long, val folderId: String? = null)
-internal data class PortableDownload(val track: Track, val asset: PortableAsset)
+                                   val favorite: Boolean, val lastPlayed: Long, val folderId: String? = null, val addedAt: Long = 0)
+internal data class PortableDownload(val track: Track, val asset: PortableAsset, val addedAt: Long = 0)
 internal data class PortablePlugin(val id: String, val repository: String?, val asset: PortableAsset,
                                    val settings: Map<String, String>) {
     companion object {
@@ -51,8 +51,9 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
         .put("imports", JSONArray(imports.map { item ->
             JSONObject().put("id", item.id).put("title", item.title).put("asset", item.asset.encode())
                 .put("lyrics", item.lyrics).put("favorite", item.favorite).put("played", item.lastPlayed).put("folderId", item.folderId)
+                .put("addedAt", item.addedAt)
         })).put("downloads", JSONArray(downloads.map { item ->
-            JSONObject().put("track", item.track.toMetadataJson()).put("asset", item.asset.encode())
+            JSONObject().put("track", item.track.toMetadataJson()).put("asset", item.asset.encode()).put("addedAt", item.addedAt)
         })).put("playlists", JSONArray(playlists.map { item ->
             JSONObject().put("id", item.id).put("name", item.name).put("tracks", JSONArray(item.trackIds))
         })).put("history", JSONArray(history)).apply {
@@ -70,6 +71,7 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
 
     companion object {
         const val maxManifestBytes = 32 * 1024 * 1024
+        val snapshotName = Regex("mb-state-[0-9]{13}-[a-f0-9-]{36}\\.json")
 
         fun decode(bytes: ByteArray): PortableManifest {
             require(bytes.size <= maxManifestBytes)
@@ -83,7 +85,7 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
                 require(lyrics.length <= maximumLyricBytes)
                 val folderId = (item.opt("folderId") as? String)?.takeIf(PortableAsset.hash::matches)
                 PortableImport(id, item.getString("title"), asset, lyrics, item.getBoolean("favorite"),
-                    item.getLong("played").coerceAtLeast(0), folderId)
+                    item.getLong("played").coerceAtLeast(0), folderId, item.optLong("addedAt").coerceAtLeast(0))
             }
             val downloads = root.objects("downloads").map { item ->
                 val metadata = item.getJSONObject("track").toTrackMetadata()
@@ -91,7 +93,7 @@ internal data class PortableManifest(val imports: List<PortableImport>, val down
                 require(track.sourceId != localSourceId && track.sourceId.isNotBlank() && track.sourceTrackId.isNotBlank())
                 val asset = PortableAsset.decode(item.getJSONObject("asset"))
                 require(PortableAsset.downloadedName.matches(asset.name))
-                PortableDownload(track, asset)
+                PortableDownload(track, asset, item.optLong("addedAt").coerceAtLeast(0))
             }
             val playlists = root.objects("playlists").map { playlist ->
                 val ids = playlist.getJSONArray("tracks")

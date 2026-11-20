@@ -100,9 +100,12 @@ internal class LocalAudioSource(private val context: Context, val catalog: Local
                         }
                     }
                 } ?: throw IOException("无法读取所选文件夹")
+                val backup = files.any { PortableManifest.snapshotName.matches(it.name) }
                 val lyrics = files.filter { it.extension == "lrc" }.groupBy { it.stem.lowercase() }
                 for (document in files) {
                     ensureActive()
+                    if (backup && (PortableAsset.importedName.matches(document.name) ||
+                        PortableAsset.downloadedName.matches(document.name))) continue
                     if (document.extension == "lrc" ||
                         !(document.mime.startsWith("audio/") || document.mime == "application/ogg" || document.extension in folderAudioExtensions)) continue
                     val candidates = lyrics[document.stem.lowercase()].orEmpty()
@@ -144,9 +147,10 @@ internal class LocalAudioSource(private val context: Context, val catalog: Local
     }
 
     suspend fun restoreImport(staged: File, item: PortableImport): LocalTrack =
-        saveImport(staged, item.id, item.title, item.folderId, item.lyrics)
+        saveImport(staged, item.id, item.title, item.folderId, item.lyrics, item.addedAt)
 
-    private suspend fun saveImport(staged: File, identifier: String, name: String, folderId: String?, lyrics: String?): LocalTrack =
+    private suspend fun saveImport(staged: File, identifier: String, name: String, folderId: String?, lyrics: String?,
+                                   addedAt: Long = 0): LocalTrack =
         writes.withLock {
             val target = catalog.file(identifier)
             val existing = catalog.get(identifier)
@@ -158,7 +162,7 @@ internal class LocalAudioSource(private val context: Context, val catalog: Local
             target.parentFile?.mkdirs()
             if (!staged.renameTo(target)) throw IOException("保存音频文件失败")
             if (existing != null) return@withLock existing
-            try { catalog.write(metadata.copy(folderId = folderId), picture, importedLyrics) }
+            try { catalog.write(metadata.copy(folderId = folderId, addedAt = addedAt), picture, importedLyrics) }
             catch (failure: Exception) { target.delete(); throw failure }
             checkNotNull(catalog.get(identifier))
         }

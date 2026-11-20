@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -218,12 +219,13 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
         TrackReorderList(matching, editing, { from, to -> saved.reorder(current.id, from, to, matching.map(Track::id)) },
             Modifier.fillMaxSize(), header = {
                 Column {
-                    LibraryPageHeader(current.name, back = ::closePlaylist) {
+                    LibraryPageHeader(null, back = ::closePlaylist) {
                         if (canSort) TextButton(onClick = { sorting = !sorting }) {
                             Text(if (editing) mb("完成排序", "Done Sorting") else mb("排序", "Sort"))
                         }
                         PlaylistMenu(current, { rename = true }, { delete = true })
                     }
+                    LocalCollectionHero(current.name, "", tracks)
                     LocalMusicSearch(trackQuery, { trackQuery = it; sorting = false }, mb("在此页面搜索", "Search This Page"))
                     if (tracks.isNotEmpty()) LocalPlaybackButtons(matching, playGroup)
                     TextButton(onClick = { chooseTracks = true }) { Text(mb("添加歌曲", "Add Songs")) }
@@ -267,10 +269,11 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
 }
 
 @Composable
-internal fun LibraryPageHeader(title: String, back: () -> Unit, actions: @Composable () -> Unit = {}) {
+internal fun LibraryPageHeader(title: String?, back: () -> Unit, actions: @Composable () -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, mb("返回资料库", "Back to Library")) }
-        Text(title, Modifier.weight(1f), maxLines = 1, style = MaterialTheme.typography.titleLarge)
+        if (title != null) Text(title, Modifier.weight(1f), maxLines = 1, style = MaterialTheme.typography.titleLarge)
+        else Spacer(Modifier.weight(1f))
         actions()
     }
 }
