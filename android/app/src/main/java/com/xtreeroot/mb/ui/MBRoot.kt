@@ -28,18 +28,18 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Home as OutlineHome
 import androidx.compose.material.icons.outlined.Person as OutlinePerson
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.xtreeroot.mb.ui.components.MBDropdownMenu as DropdownMenu
+import com.xtreeroot.mb.ui.components.MBMenuItem as DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import com.xtreeroot.mb.ui.components.MBIconButton as IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
+import com.xtreeroot.mb.ui.components.MBNavigationRailItem as NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.xtreeroot.mb.ui.components.MBTextButton as TextButton
+import com.xtreeroot.mb.ui.components.MBTopAppBar as TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -154,7 +154,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
     val english = preferences.language.usesEnglish()
     CompositionLocalProvider(LocalMBEnglish provides english, LocalVideoBrowse provides (preferences.playbackMode == PlaybackMode.Video),
         LocalTrackPlaybackIssues provides trackPlaybackIssues) {
-    MaterialTheme(colorScheme = if (dark) musicDark else musicLight) {
+    com.xtreeroot.mb.ui.components.MBTheme(dark) {
         var tab by rememberSaveable { mutableStateOf(Tab.Discover) }
         var category by rememberSaveable { mutableStateOf<DiscoveryCategory?>(null) }
         var showPlayer by rememberSaveable { mutableStateOf(false) }
@@ -374,9 +374,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         else category?.title() ?: accountRoute?.let { libraryPage.value.title ?: it.title() } ?: mb(tab.chinese, tab.english)
                     TopAppBar(title = {
                         if (!atRoot) Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        else if (discoverRoot) Text("MB", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                        else Text(if (discoverRoot) "MB" else title)
                     },
-                        expandedHeight = if (atRoot) 48.dp else 64.dp,
+                        largeTitle = atRoot, expandedHeight = if (atRoot) 48.dp else 64.dp,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = surface),
                         navigationIcon = {
                         if (!atRoot) IconButton(onClick = back) {

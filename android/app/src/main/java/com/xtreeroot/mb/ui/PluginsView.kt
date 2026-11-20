@@ -13,17 +13,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import com.xtreeroot.mb.ui.components.MBAlertDialog as AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ListItem
+import com.xtreeroot.mb.ui.components.MBListItem as ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.xtreeroot.mb.ui.components.MBTextField as OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
+import com.xtreeroot.mb.ui.components.MBSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.xtreeroot.mb.ui.components.MBTextButton as TextButton
+import com.xtreeroot.mb.ui.components.MBTopAppBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,7 +68,7 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
         }
     }
     Scaffold(topBar = {
-        TopAppBar(title = { Text(mb("插件", "Plugins")) }, actions = {
+        TopAppBar(largeTitle = true, title = { Text(mb("插件", "Plugins")) }, actions = {
             TextButton(onClick = close) { Text(mb("完成", "Done")) }
         })
     }) { padding ->

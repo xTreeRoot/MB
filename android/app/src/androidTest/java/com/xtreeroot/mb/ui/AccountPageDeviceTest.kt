@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.ui
 
 import android.content.Intent
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Bitmap
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
@@ -51,12 +52,17 @@ class AccountPageDeviceTest {
     @Test fun builtInAccountActionsOpenTheRightPageAndRequireSignOutConfirmation() = runBlocking {
         val listener = SourceAccount("123456", "Fixture Listener", null)
         val signOut = CompletableDeferred<Unit>()
+        val confirmSignIn = CompletableDeferred<Unit>()
         val opened = Channel<LibraryRoute>(Channel.UNLIMITED)
         val source = object : AccountSource {
             override val id = "account-page-fixture"
             override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
             override suspend fun account(): SourceAccount? = null
-            override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit) = listener
+            override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit): SourceAccount {
+                prompt(SignInPrompt(null, message = "Fixture sign-in confirmation"))
+                confirmSignIn.await()
+                return listener
+            }
             override suspend fun signOut() { signOut.complete(Unit) }
         }
         withPage(source, dark = false, content = { model -> AccountView(model) { opened.trySend(it) } }) {
@@ -64,6 +70,8 @@ class AccountPageDeviceTest {
             assertNull(node("My Uploads"))
             capture("android-account-guest-light")
             tap("QR Sign In")
+            awaitNode("Fixture sign-in confirmation")
+            confirmSignIn.complete(Unit)
             awaitNode(listener.name)
             awaitNode("Watch History")
             capture("android-account-signed-in-light")
@@ -126,6 +134,9 @@ class AccountPageDeviceTest {
 
     private suspend fun withPage(source: AccountSource, dark: Boolean, content: @Composable (AccountModel) -> Unit,
                                  run: suspend () -> Unit) {
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
         val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         val store = ViewModelStore()
@@ -134,7 +145,7 @@ class AccountPageDeviceTest {
                 val model = ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[AccountModel::class.java]
                 model.activate(source)
                 activity.setContent {
-                    MaterialTheme(colorScheme = if (dark) musicDark else musicLight) {
+                    com.xtreeroot.mb.ui.components.MBTheme(dark) {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             Surface(Modifier.fillMaxSize().safeDrawingPadding()) { content(model) }
                         }
@@ -152,7 +163,10 @@ class AccountPageDeviceTest {
             if (node.text?.toString() == text || node.contentDescription?.toString() == text) return node
             return (0 until node.childCount).firstNotNullOfOrNull { index -> node.getChild(index)?.let(::find) }
         }
-        return instrumentation.uiAutomation.rootInActiveWindow?.let(::find)
+        // Android 9 的瞬时登录弹窗关闭后 activeWindow 可暂时为空，从本应用窗口读取实际页面。
+        val roots = listOfNotNull(instrumentation.uiAutomation.rootInActiveWindow) +
+            instrumentation.uiAutomation.windows.mapNotNull { it.root }.filter { it.packageName == app.packageName }
+        return roots.firstNotNullOfOrNull(::find)
     }
 
     private suspend fun awaitNode(text: String) {
@@ -160,7 +174,10 @@ class AccountPageDeviceTest {
             while (node(text) == null) delay(25)
             true
         }
-        assertEquals("Expected to see $text", true, visible)
+        fun describe(node: AccessibilityNodeInfo): List<String> = listOf("${node.text}/${node.contentDescription} enabled=${node.isEnabled}") +
+            (0 until node.childCount).flatMap { node.getChild(it)?.let(::describe).orEmpty() }
+        if (visible != true) capture("android-account-failure")
+        assertEquals("Expected to see $text. ${if (visible != true) instrumentation.uiAutomation.rootInActiveWindow?.let(::describe) else ""}", true, visible)
     }
 
     private suspend fun tap(text: String) {

@@ -73,7 +73,7 @@ class VideoDetailsDeviceTest {
                 val model = ViewModelProvider(activity, factory)["video-grid", BrowseModel::class.java]
                 model.refresh()
                 activity.setContent {
-                    MaterialTheme(colorScheme = musicDark) {
+                    com.xtreeroot.mb.ui.components.MBTheme(true) {
                         CompositionLocalProvider(LocalMBEnglish provides true, LocalVideoBrowse provides video.value) {
                             Surface {
                                 val play: (List<Track>, Track) -> Unit = { queue, track -> selection.value = queue to track }
@@ -127,7 +127,7 @@ class VideoDetailsDeviceTest {
                 val model = ViewModelProvider(activity, factory)["music-cards", BrowseModel::class.java]
                 model.refresh()
                 activity.setContent {
-                    MaterialTheme(colorScheme = musicDark) {
+                    com.xtreeroot.mb.ui.components.MBTheme(true) {
                         CompositionLocalProvider(LocalMBEnglish provides true, LocalVideoBrowse provides false) {
                             Surface { Discover(model, { queue, track -> selection.value = queue to track }, {}) }
                         }
@@ -160,7 +160,7 @@ class VideoDetailsDeviceTest {
                 val player = ViewModelProvider(screen)[PlaybackModel::class.java]
                 val preferences = app.settings.values.value
                 screen.setContent {
-                    MaterialTheme(colorScheme = musicDark) {
+                    com.xtreeroot.mb.ui.components.MBTheme(true) {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             VideoDetailsScreen(player, PlaybackState(tracks = tracks, index = selection.value), preferences,
                                 accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, chooseMode = {})
@@ -211,7 +211,7 @@ class VideoDetailsDeviceTest {
                     val preferences = app.settings.values.value
                     screen.setContent {
                         val playback by player.playback.collectAsStateWithLifecycle()
-                        MaterialTheme(colorScheme = musicDark) {
+                        com.xtreeroot.mb.ui.components.MBTheme(true) {
                             CompositionLocalProvider(LocalMBEnglish provides true) {
                                 Surface {
                                     VideoDetailsScreen(player, playback, preferences, accountId = null, fullScreen = false,
@@ -263,7 +263,7 @@ class VideoDetailsDeviceTest {
             withContext(Dispatchers.Main) {
                 val model = ViewModelProvider(activity)[PlaybackModel::class.java]
                 activity.setContent {
-                    MaterialTheme(colorScheme = musicDark) {
+                    com.xtreeroot.mb.ui.components.MBTheme(true) {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             Surface {
                                 VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,
@@ -309,7 +309,7 @@ class VideoDetailsDeviceTest {
                 val preferences = app.settings.values.value
                 val fullScreen = mutableStateOf(false)
                 activity.setContent {
-                    MaterialTheme(colorScheme = musicDark) {
+                    com.xtreeroot.mb.ui.components.MBTheme(true) {
                         CompositionLocalProvider(LocalMBEnglish provides true) {
                             Surface {
                                 VideoDetailsScreen(model, PlaybackState(tracks = listOf(track), index = 0), preferences,

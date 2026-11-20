@@ -10,19 +10,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.xtreeroot.mb.ui.components.MBAlertDialog as AlertDialog
+import com.xtreeroot.mb.ui.components.MBDropdownMenu as DropdownMenu
+import com.xtreeroot.mb.ui.components.MBMenuItem as DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ListItem
+import com.xtreeroot.mb.ui.components.MBListItem as ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.xtreeroot.mb.ui.components.MBTextField as OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import com.xtreeroot.mb.ui.components.MBSlider as Slider
+import com.xtreeroot.mb.ui.components.MBSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import com.xtreeroot.mb.ui.components.MBTextButton as TextButton
+import com.xtreeroot.mb.ui.components.MBTopAppBar as TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +68,7 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
                           saved: SavedLibraryModel, browser: BrowseModel, backgroundState: AppearanceBackgroundState,
                           background: AppearanceBackgroundModel, surface: Color, profileSync: NodeProfileSyncState,
                           canPublishProfile: Boolean, publishProfile: () -> Unit, openPlugins: () -> Unit, close: () -> Unit) {
+    var appUpdate by rememberSaveable { mutableStateOf(false) }
     var network by rememberSaveable { mutableStateOf(false) }
     var node by rememberSaveable { mutableStateOf(false) }
     var clearHistory by rememberSaveable { mutableStateOf(false) }
@@ -78,12 +79,13 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
     }
     BackHandler(network) { network = false }
     Scaffold(containerColor = surface, contentColor = MaterialTheme.colorScheme.onBackground, topBar = {
-        TopAppBar(title = { Text(if (network) mb("网络与系统代理", "Network & System Proxy") else mb("设置", "Settings")) }, actions = {
+        TopAppBar(largeTitle = true, title = { Text(if (network) mb("网络与系统代理", "Network & System Proxy") else mb("设置", "Settings")) }, actions = {
             TextButton(onClick = { if (network) network = false else close() }) { Text(mb("完成", "Done")) }
         })
     }) { padding ->
         if (network) NetworkSettings(values.proxy, { policy -> update { it.copy(proxy = policy) } }, Modifier.padding(padding))
         else LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            item { ListItem(headlineContent = { Text(mb("检查版本", "App Updates")) }, modifier = Modifier.clickable { appUpdate = true }) }
             item { SettingHeader(mb("显示", "Display")) }
             item {
                 Choice(mb("语言", "Language"), values.language, listOf(AppLanguage.System to mb("跟随系统", "System"),
@@ -155,6 +157,7 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
             item { TextButton(onClick = { clearHistory = true }, enabled = history.isNotEmpty()) { Text(mb("清空搜索记录", "Clear Search History")) } }
         }
     }
+    if (appUpdate) AppUpdateDialog { appUpdate = false }
     if (node) NodeSettingsDialog(LocalContext.current.applicationContext as MBApplication, profileSync,
         canPublishProfile, publishProfile) { node = false }
     if (clearHistory) AlertDialog(onDismissRequest = { clearHistory = false }, title = { Text(mb("清空搜索记录？", "Clear search history?")) },
@@ -189,7 +192,7 @@ private fun NetworkSettings(policy: ProxyPolicy, save: (ProxyPolicy) -> Unit, mo
 
 @Composable
 private fun SettingHeader(label: String) {
-    Text(label, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), color = MaterialTheme.colorScheme.primary,
+    Text(label, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.titleSmall)
 }
 
