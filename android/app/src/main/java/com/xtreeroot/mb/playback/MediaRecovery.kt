@@ -1,11 +1,14 @@
 package com.xtreeroot.mb.playback
 
+import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -91,6 +94,37 @@ internal class AudioRecovery(private val scope: CoroutineScope, private val play
 
 @OptIn(UnstableApi::class)
 private fun mediaCauses(error: Throwable) = generateSequence(error) { it.cause }.take(16)
+
+@OptIn(UnstableApi::class)
+internal class MediaAddressDataSource(private val upstream: DataSource) : DataSource by upstream {
+    var backupUrls: List<String> = emptyList()
+    private var openedAddress: Uri? = null
+
+    override fun open(dataSpec: DataSpec): Long {
+        if (backupUrls.isEmpty()) return upstream.open(dataSpec)
+        openedAddress?.let { return upstream.open(dataSpec.withUri(it)) }
+        val addresses = listOf(dataSpec.uri) + backupUrls.take(2).map(Uri::parse)
+        for ((index, address) in addresses.withIndex()) {
+            try {
+                val length = upstream.open(dataSpec.withUri(address))
+                openedAddress = address
+                return length
+            } catch (failure: IOException) {
+                if (index == addresses.lastIndex || Thread.currentThread().isInterrupted || !canTryBackup(failure)) throw failure
+                upstream.close()
+            }
+        }
+        error("Media request has no address")
+    }
+
+    private fun canTryBackup(error: IOException): Boolean = mediaCauses(error).any { cause ->
+        when (cause) {
+            is MediaFetchFailure -> cause.status in setOf(401, 403, 404, 410, 429) || cause.status?.let { it in 500..599 } == true
+            is UnknownHostException, is SocketException, is SocketTimeoutException, is EOFException -> true
+            else -> false
+        }
+    }
+}
 
 @OptIn(UnstableApi::class)
 internal fun mediaRecovery(error: Throwable): MediaRecovery? {

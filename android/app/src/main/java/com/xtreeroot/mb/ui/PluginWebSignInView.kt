@@ -101,7 +101,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
                 ?: fail(PluginBrowserIssue.Startup)
             Activity.RESULT_CANCELED -> {
                 if (result.data?.getBooleanExtra(CompatPluginBrowserActivity.userCancelledKey, false) == true) close()
-                else fail(PluginBrowserIssue.Startup)
+                else compatFailed(PluginBrowserIssue.Startup)
             }
             CompatPluginBrowserActivity.failed -> {
                 val pageError = result.data?.getStringExtra(CompatPluginBrowserActivity.documentErrorKey)

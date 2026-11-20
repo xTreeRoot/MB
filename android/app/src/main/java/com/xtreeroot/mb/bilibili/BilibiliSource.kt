@@ -113,10 +113,17 @@ internal class BilibiliSource(
     override suspend fun audio(trackId: String, quality: AudioQuality): MediaResource {
         val dash = playbackInfo(trackId).optJSONObject("dash")
         val available = dash?.optJSONArray("audio").objects().mapNotNull { audio ->
-            val url = (audio.text("base_url") ?: audio.text("baseUrl"))?.takeIf(::isHttps) ?: return@mapNotNull null
+            val backups = audio.optJSONArray("backup_url") ?: audio.optJSONArray("backupUrl")
+            val urls = buildList {
+                (audio.text("base_url") ?: audio.text("baseUrl"))?.takeIf(::isHttps)?.let(::add)
+                if (backups != null) for (index in 0 until backups.length()) {
+                    (backups.opt(index) as? String)?.takeIf(::isHttps)?.let(::add)
+                }
+            }.distinct()
+            val url = urls.firstOrNull() ?: return@mapNotNull null
             val mime = audio.text("mime_type") ?: audio.text("mimeType")
             val suffix = when (mime) { "audio/flac", "audio/x-flac" -> "flac"; "audio/aac" -> "aac"; else -> "m4a" }
-            AudioVariant(MediaResource(url, mediaHeaders, suffix), audio.optLong("bandwidth"))
+            AudioVariant(MediaResource(url, mediaHeaders, suffix, urls.drop(1)), audio.optLong("bandwidth"))
         }
         val selected = when (quality) {
             AudioQuality.Standard -> available.filter { it.bandwidth > 0 }.minByOrNull(AudioVariant::bandwidth)

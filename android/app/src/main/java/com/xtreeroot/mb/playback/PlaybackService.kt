@@ -125,7 +125,8 @@ internal class PlaybackService : MediaLibraryService() {
             var reader: OfflineMediaStore.Lease? = null
             var pinned: Pair<Uri, MediaResource>? = null
             val guard = MediaRangeGuard(fallback.takeIf { usePrepared })
-            val upstream = DefaultDataSource.Factory(this) { guardedMediaHttp(app.http, guard) }
+            val http = MediaAddressDataSource(guardedMediaHttp(app.http, guard))
+            val upstream = DefaultDataSource.Factory(this) { http }
             val delegate = ResolvingDataSource.Factory(upstream) { spec ->
                 resolve(spec, { reader = it }) { uri, source, identifier, quality ->
                     pinned?.takeIf { it.first == uri }?.second ?: run {
@@ -135,7 +136,7 @@ internal class PlaybackService : MediaLibraryService() {
                             if (spec.position == 0L && spec.length == C.LENGTH_UNSET.toLong()) guard.offer(prepared.prefix)
                         }
                         resolveAudio(uri, source, identifier, quality, prepared?.resource).also { pinned = uri to it }
-                    }
+                    }.also { http.backupUrls = it.backupUrls }
                 }
             }.createDataSource()
             object : DataSource by delegate {

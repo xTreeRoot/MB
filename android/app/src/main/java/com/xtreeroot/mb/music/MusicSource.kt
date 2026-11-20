@@ -30,7 +30,8 @@ data class DiscoverySection(
     val error: String? = null,
 )
 
-data class MediaResource(val url: String, val headers: Map<String, String>, val fileExtension: String = "m4a")
+data class MediaResource(val url: String, val headers: Map<String, String>, val fileExtension: String = "m4a",
+                         val backupUrls: List<String> = emptyList())
 
 enum class AudioQuality { Standard, High, Lossless }
 

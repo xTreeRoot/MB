@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.music.DiscoveryCategory
 import com.xtreeroot.mb.music.DiscoverySection
+import com.xtreeroot.mb.music.DiscoverySource
 import com.xtreeroot.mb.music.MusicSource
 import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.plugin.PluginCatalogRequest
@@ -26,9 +27,10 @@ internal data class LoadState<T>(val value: T, val loading: Boolean = false, val
 
 internal enum class SearchScope { Music, Video }
 
-internal class BrowseModel(application: Application) : AndroidViewModel(application) {
+internal class BrowseModel(application: Application, private val source: DiscoverySource) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, (application as MBApplication).bilibili)
+
     private val app = application as MBApplication
-    private val source = app.bilibili
     private val prefs = application.getSharedPreferences("browse", 0)
     private var homeJob: Job? = null
     private var categoryJob: Job? = null
@@ -84,9 +86,10 @@ internal class BrowseModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun activateSearch(source: MusicSource?) {
-        if (searchSource === source) return
-        searchSource = source
-        searches.values.forEach { it.submit(source?.id.orEmpty(), "") }
+        val selected = if (source === app.bilibili) this.source else source
+        if (searchSource === selected) return
+        searchSource = selected
+        searches.values.forEach { it.submit(selected?.id.orEmpty(), "") }
     }
 
     fun searchPages(mode: SearchScope) = searches.getValue(mode)

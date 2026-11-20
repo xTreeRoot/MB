@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.music.LibraryPage
 import com.xtreeroot.mb.music.LibraryRoute
+import com.xtreeroot.mb.music.LibrarySource
 import com.xtreeroot.mb.music.Track
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -16,8 +17,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-internal class LibraryModel(application: Application) : AndroidViewModel(application) {
-    val pages = LibraryPages(viewModelScope, (application as MBApplication).bilibili::library)
+internal class LibraryModel(application: Application, source: LibrarySource) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, (application as MBApplication).bilibili)
+
+    val pages = LibraryPages(viewModelScope, source::library)
+    val creatorPages = LibraryPages(viewModelScope, source::library)
 }
 
 internal data class LibraryPageState(val value: LibraryPage = LibraryPage(), val loading: Boolean = false,

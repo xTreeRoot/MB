@@ -1,20 +1,38 @@
 package com.xtreeroot.mb.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.xtreeroot.mb.music.LibraryRoute
@@ -28,6 +46,34 @@ internal fun LibraryRoute.title(): String = when (this) {
     LibraryRoute.Following -> mb("我的关注", "Following")
     is LibraryRoute.Folder -> mb("收藏夹内容", "Collection")
     is LibraryRoute.Creator -> mb("UP 主投稿", "Creator Uploads")
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun CreatorUploadsDialog(title: String, model: LibraryPages, close: () -> Unit, back: (() -> Unit)?,
+                                  play: (List<Track>, Track) -> Unit) {
+    Dialog(onDismissRequest = back ?: close,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        val light = MaterialTheme.colorScheme.background.luminance() > 0.5f
+        SideEffect {
+            window?.let { dialog ->
+                WindowCompat.getInsetsController(dialog, dialog.decorView).apply {
+                    isAppearanceLightStatusBars = light
+                    isAppearanceLightNavigationBars = light
+                }
+            }
+        }
+        Scaffold(Modifier.fillMaxSize(), topBar = {
+            TopAppBar(title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
+                if (back != null) IconButton(onClick = back) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, mb("返回", "Back"))
+                }
+            }, actions = { TextButton(onClick = close) { Text(mb("完成", "Done")) } })
+        }) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding)) { AccountLibraryView(model, {}, play) }
+        }
+    }
 }
 
 @Composable

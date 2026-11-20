@@ -35,6 +35,29 @@ class BilibiliSourceTest {
         lossless = false
         assertEquals("https://media.example/high", source.audio("BVtrack", AudioQuality.Lossless).url)
     }
+
+    @Test fun keepsOnlyDistinctHttpsBackupsForTheSelectedAudioTrack() = runTest {
+        val source = BilibiliSource(FixtureTransport { path, _, _ ->
+            when (path) {
+                "/x/web-interface/nav" -> navigation
+                "/x/web-interface/view" -> """{"code":0,"data":{"aid":321,"cid":"456"}}"""
+                "/x/player/wbi/playurl" -> """{"code":0,"data":{"dash":{"audio":[
+                    {"baseUrl":"https://media.example/main","bandwidth":300,"backupUrl":[
+                        "https://media.example/main","https://backup.example/high","http://backup.example/insecure",
+                        "https://user@backup.example/credentials",null]},
+                    {"base_url":"http://media.example/standard","bandwidth":100,"backup_url":[
+                        "https://backup.example/standard","https://second.example/standard"]}]}}}"""
+                else -> error(path)
+            }
+        })
+        val high = source.audio("BVtrack", AudioQuality.High)
+        assertEquals("https://media.example/main", high.url)
+        assertEquals(listOf("https://backup.example/high"), high.backupUrls)
+        val standard = source.audio("BVtrack", AudioQuality.Standard)
+        assertEquals("https://backup.example/standard", standard.url)
+        assertEquals(listOf("https://second.example/standard"), standard.backupUrls)
+    }
+
     @Test
     fun signsKnownVectorAndEncodesUnicode() {
         val key = WbiSigner.key(image, sub)

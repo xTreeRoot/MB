@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.plugin
 
 import android.app.Activity
+import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -36,6 +37,36 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PluginBrowserSessionTest {
+    @Test fun interruptedSignInLaunchFallsBackToAnIsolatedProfile() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
+        assumeTrue(WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
+        val app = context.applicationContext as MBApplication
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val target = URI("https://${UUID.randomUUID()}.fixture.test/")
+        val ordinary = withContext(Dispatchers.Main) { CookieManager.getInstance() }
+        withContext(Dispatchers.Main) { ordinary.store(target.toString(), "ordinary=fixture; Secure; Path=/") }
+        val request = PluginWebSignIn("Interrupted sign-in fixture", target, target, setOf("session"), null,
+            html = """<script>
+                if (!document.cookie.includes('ordinary=fixture')) document.cookie = 'session=fallback; Secure; Path=/';
+            </script>""")
+        val monitor = instrumentation.addMonitor(CompatPluginBrowserActivity::class.java.name,
+            Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true)
+        try {
+            withTimeout(15_000) {
+                assertEquals("session=fallback", app.pluginWebSignIn.show(request))
+                assertEquals(1, monitor.hits)
+                assertEquals("ordinary=fixture", withContext(Dispatchers.Main) { ordinary.getCookie(target.toString()) })
+            }
+        } finally {
+            instrumentation.removeMonitor(monitor)
+            withContext(Dispatchers.Main) { ordinary.store(target.toString(), "ordinary=; Max-Age=0; Secure; Path=/") }
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test fun signInFromMainActivityUsesDisposableProcessAndReturnsTheSession() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

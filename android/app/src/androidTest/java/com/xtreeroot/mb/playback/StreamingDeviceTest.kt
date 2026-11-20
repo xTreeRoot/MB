@@ -54,6 +54,39 @@ import org.junit.Test
 class StreamingDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
+    @Test fun exoplayerStartsOnTheBackupAndKeepsThatCdnForSeeks() = runBlocking {
+        val wave = wave(180)
+        val requests = CopyOnWriteArrayList<Request>()
+        val primary = "https://primary.fixture.invalid/audio.wav"
+        val backup = "https://backup.fixture.invalid/audio.wav"
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            if (request.url.host == "primary.fixture.invalid") response(request, 403, byteArrayOf()).build()
+            else media(request, wave)
+        }.build()
+        val http = MediaAddressDataSource(guardedMediaHttp(client)).apply { backupUrls = listOf(backup) }
+        val factory = ResolvingDataSource.Factory({ http }) { spec ->
+            spec.withAdditionalHeaders(mapOf("Referer" to "https://source.fixture.invalid/"))
+        }
+        val player = withContext(Dispatchers.Main) {
+            player(client, factory).apply {
+                setMediaItem(MediaItem.fromUri(primary))
+                prepare()
+                play()
+            }
+        }
+        try {
+            eventually { player.isPlaying && player.currentPosition > 100 }
+            withContext(Dispatchers.Main) { player.seekTo(165_000) }
+            eventually { player.isPlaying && player.currentPosition > 165_100 }
+            assertEquals(primary, requests.first().url.toString())
+            assertTrue(requests.size >= 3)
+            assertTrue(requests.drop(1).all { it.url.toString() == backup && it.header("Referer") == "https://source.fixture.invalid/" })
+            assertTrue(requests.drop(2).any { it.header("Range")?.startsWith("bytes=") == true })
+        } finally { withContext(Dispatchers.Main) { player.release() } }
+    }
+
     @Test fun exoplayerReadsAReusedPrefixAndContinuesIntoTheTail() = runBlocking {
         val wave = wave(40)
         val requests = CopyOnWriteArrayList<String>()
