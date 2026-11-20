@@ -6,7 +6,9 @@ import android.os.Build
 import androidx.core.content.edit
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.disk.DiskCache
 import com.xtreeroot.mb.bilibili.BilibiliSessionStore
+import com.xtreeroot.mb.cache.DiskResponseCache
 import com.xtreeroot.mb.bilibili.BilibiliSource
 import com.xtreeroot.mb.bilibili.SessionCookie
 import com.xtreeroot.mb.bilibili.UrlConnectionTransport
@@ -94,6 +96,7 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     val bilibili by lazy {
         val preferences = getSharedPreferences("host.storage.bilibili", MODE_PRIVATE)
         BilibiliSource(transport = UrlConnectionTransport(network::open),
+            libraryCache = DiskResponseCache(File(cacheDir, "bilibili-library")),
             sessionStore = object : BilibiliSessionStore {
             override fun load() = SessionCookie(preferences.getString("cookie", "").orEmpty(),
                 preferences.getBoolean("enabled", false))
@@ -135,7 +138,10 @@ internal class MBApplication : Application(), ImageLoaderFactory {
         }
     }
 
-    override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this).okHttpClient(http).build()
+    override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this).okHttpClient(http)
+        .diskCache { DiskCache.Builder().directory(File(cacheDir, "artwork")).maxSizeBytes(256L * 1024 * 1024).build() }
+        .respectCacheHeaders(false)
+        .build()
 
     val pluginWebSignIn = PluginWebSignInBroker()
     val pluginOAuth = PluginOAuthBroker()

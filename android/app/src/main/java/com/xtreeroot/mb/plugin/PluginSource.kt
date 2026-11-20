@@ -23,6 +23,11 @@ import com.xtreeroot.mb.music.TrackComment
 import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.music.VideoSource
 import java.net.URI
+import com.xtreeroot.mb.cache.DiskResponseCache
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import org.json.JSONTokener
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -36,7 +41,35 @@ internal class PluginSource(
     private val runtime: PluginRuntime,
 ) : PlaybackSource, VideoSource, AccountSource, InteractionSource, PlaybackRecorder, StationPlaybackSource, SuggestionSource {
     override val id: String get() = manifest.id
-    val catalog = PluginCatalog(manifest, runtime, ::tracks, ::image)
+    val catalog = PluginCatalog(manifest, runtime, ::tracks, ::image, ::catalogInvoke)
+    private val accountCacheLock = Any()
+    private var cacheAccount: String? = null
+    private var accountGeneration = 0L
+
+    private fun rememberAccount(account: SourceAccount?, force: Boolean = false) = synchronized(accountCacheLock) {
+        val key = account?.let { "user:${it.id}" } ?: "guest"
+        if (force || cacheAccount != null && cacheAccount != key) accountGeneration++
+        cacheAccount = key
+    }
+
+    private suspend fun catalogInvoke(method: String, arguments: JSONObject): Any {
+        if (synchronized(accountCacheLock) { cacheAccount == null }) {
+            try { account(); synchronized(accountCacheLock) { if (cacheAccount == null) cacheAccount = "guest" } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { return runtime.invoke(method, arguments) }
+        }
+        val (account, revision) = synchronized(accountCacheLock) { cacheAccount.orEmpty() to accountGeneration }
+        val parameters = arguments.keys().asSequence().sorted().flatMap { sequenceOf(it, arguments.get(it).toString()) }.toList()
+        val key = DiskResponseCache.key(*(listOf(manifest.id, manifest.version.orEmpty(), account, method) + parameters).toTypedArray())
+        val data = runtime.catalogCache.data(key) {
+            val result = runtime.invoke(method, arguments)
+            synchronized(accountCacheLock) { if (revision != accountGeneration) throw CancellationException() }
+            result.toString().toByteArray(Charsets.UTF_8)
+        }
+        currentCoroutineContext().ensureActive()
+        synchronized(accountCacheLock) { if (revision != accountGeneration) throw CancellationException() }
+        return JSONTokener(data.toString(Charsets.UTF_8)).nextValue()
+    }
     private val searchLock = Mutex()
     private var searchTerm = ""
     private val offsets = mutableMapOf<Int, Int>()
@@ -81,7 +114,13 @@ internal class PluginSource(
 
     override suspend fun account(): SourceAccount? {
         if (!runtime.supports("account")) return null
-        return account(runtime.invoke("account"))
+        val revision = synchronized(accountCacheLock) { accountGeneration }
+        val found = account(runtime.invoke("account"))
+        synchronized(accountCacheLock) {
+            if (revision != accountGeneration) throw CancellationException()
+            rememberAccount(found)
+        }
+        return found
     }
 
     override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit): SourceAccount = coroutineScope {
@@ -89,11 +128,15 @@ internal class PluginSource(
         val observer = launch {
             for (item in prompts) prompt(SignInPrompt(item.qrUrl, message = item.message))
         }
-        try { account(runtime.signIn { prompts.trySend(it) }) ?: throw PluginException("Sign-in returned no account") }
+        try {
+            val found = account(runtime.signIn { prompts.trySend(it) }) ?: throw PluginException("Sign-in returned no account")
+            rememberAccount(found, force = true)
+            found
+        }
         finally { observer.cancel(); prompts.cancel() }
     }
 
-    override suspend fun signOut() { runtime.invoke("signOut") }
+    override suspend fun signOut() { runtime.invoke("signOut"); rememberAccount(null, force = true) }
 
     override suspend fun interactionCapabilities() = InteractionCapabilities(
         likes = runtime.supports("like"), comments = runtime.supports("comments"),
@@ -108,6 +151,7 @@ internal class PluginSource(
 
     override suspend fun like(trackId: String, enabled: Boolean) {
         runtime.invoke("like", JSONObject().put("id", trackId).put("on", enabled))
+        runtime.catalogCache.invalidate()
     }
 
     override suspend fun comments(trackId: String, cursor: Int?): CommentPage {
@@ -165,7 +209,11 @@ internal class PluginSource(
 
     suspend fun close() = runtime.close()
 
-    suspend fun configure(settings: Map<String, String>, language: String) = runtime.configure(settings, language)
+    suspend fun configure(settings: Map<String, String>, language: String) {
+        synchronized(accountCacheLock) { cacheAccount = null; accountGeneration++ }
+        runtime.catalogCache.invalidate()
+        runtime.configure(settings, language)
+    }
 
     private suspend fun media(method: String, arguments: JSONObject): MediaResource {
         val result = if (method == "stream") runtime.stream(arguments) else runtime.invoke(method, arguments)

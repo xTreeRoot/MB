@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.xtreeroot.mb.cache.cachedArtwork
 import com.xtreeroot.mb.music.DiscoveryCategory
 import com.xtreeroot.mb.R
 import com.xtreeroot.mb.music.SuggestionSource
@@ -356,9 +357,7 @@ internal fun Artwork(address: String?, headers: Map<String, String>, modifier: M
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
         if (address != null) {
             val request = remember(context, address, headers) {
-                ImageRequest.Builder(context).data(address).apply {
-                    headers.forEach { (name, value) -> addHeader(name, value) }
-                }.build()
+                ImageRequest.Builder(context).cachedArtwork(address, headers).build()
             }
             AsyncImage(request, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }

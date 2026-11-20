@@ -7,6 +7,9 @@ import com.xtreeroot.mb.music.DiscoverySection
 import com.xtreeroot.mb.music.DiscoverySource
 import com.xtreeroot.mb.music.InteractionSource
 import com.xtreeroot.mb.music.LibraryRoute
+import com.xtreeroot.mb.music.toCacheJson
+import com.xtreeroot.mb.music.toLibraryCachePage
+import com.xtreeroot.mb.cache.DiskResponseCache
 import com.xtreeroot.mb.music.LibrarySource
 import com.xtreeroot.mb.music.MediaResource
 import com.xtreeroot.mb.music.PlaybackIssue
@@ -33,6 +36,7 @@ import org.json.JSONObject
 internal class BilibiliSource(
     private val transport: BilibiliTransport = UrlConnectionTransport(),
     sessionStore: BilibiliSessionStore? = null,
+    private val libraryCache: DiskResponseCache = DiskResponseCache(),
     private val now: () -> Long = { System.currentTimeMillis() / 1_000 },
 ) : DiscoverySource, PlaybackSource, VideoSource, AccountSource, LibrarySource, InteractionSource {
     override val id = "bilibili"
@@ -45,9 +49,25 @@ internal class BilibiliSource(
     override suspend fun account() = session.account()
     override suspend fun signOut() = session.signOut()
     override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit): SourceAccount = session.signIn(prompt)
-    override suspend fun library(route: LibraryRoute, cursor: String?) = loadLibrary(route, cursor)
+    override suspend fun invalidateLibraryCache() = libraryCache.invalidate()
+    override suspend fun library(route: LibraryRoute, cursor: String?): com.xtreeroot.mb.music.LibraryPage {
+        val snapshot = session.snapshot()
+        val account = if (snapshot.cookie.isNotEmpty()) "user:" + session.requireAccount().id else "guest"
+        val key = DiskResponseCache.key(id, account, route.toCacheJson().toString(), cursor.orEmpty())
+        val data = libraryCache.data(key) {
+            session.checkRevision(snapshot.revision)
+            val result = loadLibrary(route, cursor)
+            session.checkRevision(snapshot.revision)
+            result.toCacheJson().toString().toByteArray(Charsets.UTF_8)
+        }
+        session.checkRevision(snapshot.revision)
+        return JSONObject(data.toString(Charsets.UTF_8)).toLibraryCachePage()
+    }
     override suspend fun isLiked(trackId: String) = trackLiked(trackId)
-    override suspend fun like(trackId: String, enabled: Boolean) = setTrackLiked(trackId, enabled)
+    override suspend fun like(trackId: String, enabled: Boolean) {
+        setTrackLiked(trackId, enabled)
+        invalidateLibraryCache()
+    }
     override suspend fun comments(trackId: String, cursor: Int?) = trackComments(trackId, cursor ?: 1)
     override suspend fun postComment(trackId: String, text: String) = sendTrackComment(trackId, text)
 

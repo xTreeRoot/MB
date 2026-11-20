@@ -34,7 +34,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
 import com.xtreeroot.mb.music.LibraryRoute
 import com.xtreeroot.mb.music.Track
 
@@ -81,14 +80,16 @@ internal fun AccountLibraryView(model: LibraryPages, open: (LibraryRoute) -> Uni
                                 play: (List<Track>, Track) -> Unit) {
     val state by model.state.collectAsStateWithLifecycle()
     val page = state.value
+    PrefetchArtwork(page.tracks.mapNotNull { it.artworkReference() } + page.links.mapNotNull { link ->
+        link.imageUrl?.let { ArtworkReference(it) }
+    })
     val refreshing = state.loading && !state.appending && (page.tracks.isNotEmpty() || page.links.isNotEmpty())
     RefreshableList(refreshing = refreshing, refresh = model::refresh) {
         state.error?.takeUnless { state.retryingAppend }?.let { item { Retry(it, model::retry) } }
         items(page.links, key = { "link:${it.id}" }) { link ->
             ListItem(headlineContent = { Text(link.title) }, supportingContent = { Text(link.subtitle) },
                 leadingContent = {
-                    AsyncImage(link.imageUrl, contentDescription = null,
-                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                    Artwork(link.imageUrl, emptyMap(), Modifier.size(44.dp))
                 }, modifier = Modifier.clickable { open(link.route) })
         }
         val first = page.tracks.firstOrNull { !it.isUnavailable }

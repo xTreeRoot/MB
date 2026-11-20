@@ -142,6 +142,10 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
         }
     }
     val page = status.page
+    PrefetchArtwork(page?.sections.orEmpty().flatMap { section ->
+        section.tracks.mapNotNull { it.artworkReference() } +
+            (section.entities.mapNotNull { it.image } + section.links.mapNotNull { it.image }).map { ArtworkReference(it.url, it.headers) }
+    })
     val tracks = page?.sections?.flatMap { it.tracks }.orEmpty()
     val station = entity?.takeIf { it.kind == PluginEntityKind.Station }?.let { PlaybackStation(source.id, it.id, it.title) }
     val select: (List<Track>, Track) -> Unit = if (station != null && playStation != null) {
@@ -239,7 +243,7 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
         }
     }
     PullToRefreshBox(isRefreshing = status.busy && !status.appending && page != null,
-        onRefresh = { if (!changing) pager.invalidate() }, modifier = Modifier.fillMaxSize()) {
+        onRefresh = { if (!changing) scope.launch { catalog.invalidate(); pager.invalidate() } }, modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(columns = GridCells.Adaptive(155.dp), modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 12.dp), content = content)
     }
@@ -280,7 +284,7 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
     RefreshableList(refreshing = refreshing, refresh = {
         if (!state.loading && !loading) {
             model.refresh()
-            scope.launch { refresh() }
+            scope.launch { source.catalog.invalidate(); refresh() }
         }
     }) {
         if (account != null || state.canSignIn) item {
@@ -428,6 +432,7 @@ private enum class PlaylistDialog { Name, Delete, Add }
 private fun CatalogLinkRow(link: PluginCatalogLink, open: (PluginCatalogRequest) -> Unit) {
     val title = link.title.ifBlank { (link.destination as? PluginCatalogRequest.Collection)?.collection?.label() ?: mb("查看更多", "See More") }
     ListItem(modifier = Modifier.clickable { open(link.destination) }, headlineContent = { Text(title) },
+        leadingContent = link.image?.let { image -> { Artwork(image.url, image.headers, Modifier.size(48.dp)) } },
         supportingContent = link.subtitle.takeIf(String::isNotBlank)?.let { subtitle -> { Text(subtitle) } })
 }
 

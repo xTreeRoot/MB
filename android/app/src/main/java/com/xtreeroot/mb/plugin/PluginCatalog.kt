@@ -40,7 +40,8 @@ internal sealed interface PluginCatalogRequest {
     data class Search(val query: String, val kind: PluginSearchKind) : PluginCatalogRequest
 }
 
-internal data class PluginCatalogLink(val title: String, val subtitle: String, val destination: PluginCatalogRequest)
+internal data class PluginCatalogLink(val title: String, val subtitle: String, val destination: PluginCatalogRequest,
+                                     val image: PluginImage? = null)
 
 internal data class PluginCatalogSection(val title: String, val tracks: List<Track>, val entities: List<PluginEntity>,
                                          val links: List<PluginCatalogLink>, val more: PluginCatalogLink?,
@@ -56,7 +57,9 @@ internal class PluginCatalog(
     private val runtime: PluginRuntime,
     private val readTracks: suspend (JSONArray) -> List<Track>,
     private val readImage: suspend (String?) -> PluginImage?,
+    private val cachedInvoke: suspend (String, JSONObject) -> Any,
 ) {
+    suspend fun invalidate() = runtime.catalogCache.invalidate()
     suspend fun supports(method: String) = runtime.supports(method)
 
     suspend fun navigation(): List<PluginCatalogLink> = manifest.navigation.mapNotNull { item ->
@@ -74,10 +77,10 @@ internal class PluginCatalog(
 
     suspend fun load(request: PluginCatalogRequest, offset: Int = 0): PluginCatalogPage = when (request) {
         PluginCatalogRequest.Home -> {
-            val home = if (supports("home")) runtime.invoke("home").objectValue() else JSONObject()
+            val home = if (supports("home")) cachedInvoke("home", JSONObject()).objectValue() else JSONObject()
             page(home, manifest.name)
         }
-        is PluginCatalogRequest.Browse -> page(runtime.invoke("browse", JSONObject().put("page", request.page)).objectValue(), request.title)
+        is PluginCatalogRequest.Browse -> page(cachedInvoke("browse", JSONObject().put("page", request.page)).objectValue(), request.title)
         is PluginCatalogRequest.Collection -> collection(request, offset)
         is PluginCatalogRequest.Entity -> entity(request.entity, offset)
         is PluginCatalogRequest.Search -> {
@@ -93,30 +96,35 @@ internal class PluginCatalog(
     suspend fun setSaved(entity: PluginEntity, saved: Boolean) {
         val method = entity.saveMethod ?: throw PluginException("This item cannot be saved")
         runtime.invoke(method, JSONObject().put("id", entity.id).put("on", saved))
+        invalidate()
     }
 
     suspend fun namePlaylist(entity: PluginEntity?, name: String) {
         val args = JSONObject().put("name", name)
         if (entity != null) args.put("id", entity.id)
         runtime.invoke(if (entity == null) "createPlaylist" else "renamePlaylist", args)
+        invalidate()
     }
 
     suspend fun deletePlaylist(entity: PluginEntity) {
         runtime.invoke("deletePlaylist", JSONObject().put("id", entity.id))
+        invalidate()
     }
 
     suspend fun changePlaylistTracks(entity: PluginEntity, ids: List<String>, add: Boolean) {
         runtime.invoke(if (add) "addToPlaylist" else "removeFromPlaylist",
             JSONObject().put("id", entity.id).put("trackIds", JSONArray(ids)))
+        invalidate()
     }
 
     suspend fun movePlaylistTrack(entity: PluginEntity, from: Int, to: Int) {
         runtime.invoke("movePlaylistTrack", JSONObject().put("id", entity.id).put("from", from).put("to", to))
+        invalidate()
     }
 
     private suspend fun collection(request: PluginCatalogRequest.Collection, offset: Int): PluginCatalogPage {
         val name = request.collection.method
-        val value = runtime.invoke(name, arguments(offset))
+        val value = cachedInvoke(name, arguments(offset))
         val section = when (request.collection) {
             PluginCollection.Playlists, PluginCollection.Shows, PluginCollection.Stations -> JSONObject().put(name, value.arrayValue())
             PluginCollection.Recent -> JSONObject().put("tracks", value.arrayValue())
@@ -128,7 +136,9 @@ internal class PluginCatalog(
     }
 
     private suspend fun entity(entity: PluginEntity, offset: Int): PluginCatalogPage {
-        val value = runtime.invoke(entity.kind.method, arguments(offset).put("id", entity.id))
+        val args = arguments(offset).put("id", entity.id)
+        val value = if (entity.kind == PluginEntityKind.Station) runtime.invoke(entity.kind.method, args)
+            else cachedInvoke(entity.kind.method, args)
         val detailsPage = value as? JSONObject ?: JSONObject()
         val section = when (entity.kind) {
             PluginEntityKind.Station -> JSONObject().put("tracks", value.arrayValue())
@@ -162,7 +172,7 @@ internal class PluginCatalog(
         val links = value.list("links").objects().mapNotNull { link ->
             val title = link.text("title") ?: return@mapNotNull null
             val page = link.text("page") ?: return@mapNotNull null
-            PluginCatalogLink(title, link.text("subtitle").orEmpty(), PluginCatalogRequest.Browse(page, title))
+            PluginCatalogLink(title, link.text("subtitle").orEmpty(), PluginCatalogRequest.Browse(page, title), readImage(link.text("imageUrl")))
         }
         val more = value.text("morePage")?.let { PluginCatalogLink("", "", PluginCatalogRequest.Browse(it, "")) }
         return PluginCatalogSection(value.text("title").orEmpty(), readTracks(value.list("tracks")), entities,

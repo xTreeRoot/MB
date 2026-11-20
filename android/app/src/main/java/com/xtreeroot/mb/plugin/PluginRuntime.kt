@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.plugin
 
 import android.content.res.AssetManager
+import com.xtreeroot.mb.cache.DiskResponseCache
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
 import com.xtreeroot.mb.music.TrackUnavailableReason
@@ -38,6 +39,7 @@ internal class PluginRuntime(
     private val openURL: suspend (PluginWebLink) -> Unit = { throw PluginException("Opening web links is unavailable") },
     private val oauthSignIn: suspend (PluginOAuthRequest) -> PluginFetchRequest = { throw PluginException("OAuth is unavailable") },
 ) {
+    val catalogCache = DiskResponseCache(File(dataDirectory, "catalog-cache"))
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val calls = Mutex()
