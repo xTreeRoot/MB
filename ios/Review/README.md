@@ -1,5 +1,7 @@
 # 页面核对与验证
 
+Build 26：设置检查版本、校验下载与签名安装交接，iPhone / iPad 各连续五轮通过，见 [验收记录与截图](AppUpdates/README.md)。
+
 Build 25：远程插件直接比较更新、触底分页和播放器动作对齐，见 [验收记录](RemoteUpdates/README.md)。
 
 ## 紧凑页面与系统授权（2026-11-19）
