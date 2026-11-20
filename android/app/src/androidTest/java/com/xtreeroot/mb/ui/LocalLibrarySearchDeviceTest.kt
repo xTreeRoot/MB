@@ -1,5 +1,7 @@
 package com.xtreeroot.mb.ui
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Bitmap
@@ -7,10 +9,13 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.lifecycle.ViewModelProvider
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,9 +28,11 @@ import com.xtreeroot.mb.playback.PlaybackService
 import com.xtreeroot.mb.playback.wave
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -393,6 +400,89 @@ class LocalLibrarySearchDeviceTest {
         } finally {
             withContext(Dispatchers.Main) { activity?.finish() }
             app.local.delete(track.sourceTrackId)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    @Test fun songActionsShareReadableAudioInsteadOfALink() = runBlocking {
+        val track = addTrack("Orbit / Share Fixture", "Fixture Artist", "", "")
+        val original = app.local.catalog.file(track.sourceTrackId).readBytes()
+        val chooser = CompletableDeferred<Intent>()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_CHOOSER) return null
+                chooser.complete(intent)
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        var activity: MainActivity? = null
+        try {
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            instrumentation.addMonitor(monitor)
+            tap("资料库", "Library")
+            setQuery(track.title)
+            longPress(track.title)
+            node("导出音频", "Export Audio")
+            tap("分享音频", "Share Audio")
+            val envelope = withTimeout(5_000) { chooser.await() }
+            val share = checkNotNull(envelope.getParcelableExtra<Intent>(Intent.EXTRA_INTENT))
+            val uri = checkNotNull(share.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            assertEquals(Intent.ACTION_SEND, share.action)
+            assertTrue(share.type.orEmpty().startsWith("audio/"))
+            assertEquals("content", uri.scheme)
+            assertEquals(uri, share.clipData?.getItemAt(0)?.uri)
+            assertEquals(uri, envelope.clipData?.getItemAt(0)?.uri)
+            val accessFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, share.flags and accessFlags)
+            assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, envelope.flags and accessFlags)
+            val resolver = app.contentResolver
+            assertTrue(resolver.getType(uri).orEmpty().startsWith("audio/"))
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null).use { cursor ->
+                checkNotNull(cursor)
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Orbit _ Share Fixture.wav", cursor.getString(0))
+            }
+            app.local.delete(track.sourceTrackId)
+            assertTrue(checkNotNull(resolver.openInputStream(uri)).use { it.readBytes() }.contentEquals(original))
+        } finally {
+            instrumentation.removeMonitor(monitor)
+            withContext(Dispatchers.Main) { activity?.finish() }
+            app.local.delete(track.sourceTrackId)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    @Test fun downloadedAudioCanBeSharedButCacheAloneCannot() = runBlocking {
+        val track = Track("share-fixture", UUID.randomUUID().toString(), "超长曲目名称".repeat(20), "Fixture Artist")
+        val audio = wave(2)
+        val store = app.offline.store
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            val model = withContext(Dispatchers.Main) { ViewModelProvider(activity)[SavedLibraryModel::class.java] }
+            val ticket = checkNotNull(store.cacheTicket(track.id))
+            val staged = store.staging()
+            try { staged.writeBytes(audio); store.save(staged, track, "wav", ticket) }
+            finally { staged.delete() }
+            assertTrue(runCatching { model.shareAudio(track) }.exceptionOrNull() is IOException)
+            assertTrue(store.promote(track))
+            val share = checkNotNull(model.shareAudio(track).getParcelableExtra<Intent>(Intent.EXTRA_INTENT))
+            val uri = checkNotNull(share.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            val resolver = app.contentResolver
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null).use { cursor ->
+                checkNotNull(cursor)
+                assertTrue(cursor.moveToFirst())
+                val name = cursor.getString(0)
+                assertTrue(name.endsWith(".wav"))
+                assertTrue(name.startsWith("超长曲目名称"))
+                assertTrue(name.encodeToByteArray().size <= 255)
+            }
+            store.removeDownload(track.id)
+            assertTrue(checkNotNull(resolver.openInputStream(uri)).use { it.readBytes() }.contentEquals(audio))
+        } finally {
+            if (store.promote(track)) store.removeDownload(track.id)
+            withContext(Dispatchers.Main) { activity.finish() }
         }
     }
 

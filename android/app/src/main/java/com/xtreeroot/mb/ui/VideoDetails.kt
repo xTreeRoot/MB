@@ -2,10 +2,12 @@ package com.xtreeroot.mb.ui
 
 import android.animation.ValueAnimator
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -17,7 +19,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
@@ -32,14 +36,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,11 +61,17 @@ import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.playback.VideoFrameState
 import com.xtreeroot.mb.preferences.AppPreferences
+import java.text.NumberFormat
+import java.util.Locale
 
 @Composable
-internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, preferences: AppPreferences, signedIn: Boolean,
+internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, preferences: AppPreferences, accountId: String?,
                                 fullScreen: Boolean, setFullScreen: (Boolean) -> Unit, browse: () -> Unit, openMusic: () -> Unit) {
     val track = state.current ?: return
+    val app = LocalContext.current.applicationContext as MBApplication
+    val source = app.playbackSource(track.sourceId) as? InteractionSource
+    val commentPages = remember(source, track.id, accountId) { source?.let { CommentPages(it, track.sourceTrackId) } }
+    LaunchedEffect(commentPages) { commentPages?.refresh() }
     var selected by rememberSaveable(track.id) { mutableStateOf(VideoDetailTab.Info) }
     val frame = rememberVideoFrame(track)
     if (fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
@@ -65,7 +80,7 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
         WatchPicture(track, state, model, browse, openMusic, frame, fullScreen, setFullScreen, modifier)
     }
     val information: @Composable (Modifier) -> Unit = { modifier ->
-        VideoInformation(track, state, model, preferences, signedIn, selected, { selected = it }, modifier)
+        VideoInformation(track, state, model, preferences, accountId != null, source, commentPages, selected, { selected = it }, modifier)
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         if (maxWidth >= 600.dp && maxWidth > maxHeight) {
@@ -106,22 +121,30 @@ private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackMode
 
 @Composable
 private fun VideoInformation(track: Track, state: PlaybackState, model: PlaybackModel, preferences: AppPreferences,
-                             signedIn: Boolean, selected: VideoDetailTab, select: (VideoDetailTab) -> Unit, modifier: Modifier) {
-    val context = LocalContext.current
-    val source = (context.applicationContext as MBApplication).playbackSource(track.sourceId) as? InteractionSource
+                             signedIn: Boolean, source: InteractionSource?, commentPages: CommentPages?,
+                             selected: VideoDetailTab, select: (VideoDetailTab) -> Unit, modifier: Modifier) {
+    val total = commentPages?.state?.collectAsStateWithLifecycle()?.value
+        ?.takeIf { it.capabilities?.comments == true }?.page?.total ?: 0
+    val numberLocale = if (LocalMBEnglish.current) Locale.US else Locale.SIMPLIFIED_CHINESE
+    val count = remember(total, numberLocale) { NumberFormat.getIntegerInstance(numberLocale).format(total) }
     Column(modifier.fillMaxWidth()) {
         val tabs: @Composable () -> Unit = {
             VideoDetailTab.entries.forEach { tab ->
-                Tab(selected == tab, { select(tab) }, text = { Text(tab.label(), maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                Tab(selected == tab, { select(tab) }, text = {
+                    val label = tab.label()
+                    Text(if (tab == VideoDetailTab.Comments && total > 0) "$label · $count" else label,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                })
             }
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (maxWidth < 360.dp || LocalDensity.current.fontScale >= 1.4f) {
+            val minimumWidth = if (commentPages != null) 520.dp else 360.dp
+            if (maxWidth < minimumWidth || LocalDensity.current.fontScale >= 1.4f) {
                 PrimaryScrollableTabRow(selected.ordinal, edgePadding = 8.dp, tabs = tabs)
             } else PrimaryTabRow(selected.ordinal, tabs = tabs)
         }
         when (selected) {
-            VideoDetailTab.Info -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            VideoDetailTab.Info -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 item {
                     Column(Modifier.padding(vertical = 12.dp)) {
                         Text(track.artist, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -142,17 +165,45 @@ private fun VideoInformation(track: Track, state: PlaybackState, model: Playback
                         }
                     }
                 }
+                videoQueue(state, model::select)
             }
             VideoDetailTab.Comments -> if (source == null) EmptyMessage(mb("此音源不支持评论", "Comments are not available for this source"))
-                else TrackComments(source, track, signedIn, Modifier.fillMaxSize())
+                else TrackComments(source, track, signedIn, Modifier.fillMaxSize(), sharedPages = commentPages)
             VideoDetailTab.Captions -> VideoCaptions(track, state, model, preferences)
-            VideoDetailTab.Queue -> LazyColumn(Modifier.fillMaxSize()) {
-                item { Text(mb("播放队列 · ${state.tracks.size}", "Queue · ${state.tracks.size}"),
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium) }
-                itemsIndexed(state.tracks) { index, item ->
-                    VideoPreviewRow(item, state.connected, selectedTrack = index == state.index) { model.select(index) }
-                }
+            VideoDetailTab.Queue -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+                videoQueue(state, model::select)
             }
+        }
+    }
+}
+
+private fun LazyListScope.videoQueue(state: PlaybackState, select: (Int) -> Unit) {
+    item {
+        Text(mb("播放队列 · ${state.tracks.size}", "Queue · ${state.tracks.size}"),
+            Modifier.padding(start = 4.dp, top = 6.dp, bottom = 8.dp).semantics { heading() },
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    }
+    itemsIndexed(state.tracks) { index, track ->
+        val current = index == state.index
+        val colors = MaterialTheme.colorScheme
+        val mark = LocalMarkedTrack.current?.playback?.takeIf { current }
+        val queueLabel = mb("队列选择 ${track.title}", "Queue selection: ${track.title}")
+        Row(Modifier.fillMaxWidth().padding(bottom = 4.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (current) colors.primary.copy(alpha = 0.11f) else Color.Transparent)
+            .trackRowInput(track, state.connected, mark, current, play = { select(index) })
+            .semantics { contentDescription = queueLabel }
+            .padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            TrackRowArtwork(track, mark, Modifier.width(88.dp).aspectRatio(16f / 9f))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+                    color = if (current) colors.primary else colors.onSurface)
+                Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                TrackPlaybackStatus(track)
+            }
+            TrackActionsButton(track)
         }
     }
 }

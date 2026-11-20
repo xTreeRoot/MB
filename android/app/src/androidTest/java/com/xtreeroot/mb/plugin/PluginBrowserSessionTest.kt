@@ -37,7 +37,15 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PluginBrowserSessionTest {
-    @Test fun interruptedSignInLaunchFallsBackToAnIsolatedProfile() = runBlocking {
+    @Test fun interruptedSignInLaunchFallsBackToAnIsolatedProfile() =
+        signInFallsBackToAnIsolatedProfile(Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null))
+
+    @Test fun providerMissingOnlyInTheBrowserProcessFallsBackToAnIsolatedProfile() = signInFallsBackToAnIsolatedProfile(
+        Instrumentation.ActivityResult(CompatPluginBrowserActivity.failed,
+            Intent().putExtra(CompatPluginBrowserActivity.issueKey, PluginBrowserIssue.MissingProvider.name)),
+    )
+
+    private fun signInFallsBackToAnIsolatedProfile(result: Instrumentation.ActivityResult) = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
@@ -52,8 +60,7 @@ class PluginBrowserSessionTest {
             html = """<script>
                 if (!document.cookie.includes('ordinary=fixture')) document.cookie = 'session=fallback; Secure; Path=/';
             </script>""")
-        val monitor = instrumentation.addMonitor(CompatPluginBrowserActivity::class.java.name,
-            Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null), true)
+        val monitor = instrumentation.addMonitor(CompatPluginBrowserActivity::class.java.name, result, true)
         try {
             withTimeout(15_000) {
                 assertEquals("session=fallback", app.pluginWebSignIn.show(request))

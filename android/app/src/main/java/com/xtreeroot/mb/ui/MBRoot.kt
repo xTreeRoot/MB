@@ -232,8 +232,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val webSignIn by app.pluginWebSignIn.requests.collectAsStateWithLifecycle(initialValue = null)
         val oauthSignIn by app.pluginOAuth.requests.collectAsStateWithLifecycle(initialValue = null)
         val webLink by app.pluginWebLink.collectAsStateWithLifecycle()
-        val playbackSignedIn = if (playback.current?.sourceId == app.bilibili.id) user.account != null
-            else playback.current?.sourceId == pluginSource?.id && pluginUser.account != null
+        val playbackAccount = if (playback.current?.sourceId == app.bilibili.id) user.account
+            else pluginUser.account.takeIf { playback.current?.sourceId == pluginSource?.id && pluginUser.verifiedSource === pluginSource }
+        val playbackSignedIn = playbackAccount != null
         val isWide = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() >= 720.dp }
         LaunchedEffect(preferences.builtInEnabled) {
             account.activate(app.bilibili.takeIf { preferences.builtInEnabled })
@@ -348,7 +349,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
             }
         } else if (showVideo && playback.current != null) {
             CompositionLocalProvider(LocalTrackActions provides openTrackActions, LocalMarkedTrack provides markedTrack) {
-                VideoDetailsScreen(player, playback, preferences, signedIn = playbackSignedIn, fullScreen = videoFullscreen,
+                VideoDetailsScreen(player, playback, preferences, accountId = playbackAccount?.id, fullScreen = videoFullscreen,
                     setFullScreen = { videoFullscreen = it },
                     browse = { showVideo = false; player.closeVideo() },
                     openMusic = { showVideo = false; player.closeVideo(); showPlayer = true })
@@ -485,7 +486,13 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         actionTrack?.let { metadata ->
             val track = JSONObject(metadata).toTrackMetadata()
             TrackActions(track, saved, playback.connected, close = { actionTrack = null },
-                enqueue = { next -> player.enqueue(track, next) }, export = {
+                enqueue = { next -> player.enqueue(track, next) }, shareAudio = {
+                    scope.launch {
+                        try { context.startActivity(saved.shareAudio(track)) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { saved.report(failure) }
+                    }
+                }, export = {
                     scope.launch {
                         try {
                             val name = saved.exportName(track)

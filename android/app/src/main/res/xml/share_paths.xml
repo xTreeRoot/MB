@@ -1,3 +1,4 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="sign_in" path="sign-in/" />
+    <cache-path name="audio_share" path="audio-share/" />
 </paths>

@@ -100,6 +100,10 @@ internal class MediaRangeGuard(private val sequentialFile: SequentialAudioFile? 
                 throw MediaFetchFailure(MediaRecovery.RefreshAddress, 416)
             }
             if (!response.isSuccessful) throw rejected(response)
+            val contentType = response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase()
+            if (contentType == "text/html" || contentType == "application/xhtml+xml") {
+                throw MediaFetchFailure(status = response.code, html = true)
+            }
             if (response.header("Content-Encoding")?.equals("identity", ignoreCase = true) == false) throw MediaFetchFailure()
             val body = response.body ?: throw MediaFetchFailure()
             val length = body.contentLength().takeIf { it >= 0 }

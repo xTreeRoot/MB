@@ -65,7 +65,7 @@ internal fun TrackActionsButton(track: Track, modifier: Modifier = Modifier, onA
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TrackActions(track: Track, saved: SavedLibraryModel, connected: Boolean, close: () -> Unit,
-                          enqueue: (Boolean) -> Unit, export: () -> Unit, creator: ((String) -> Unit)?) {
+                          enqueue: (Boolean) -> Unit, shareAudio: () -> Unit, export: () -> Unit, creator: ((String) -> Unit)?) {
     val context = LocalContext.current
     val offline by saved.offline.collectAsStateWithLifecycle()
     val transfers by saved.transfers.collectAsStateWithLifecycle()
@@ -112,6 +112,7 @@ internal fun TrackActions(track: Track, saved: SavedLibraryModel, connected: Boo
                         close()
                     }
                     TrackAction(mb("添加到歌单", "Add to Playlist")) { choosePlaylist = true }
+                    TrackAction(mb("分享音频", "Share Audio")) { shareAudio(); close() }
                     TrackAction(mb("导出音频", "Export Audio")) { export(); close() }
                 } else if (track.id in transfers) TrackAction(mb("取消下载", "Cancel Download")) { saved.cancel(track.id); close() }
                 else TrackAction(mb("下载音频", "Download Audio")) { saved.download(track); close() }

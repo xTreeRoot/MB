@@ -35,7 +35,7 @@ import okhttp3.OkHttpClient
 
 internal enum class MediaRecovery { Reopen, RefreshAddress }
 
-internal class MediaFetchFailure(val recovery: MediaRecovery? = null, val status: Int? = null) :
+internal class MediaFetchFailure(val recovery: MediaRecovery? = null, val status: Int? = null, val html: Boolean = false) :
     IOException(if (status == null) "Invalid media response" else "Invalid media response (HTTP $status)")
 
 @OptIn(UnstableApi::class)
@@ -43,7 +43,7 @@ internal fun Throwable.playbackDiagnostic(code: Int): String {
     val name = PlaybackException.getErrorCodeName(code)
     val detail = mediaCauses(this).mapNotNull { failure ->
         when (failure) {
-            is MediaFetchFailure -> failure.status?.let { "HTTP $it" }
+            is MediaFetchFailure -> failure.status?.let { if (failure.html) "HTTP $it / HTML" else "HTTP $it" }
             is HttpDataSource.InvalidResponseCodeException -> "HTTP ${failure.responseCode}"
             is SourceResponseFailure -> "${failure.kind.name} ${failure.code}"
             is UnknownHostException -> "DNS"
@@ -120,7 +120,7 @@ internal class MediaAddressDataSource(private val upstream: DataSource) : DataSo
 
     private fun canTryBackup(error: IOException): Boolean = mediaCauses(error).any { cause ->
         when (cause) {
-            is MediaFetchFailure -> cause.status?.isMediaAddressUnavailable() == true
+            is MediaFetchFailure -> cause.html || cause.status?.isMediaAddressUnavailable() == true
             else -> cause.isMediaConnectionFailure()
         }
     }

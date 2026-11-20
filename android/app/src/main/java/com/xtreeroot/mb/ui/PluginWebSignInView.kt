@@ -71,9 +71,9 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
     val context = LocalContext.current
     val english = LocalMBEnglish.current
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    var issue by remember { mutableStateOf<PluginBrowserIssue?>(null) }
-    var useProfiles by rememberSaveable { mutableStateOf(false) }
-    var launched by rememberSaveable { mutableStateOf(false) }
+    var issue by rememberSaveable(page.id) { mutableStateOf<PluginBrowserIssue?>(null) }
+    var useProfiles by rememberSaveable(page.id) { mutableStateOf(false) }
+    var launched by rememberSaveable(page.id) { mutableStateOf(false) }
     fun fail(failure: PluginBrowserIssue) {
         Log.w(pluginBrowserLogTag, "isolated browser failed: $failure")
         issue = failure
@@ -88,12 +88,15 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
         val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles)
         if (route == PluginBrowserRoute.Profile) useProfiles = true
+        else if (fallback == PluginBrowserIssue.MissingProvider && installed != null) fail(PluginBrowserIssue.Startup)
         else fail(fallback ?: checkNotNull(route.issue))
     }
     fun compatFailed(failure: PluginBrowserIssue) {
-        if (failure == PluginBrowserIssue.Startup || failure == PluginBrowserIssue.UnsupportedProvider) {
-            openProfile(Result.success(false), fallback = failure)
-        } else fail(failure)
+        when (failure) {
+            PluginBrowserIssue.Startup, PluginBrowserIssue.MissingProvider, PluginBrowserIssue.UnsupportedProvider ->
+                openProfile(Result.success(false), fallback = failure)
+            else -> fail(failure)
+        }
     }
     val compat = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         when (result.resultCode) {
@@ -201,18 +204,29 @@ internal fun PluginBrowserPanel(page: PluginBrowserPage, closeLabel: String, clo
     }
 }
 
-private fun PluginBrowserIssue.text(english: Boolean): String = if (english) when (this) {
-    PluginBrowserIssue.MissingProvider -> "No usable WebView. Enable the system WebView provider in Android settings."
-    PluginBrowserIssue.UnsupportedProvider -> "This WebView cannot isolate sign-in. Update the active WebView provider or Android."
-    PluginBrowserIssue.Startup -> "Could not start the isolated WebView. Reopen MB and retry."
-    PluginBrowserIssue.Navigation -> "Could not load the page. Check your connection and try again."
-    PluginBrowserIssue.ServerUnavailable -> "The website is temporarily unavailable. Try again later."
-    PluginBrowserIssue.Renderer -> "The isolated WebView stopped responding. Close this page and retry."
-} else when (this) {
-    PluginBrowserIssue.MissingProvider -> "没有可用的 WebView，请在系统设置中启用 WebView 提供程序。"
-    PluginBrowserIssue.UnsupportedProvider -> "当前 WebView 不支持隔离登录，请更新系统正在使用的 WebView 或 Android。"
-    PluginBrowserIssue.Startup -> "隔离 WebView 启动失败，请重新打开 MB 后重试。"
-    PluginBrowserIssue.Navigation -> "网页无法加载，请检查网络后重试。"
-    PluginBrowserIssue.ServerUnavailable -> "网站暂时不可用，请稍后重试。"
-    PluginBrowserIssue.Renderer -> "隔离 WebView 已退出，请关闭页面后重试。"
+private fun PluginBrowserIssue.text(english: Boolean): String {
+    val code = when (this) {
+        PluginBrowserIssue.MissingProvider -> "WV-01"
+        PluginBrowserIssue.UnsupportedProvider -> "WV-02"
+        PluginBrowserIssue.Startup -> "WV-03"
+        PluginBrowserIssue.Navigation -> "WV-04"
+        PluginBrowserIssue.ServerUnavailable -> "WV-05"
+        PluginBrowserIssue.Renderer -> "WV-06"
+    }
+    val detail = if (english) when (this) {
+        PluginBrowserIssue.MissingProvider -> "No usable WebView. Enable the system WebView provider in Android settings."
+        PluginBrowserIssue.UnsupportedProvider -> "This WebView cannot isolate sign-in. Update the active WebView provider or Android."
+        PluginBrowserIssue.Startup -> "Could not start the isolated WebView. Reopen MB and retry."
+        PluginBrowserIssue.Navigation -> "Could not load the page. Check your connection and try again."
+        PluginBrowserIssue.ServerUnavailable -> "The website is temporarily unavailable. Try again later."
+        PluginBrowserIssue.Renderer -> "The isolated WebView stopped responding. Close this page and retry."
+    } else when (this) {
+        PluginBrowserIssue.MissingProvider -> "没有可用的 WebView，请在系统设置中启用 WebView 提供程序。"
+        PluginBrowserIssue.UnsupportedProvider -> "当前 WebView 不支持隔离登录，请更新系统正在使用的 WebView 或 Android。"
+        PluginBrowserIssue.Startup -> "隔离 WebView 启动失败，请重新打开 MB 后重试。"
+        PluginBrowserIssue.Navigation -> "网页无法加载，请检查网络后重试。"
+        PluginBrowserIssue.ServerUnavailable -> "网站暂时不可用，请稍后重试。"
+        PluginBrowserIssue.Renderer -> "隔离 WebView 已退出，请关闭页面后重试。"
+    }
+    return "$detail ($code)"
 }

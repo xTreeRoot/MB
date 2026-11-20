@@ -54,7 +54,11 @@ import org.junit.Test
 class StreamingDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-    @Test fun exoplayerStartsOnTheBackupAndKeepsThatCdnForSeeks() = runBlocking {
+    @Test fun exoplayerStartsOnTheBackupAndKeepsThatCdnForSeeks() = startsOnTheBackup(403, "text/plain")
+
+    @Test fun exoplayerSkipsAWebPageReturnedAsThePrimaryStream() = startsOnTheBackup(200, "text/html; charset=utf-8")
+
+    private fun startsOnTheBackup(status: Int, contentType: String) = runBlocking {
         val wave = wave(180)
         val requests = CopyOnWriteArrayList<Request>()
         val primary = "https://primary.fixture.invalid/audio.wav"
@@ -62,7 +66,8 @@ class StreamingDeviceTest {
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
             requests += request
-            if (request.url.host == "primary.fixture.invalid") response(request, 403, byteArrayOf()).build()
+            if (request.url.host == "primary.fixture.invalid") response(request, status, "<html>Unavailable</html>".encodeToByteArray())
+                .header("Content-Type", contentType).build()
             else media(request, wave)
         }.build()
         val http = MediaAddressDataSource(guardedMediaHttp(client)).apply { backupUrls = listOf(backup) }

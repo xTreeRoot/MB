@@ -297,7 +297,7 @@ internal fun TrackRow(track: Track, enabled: Boolean = true, rank: Int? = null,
 }
 
 @Composable
-private fun Modifier.trackRowInput(track: Track, enabled: Boolean, mark: TrackPlaybackMark?, highlighted: Boolean,
+internal fun Modifier.trackRowInput(track: Track, enabled: Boolean, mark: TrackPlaybackMark?, highlighted: Boolean,
                                    picker: Boolean = false, play: () -> Unit): Modifier {
     val available = enabled && !track.isUnavailable
     if (picker) return clickable(enabled = available, onClick = play)
@@ -312,7 +312,7 @@ private fun Modifier.trackRowInput(track: Track, enabled: Boolean, mark: TrackPl
 }
 
 @Composable
-private fun TrackRowArtwork(track: Track, mark: TrackPlaybackMark?, modifier: Modifier) {
+internal fun TrackRowArtwork(track: Track, mark: TrackPlaybackMark?, modifier: Modifier) {
     if (mark == null) {
         Artwork(track, modifier)
         return

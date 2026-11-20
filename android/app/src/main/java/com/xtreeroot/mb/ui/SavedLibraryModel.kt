@@ -1,9 +1,12 @@
 package com.xtreeroot.mb.ui
 
 import android.app.Application
+import android.content.ClipData
+import android.content.Intent
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xtreeroot.mb.MBApplication
@@ -11,9 +14,14 @@ import com.xtreeroot.mb.local.LocalPlaylist
 import com.xtreeroot.mb.local.LocalTrackActivity
 import com.xtreeroot.mb.local.localSourceId
 import com.xtreeroot.mb.music.Track
+import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -80,25 +88,66 @@ internal class SavedLibraryModel(application: Application) : AndroidViewModel(ap
     fun reorder(id: String, from: Int, to: Int, visible: List<String>) = runIO { playlistStore.reorder(id, from, to, visible) }
 
     suspend fun exportName(track: Track): String = withContext(Dispatchers.IO) {
+        withExportFile(track) { file -> exportName(track, file) }
+    }
+
+    private fun exportName(track: Track, file: File): String {
         val extension = if (track.sourceId == localSourceId) {
             val extractor = MediaMetadataRetriever()
             val mime = try {
-                extractor.setDataSource(app.local.catalog.file(track.sourceTrackId).path)
+                extractor.setDataSource(file.path)
                 extractor.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
             } finally { extractor.release() }
             if (mime == "audio/mp4" || mime == "video/mp4") "m4a"
             else MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "audio"
-        } else store.snapshot.value.downloads.firstOrNull { it.track.id == track.id }?.fileName?.substringAfterLast('.')
+        } else file.extension
+        val title = track.title.replace(Regex("[\\\\/\\p{Cntrl}]"), "_").trim().take(80)
+            .trimEnd(Char::isHighSurrogate).ifEmpty { "MB 音频" }
+        return "$title.$extension"
+    }
+
+    suspend fun shareAudio(track: Track): Intent = withContext(Dispatchers.IO) {
+        val coroutine = currentCoroutineContext()
+        withExportFile(track) { source ->
+            val cache = File(app.cacheDir, "audio-share").apply { mkdirs() }
+            val expiresBefore = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1)
+            cache.listFiles()?.filter { it.isDirectory && it.lastModified() < expiresBefore }?.forEach(File::deleteRecursively)
+            val directory = Files.createTempDirectory(cache.toPath(), "track-").toFile()
+            try {
+                val shared = File(directory, exportName(track, source))
+                source.inputStream().use { input ->
+                    shared.outputStream().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            coroutine.ensureActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                coroutine.ensureActive()
+                val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", shared)
+                val mime = app.contentResolver.getType(uri).orEmpty().takeIf { it.startsWith("audio/") } ?: "audio/*"
+                val send = Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                send.clipData = ClipData.newRawUri(track.title, uri)
+                Intent.createChooser(send, null)
+            } catch (failure: Exception) {
+                directory.deleteRecursively()
+                throw failure
+            }
+        }
+    }
+
+    private inline fun <Result> withExportFile(track: Track, useFile: (File) -> Result): Result {
+        val lease = if (track.sourceId == localSourceId) null else store.lease(track.id, downloadsOnly = true)
             ?: throw IOException("下载文件不存在")
-        val title = track.title.replace(Regex("[\\\\/\\p{Cntrl}]"), "_").trim().take(96).ifEmpty { "MB 音频" }
-        "$title.$extension"
+        return lease.use { useFile(lease?.path ?: app.local.catalog.file(track.sourceTrackId)) }
     }
 
     fun export(track: Track, uri: Uri) = runIO {
-        val lease = if (track.sourceId == localSourceId) null else store.lease(track.id, downloadsOnly = true)
-            ?: throw IOException("下载文件不存在")
-        lease.use {
-            val file = lease?.path ?: app.local.catalog.file(track.sourceTrackId)
+        withExportFile(track) { file ->
             file.inputStream().use { input ->
                 val output = app.contentResolver.openOutputStream(uri, "wt") ?: throw IOException("无法写入导出文件")
                 output.use { input.copyTo(it) }

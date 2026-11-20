@@ -97,8 +97,9 @@ internal fun CommentsSheet(source: InteractionSource, track: Track, signedIn: Bo
 
 @Composable
 internal fun TrackComments(source: InteractionSource, track: Track, signedIn: Boolean,
-                           modifier: Modifier = Modifier, maxHeight: androidx.compose.ui.unit.Dp? = null) = key(source, track.id, signedIn) {
-    val pages = remember { CommentPages(source, track.sourceTrackId) }
+                           modifier: Modifier = Modifier, maxHeight: androidx.compose.ui.unit.Dp? = null,
+                           sharedPages: CommentPages? = null) = key(source, track.id, signedIn, sharedPages) {
+    val pages = sharedPages ?: remember { CommentPages(source, track.sourceTrackId) }
     val state by pages.state.collectAsStateWithLifecycle()
     val capabilities = state.capabilities
     val page = state.page
@@ -112,14 +113,14 @@ internal fun TrackComments(source: InteractionSource, track: Track, signedIn: Bo
     fun request(load: suspend () -> Unit) {
         if (!sending && pendingLikes.isEmpty()) scope.launch { if (!sending && pendingLikes.isEmpty()) load() }
     }
-    LaunchedEffect(pages) { pages.refresh() }
+    if (sharedPages == null) LaunchedEffect(pages) { pages.refresh() }
     Column(modifier.fillMaxWidth()) {
         if (capabilities?.comments == false) {
             EmptyMessage(mb("此音源不支持评论", "Comments are not available for this source"))
             return@Column
         }
-        Text(mb("评论 · ${page.total}", "Comments · ${page.total}"), Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.titleLarge)
+        if (sharedPages == null) Text(mb("评论 · ${page.total}", "Comments · ${page.total}"),
+            Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.titleLarge)
         val likeActionFailed = mb("评论点赞失败", "Could not change comment like")
         val listModifier = if (maxHeight == null) Modifier.weight(1f) else Modifier.heightIn(max = maxHeight)
         val refreshing = state.loading && !state.appending && page.comments.isNotEmpty()
