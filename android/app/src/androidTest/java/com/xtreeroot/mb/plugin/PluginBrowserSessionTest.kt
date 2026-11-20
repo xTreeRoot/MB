@@ -5,10 +5,15 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.webkit.CookieManager
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.xtreeroot.mb.MainActivity
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
@@ -41,12 +46,14 @@ class PluginBrowserSessionTest {
         fun shell(command: String): String = automation.executeShellCommand(command)
             .let { ParcelFileDescriptor.AutoCloseInputStream(it).bufferedReader().use { it.readText().trim() } }
         fun processId(): String = shell("pidof ${context.packageName}:plugin_browser")
-        suspend fun open(inline: Boolean = false): File {
+        suspend fun open(completeWithCookie: Boolean = false): File {
             val previous = profiles().toSet()
             val title = "Compatibility fixture"
             val id = UUID.randomUUID()
-            val request = if (inline) PluginWebSignIn(title, target, target, setOf("session"), null, id,
-                html = """<script>setTimeout(() => { document.cookie = 'session=fixture; Secure; Path=/'; }, 1500);</script>""") else null
+            val html = if (completeWithCookie) {
+                """<script>setTimeout(() => { document.cookie = 'session=fixture; Secure; Path=/'; }, 1500);</script>"""
+            } else "<p>Waiting for cancel</p>"
+            val request = PluginWebSignIn(title, target, target, setOf("session"), null, id, html = html)
             val page = PluginBrowserPage(title, target, id, request)
             context.startActivity(CompatPluginBrowserActivity.intent(context, page, english = true, dark = false)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -67,12 +74,66 @@ class PluginBrowserSessionTest {
             val first = open()
             File(first, "fixture").writeText("Disposable test data")
             close()
-            val second = open(inline = true)
+            val second = open(completeWithCookie = true)
             assertTrue(first != second)
             assertTrue(!first.exists())
             waitFor { processId().isEmpty() }
         } finally {
             if (processId().isNotEmpty()) shell("input keyevent KEYCODE_BACK")
+        }
+    }
+
+    @Test fun compatibilityBrowserReturnsNavigationFailureToItsCaller() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
+        val target = unavailableAddress()
+        val request = PluginWebSignIn("Fixture", target, target, setOf("session"), null)
+        val page = PluginBrowserPage(request.title, target, request.id, request)
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        try {
+            withTimeout(10_000) {
+                withContext(Dispatchers.Main) {
+                    val result = CompletableDeferred<ActivityResult>()
+                    val launcher = activity.activityResultRegistry.register("browser-failure-fixture",
+                        ActivityResultContracts.StartActivityForResult()) { result.complete(it) }
+                    try {
+                        launcher.launch(CompatPluginBrowserActivity.intent(context, page, english = true, dark = false))
+                        val failure = result.await()
+                        assertEquals(CompatPluginBrowserActivity.failed, failure.resultCode)
+                        assertEquals(PluginBrowserIssue.Navigation.name,
+                            failure.data?.getStringExtra(CompatPluginBrowserActivity.issueKey))
+                    } finally { launcher.unregister() }
+                }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test fun profileBrowserReportsFailedMainPageButIgnoresFailedImages() = runBlocking {
+        val target = unavailableAddress()
+        withTimeout(10_000) {
+            withContext(Dispatchers.Main) {
+                assumeTrue(PluginBrowserSession.available())
+                assumeTrue(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
+                assumeTrue(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT))
+                val context = InstrumentationRegistry.getInstrumentation().targetContext
+                val issues = Channel<PluginBrowserIssue>(Channel.UNLIMITED)
+                val inline = PluginWebSignIn("Fixture", target, target, setOf("session"), null, html = """
+                    <img src="/missing-image" onerror="window.webkit.messageHandlers.mbSignIn.postMessage({error:'image unavailable'})">
+                """.trimIndent())
+                val messages = Channel<String>(Channel.UNLIMITED)
+                val browser = PluginBrowserSession.create(context, onFailure = { issues.trySend(it) })
+                try {
+                    browser.open(PluginBrowserPage(inline.title, target, inline.id, inline)) { messages.trySend(it) }
+                    assertEquals("image unavailable", messages.receive())
+                    assertTrue(issues.tryReceive().isFailure)
+                    val remote = PluginWebSignIn("Fixture", target, target, setOf("session"), null)
+                    browser.open(PluginBrowserPage(remote.title, target, remote.id, remote)) { messages.trySend(it) }
+                    assertEquals(PluginBrowserIssue.Navigation, issues.receive())
+                } finally { browser.clear() }
+            }
         }
     }
 
@@ -138,6 +199,10 @@ class PluginBrowserSessionTest {
                 } finally { browser.clear() }
             }
         }
+    }
+
+    private fun unavailableAddress(): URI = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { socket ->
+        URI("https://127.0.0.1:${socket.localPort}/login")
     }
 
     private suspend fun CookieManager.store(address: String, cookie: String) {

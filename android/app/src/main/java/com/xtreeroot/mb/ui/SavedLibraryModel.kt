@@ -64,6 +64,7 @@ internal class SavedLibraryModel(application: Application) : AndroidViewModel(ap
     fun add(id: String, tracks: List<String>) = runIO { playlistStore.add(id, tracks) }
     fun remove(id: String, track: String) = runIO { playlistStore.remove(id, track) }
     fun move(id: String, track: String, step: Int, available: Set<String>) = runIO { playlistStore.move(id, track, step, available) }
+    fun reorder(id: String, from: Int, to: Int, visible: List<String>) = runIO { playlistStore.reorder(id, from, to, visible) }
 
     suspend fun exportName(track: Track): String = withContext(Dispatchers.IO) {
         val extension = if (track.sourceId == localSourceId) {

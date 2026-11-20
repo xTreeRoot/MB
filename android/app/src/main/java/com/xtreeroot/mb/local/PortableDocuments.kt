@@ -11,6 +11,13 @@ internal data class PortableDocument(val name: String, val uri: Uri, val size: L
 internal class PortableDocuments(private val resolver: ContentResolver, private val tree: Uri) {
     private val rootId = DocumentsContract.getTreeDocumentId(tree)
 
+    fun folderName(): String? = runCatching {
+        resolver.query(DocumentsContract.buildDocumentUriUsingTree(tree, rootId),
+            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0)?.trim()?.takeIf(String::isNotEmpty) else null
+        }
+    }.getOrNull()
+
     fun library(create: Boolean): PortableDirectory? {
         val candidates = children(rootId).filter { it.name == directoryName }
         if (candidates.size > 1) throw PortableFailure(PortableProblem.DuplicateFiles, directoryName)

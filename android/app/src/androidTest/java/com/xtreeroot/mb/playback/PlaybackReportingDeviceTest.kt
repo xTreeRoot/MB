@@ -22,6 +22,7 @@ import android.provider.MediaStore
 import android.service.media.MediaBrowserService as PlatformMediaBrowserService
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -36,6 +37,7 @@ import coil.ImageLoader
 import coil.imageLoader
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.MainActivity
+import com.xtreeroot.mb.local.LocalPlaylistStore
 import com.xtreeroot.mb.local.PortableAsset
 import com.xtreeroot.mb.local.PortableImport
 import com.xtreeroot.mb.music.PlaybackIssue
@@ -632,6 +634,59 @@ class PlaybackReportingDeviceTest {
         }
     }
 
+    @Test fun playerAnnouncesTheSelectedModeWithoutChangingTheCurrentSong() = runBlocking {
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            try {
+                withContext(Dispatchers.Main) {
+                    player.repeatMode = Player.REPEAT_MODE_OFF
+                    player.shuffleModeEnabled = false
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 8_000)
+                    player.prepare()
+                }
+                eventually { player.playbackState == Player.STATE_READY && !player.isPlaying }
+                automation.press(automation.queueNode("First"))
+                automation.press(automation.queueNode("顺序", "In Order"))
+                automation.queueNode("已切换为随机播放", "Switched to shuffle")
+                eventually { player.shuffleModeEnabled }
+                automation.press(automation.queueNode("不循环", "Repeat Off"))
+                automation.queueNode("已切换为列表循环", "Switched to repeat all")
+                eventually { player.repeatMode == Player.REPEAT_MODE_ALL }
+                automation.press(automation.queueNode("循环", "Repeat All"))
+                val one = setOf("已切换为单曲循环", "Switched to repeat one")
+                val notice = automation.queueNode(*one.toTypedArray())
+                assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, notice.liveRegion)
+                if (InstrumentationRegistry.getArguments().getString("playbackModeScreenshot") == "true") {
+                    val screenshot = checkNotNull(automation.takeScreenshot())
+                    try {
+                        File(app.cacheDir, "android-player-mode-notice.png").outputStream().use {
+                            screenshot.compress(Bitmap.CompressFormat.PNG, 100, it)
+                        }
+                    } finally { screenshot.recycle() }
+                }
+                eventually { player.repeatMode == Player.REPEAT_MODE_ONE }
+                assertNull(automation.findQueueNode(setOf("已切换为列表循环", "Switched to repeat all")))
+                withTimeout(5_000) { while (automation.findQueueNode(one) != null) delay(50) }
+
+                automation.press(automation.queueNode("单曲", "Repeat One"))
+                automation.queueNode("已关闭循环", "Repeat turned off")
+                eventually { player.repeatMode == Player.REPEAT_MODE_OFF && player.shuffleModeEnabled }
+                automation.press(automation.queueNode("随机", "Shuffle"))
+                automation.queueNode("已切换为顺序播放", "Switched to sequential playback")
+                eventually { !player.shuffleModeEnabled }
+                withContext(Dispatchers.Main) {
+                    assertEquals(listOf(first.id, second.id), player.queueIds())
+                    assertEquals(first.id, player.currentMediaItem?.mediaId)
+                    assertEquals(8_000L, player.currentPosition)
+                    assertTrue(!player.playWhenReady)
+                }
+            } finally { withContext(Dispatchers.Main) { activity.finish() } }
+        }
+    }
+
     @Test fun mediaSessionSkipsByFifteenSecondsWithoutResumingPausedAudio() = runBlocking {
         withFixture { player ->
             withContext(Dispatchers.Main) {
@@ -647,6 +702,71 @@ class PlaybackReportingDeviceTest {
             eventually { player.currentPosition == 5_000L && !player.playWhenReady }
             withContext(Dispatchers.Main) { player.seekForward() }
             eventually { player.currentPosition == 20_000L && !player.playWhenReady }
+        }
+    }
+
+    @Test fun draggingLocalPlaylistRowsPersistsOrderAndCancellationDoesNot() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val automation = instrumentation.uiAutomation
+        val tracks = mutableListOf<Track>()
+        var playlist: String? = null
+        var activity: MainActivity? = null
+        try {
+            for (title in listOf("Sort First", "Sort Middle", "Sort Last")) {
+                val wav = app.local.catalog.temporaryFile()
+                val audio = wave(2).also { UUID.randomUUID().toString().encodeToByteArray().copyInto(it, 128) }
+                val id = MessageDigest.getInstance("SHA-256").digest(audio).toHexString()
+                wav.writeBytes(audio)
+                val asset = PortableAsset("mb-import-$id.audio", audio.size.toLong(), id)
+                try { tracks.add(app.local.restoreImport(wav, PortableImport(id, title, asset, "", false, 0)).track) }
+                finally { wav.delete() }
+            }
+            val original = tracks.map(Track::id)
+            val missing = "bilibili:unavailable-fixture"
+            val initialOrder = listOf(original[0], missing, original[1], original[2])
+            val name = "MB Playlist Sorting Fixture"
+            val id = app.playlists.create(name, initialOrder)
+            playlist = id
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            suspend fun open(vararg labels: String) {
+                val button = generateSequence(automation.queueNode(*labels)) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }
+                assertEquals("Expected to open ${labels.joinToString()}", true, button?.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            }
+            open("资料库", "Library")
+            open("本地歌单", "Local Playlists")
+            open(name)
+            automation.press(automation.queueNode("排序", "Sort"))
+            automation.waitForIdle(250, 5_000)
+            val start = automation.queueNode("调整 Sort First 顺序", "Reorder Sort First")
+            val end = automation.queueNode("调整 Sort Last 顺序", "Reorder Sort Last")
+            val startingBounds = start.screenBounds()
+            val endingBounds = end.screenBounds()
+            automation.drag(start, end, cancel = true)
+            automation.waitForIdle(250, 5_000)
+            assertEquals(initialOrder, app.playlists.playlists.value.single { it.id == id }.trackIds)
+            suspend fun restoredHandle(bounds: Rect, vararg labels: String): AccessibilityNodeInfo = withTimeout(5_000) {
+                var handle = automation.queueNode(*labels)
+                while (handle.screenBounds() != bounds) { delay(50); handle = automation.queueNode(*labels) }
+                handle
+            }
+            val restoredStart = restoredHandle(startingBounds, "调整 Sort First 顺序", "Reorder Sort First")
+            val restoredEnd = restoredHandle(endingBounds, "调整 Sort Last 顺序", "Reorder Sort Last")
+            automation.drag(restoredStart, restoredEnd)
+            val expected = listOf(original[1], missing, original[2], original[0])
+            try { eventually { app.playlists.playlists.value.single { it.id == id }.trackIds == expected } }
+            catch (failure: TimeoutCancellationException) {
+                val actual = app.playlists.playlists.value.single { it.id == id }.trackIds
+                throw AssertionError("Playlist drop should move First below Last (start=${restoredStart.screenBounds()}, " +
+                    "end=${restoredEnd.screenBounds()}), order=${actual.map(initialOrder::indexOf)}", failure)
+            }
+            automation.press(automation.queueNode("完成排序", "Done Sorting"))
+            val saved = LocalPlaylistStore(File(app.filesDir, "local-playlists.json")).apply { refresh() }
+            assertEquals(expected, saved.playlists.value.single { it.id == id }.trackIds)
+        } finally {
+            withContext(Dispatchers.Main) { activity?.finish() }
+            playlist?.let(app.playlists::delete)
+            tracks.forEach { app.local.delete(it.sourceTrackId) }
         }
     }
 

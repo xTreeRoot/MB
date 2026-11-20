@@ -9,20 +9,19 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,16 +31,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -54,35 +49,34 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AccountView(model: AccountModel, open: (LibraryRoute) -> Unit) {
     val state by model.account.collectAsStateWithLifecycle()
     var signOut by rememberSaveable { mutableStateOf(false) }
     val current = state.account
     val refreshing = state.loading && !state.signingIn && current != null
-    PullToRefreshBox(isRefreshing = refreshing, onRefresh = { if (!state.loading) model.refresh() }, modifier = Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(mb("哔哩哔哩", "Bilibili"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            if (current != null) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AsyncImage(current.avatarUrl, contentDescription = null, modifier = Modifier.size(48.dp).clip(CircleShape),
-                        contentScale = ContentScale.Crop)
-                    Text(current.name, style = MaterialTheme.typography.titleMedium)
-                }
-                listOf(LibraryRoute.Favorites, LibraryRoute.Liked, LibraryRoute.History, LibraryRoute.Following).forEach { route ->
-                    TextButton(onClick = { open(route) }) { Text(route.title()) }
-                }
-                TextButton(onClick = { signOut = true }, enabled = !state.loading) { Text(mb("退出登录", "Sign Out")) }
-            } else {
-                Text(mb("未登录", "Not Signed In"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = model::signIn, enabled = state.canSignIn && !state.loading) { Text(mb("扫码登录", "QR Sign In")) }
+    RefreshableList(refreshing = refreshing, refresh = { if (!state.loading) model.refresh() }) {
+        item {
+            AccountHeader(mb("哔哩哔哩", "Bilibili"), current, state.loading,
+                mb("扫码登录", "QR Sign In").takeIf { state.canSignIn }, model::signIn)
+        }
+        if (current != null) {
+            item {
+                AccountDestinations(listOf(LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
+                    LibraryRoute.Liked to Icons.Default.Favorite, LibraryRoute.History to Icons.Default.PlayArrow,
+                    LibraryRoute.Following to Icons.Default.Person).map { (route, icon) ->
+                    AccountDestination(route.title(), icon) { open(route) }
+                })
             }
-            if (!state.signingIn) {
-                if (state.loading && !refreshing) Loading()
-                state.error?.let { Retry(it, model::refresh) }
+            item {
+                TextButton(onClick = { signOut = true }, enabled = !state.loading, modifier = Modifier.padding(horizontal = 20.dp)) {
+                    Text(mb("退出登录", "Sign Out"), color = if (state.loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+                }
             }
+        }
+        if (!state.signingIn) {
+            if (state.loading && !refreshing) item { Loading() }
+            state.error?.let { message -> item { Retry(message, model::refresh) } }
         }
     }
     if (state.signingIn) SignInDialog(state, model, builtIn = true)

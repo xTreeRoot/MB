@@ -126,7 +126,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
 
 @Composable
 internal fun PluginBrowserPanel(page: PluginBrowserPage, closeLabel: String, close: () -> Unit,
-                                create: ((Context, String?, () -> Unit, (String) -> Unit) -> PluginBrowserSession)?,
+                                create: ((Context, String?, (PluginBrowserIssue) -> Unit, (String) -> Unit) -> PluginBrowserSession)?,
                                 onFailure: (PluginBrowserIssue) -> Unit, onCookies: (String) -> Unit,
                                 initialIssue: PluginBrowserIssue? = null, onReleased: () -> Unit = {},
                                 onDocumentError: (String) -> Unit = {}) {
@@ -167,10 +167,11 @@ internal fun PluginBrowserPanel(page: PluginBrowserPage, closeLabel: String, clo
         if (create != null && !blocked) AndroidView(factory = { context ->
             FrameLayout(context).apply {
                 try {
-                    session = create(context, page.signIn?.userAgent, { problem = PluginBrowserIssue.Renderer }, { authority = it }).also { browser ->
+                    session = create(context, page.signIn?.userAgent, { if (problem == null && documentError == null) problem = it },
+                        { authority = it }).also { browser ->
                         tag = browser
                         addView(browser.view, MATCH_PARENT, MATCH_PARENT)
-                        browser.open(page) { if (documentError == null) documentError = it }
+                        browser.open(page) { if (documentError == null && problem == null) documentError = it }
                     }
                 } catch (failure: Exception) {
                     Log.w(pluginBrowserLogTag, "browser startup: ${failure.javaClass.simpleName}")
@@ -191,10 +192,12 @@ private fun PluginBrowserIssue.text(english: Boolean): String = if (english) whe
     PluginBrowserIssue.MissingProvider -> "No usable WebView. Enable the system WebView provider in Android settings."
     PluginBrowserIssue.UnsupportedProvider -> "This WebView cannot isolate sign-in. Update the active WebView provider or Android."
     PluginBrowserIssue.Startup -> "Could not start the isolated WebView. Reopen MB and retry."
+    PluginBrowserIssue.Navigation -> "Could not load the page. Check your connection and try again."
     PluginBrowserIssue.Renderer -> "The isolated WebView stopped responding. Close this page and retry."
 } else when (this) {
     PluginBrowserIssue.MissingProvider -> "没有可用的 WebView，请在系统设置中启用 WebView 提供程序。"
     PluginBrowserIssue.UnsupportedProvider -> "当前 WebView 不支持隔离登录，请更新系统正在使用的 WebView 或 Android。"
     PluginBrowserIssue.Startup -> "隔离 WebView 启动失败，请重新打开 MB 后重试。"
+    PluginBrowserIssue.Navigation -> "网页无法加载，请检查网络后重试。"
     PluginBrowserIssue.Renderer -> "隔离 WebView 已退出，请关闭页面后重试。"
 }

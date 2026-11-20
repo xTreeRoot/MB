@@ -29,6 +29,18 @@ class LocalPlaylistStoreTest {
     }
 
     @Test
+    fun movingAcrossSeveralRowsKeepsUnavailableTracksAndRejectsStaleOrder() {
+        val file = folder.root.resolve("playlists.json")
+        val store = LocalPlaylistStore(file)
+        val visible = listOf("local:first", "local:second", "local:last")
+        val id = store.create("测试", listOf(visible[0], "bilibili:missing", visible[1], visible[2]))
+        store.reorder(id, 0, 2, visible)
+        assertThrows(IOException::class.java) { store.reorder(id, 0, 1, visible) }
+        val reloaded = LocalPlaylistStore(file).apply { refresh() }
+        assertEquals(listOf(visible[1], "bilibili:missing", visible[2], visible[0]), reloaded.playlists.value.single().trackIds)
+    }
+
+    @Test
     fun invalidEditDoesNotChangePlaylist() {
         val store = LocalPlaylistStore(folder.root.resolve("playlists.json"))
         assertThrows(IOException::class.java) { store.create(" ") }

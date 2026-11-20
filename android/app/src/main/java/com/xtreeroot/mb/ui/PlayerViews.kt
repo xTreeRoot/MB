@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,8 +67,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -88,6 +91,7 @@ import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.preferences.AppPreferences
 import com.xtreeroot.mb.preferences.LyricStyle
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 @Composable
 private fun PlaybackState.failureMessage(): String? =
@@ -146,6 +150,13 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
     val supportsVideo = state.videoAvailable
     var showingCaptions by rememberSaveable { mutableStateOf(preferences.lyricsStage) }
     var widePage by rememberSaveable { mutableStateOf(WidePlayerPage.Lyrics) }
+    var modeNotice by remember { mutableStateOf<PlayerModeNotice?>(null) }
+    LaunchedEffect(modeNotice) {
+        if (modeNotice != null) {
+            delay(2_000)
+            modeNotice = null
+        }
+    }
     val window = LocalWindowInfo.current.containerSize
     val windowWidth = with(LocalDensity.current) { window.width.toDp() }
     val wide = window.width > window.height && windowWidth >= 600.dp
@@ -296,7 +307,9 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         PlayerModeControl(if (state.shuffle) mb("随机", "Shuffle") else mb("顺序", "In Order"),
-                            R.drawable.ic_shuffle, state.shuffle, state.connected, model::shuffle, Modifier.weight(1f))
+                            R.drawable.ic_shuffle, state.shuffle, state.connected, onClick = {
+                                model.shuffle()?.let { modeNotice = PlayerModeNotice.Shuffle(it, state.repeatMode) }
+                            }, Modifier.weight(1f))
                         IconButton(onClick = model::previous) {
                             Icon(painterResource(R.drawable.ic_media_previous), mb("上一首", "Previous"))
                         }
@@ -310,7 +323,9 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                             else -> mb("不循环", "Repeat Off")
                         }
                         PlayerModeControl(repeat, if (state.repeatMode == Player.REPEAT_MODE_ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat,
-                            state.repeatMode != Player.REPEAT_MODE_OFF, state.connected, model::repeat, Modifier.weight(1f))
+                            state.repeatMode != Player.REPEAT_MODE_OFF, state.connected, onClick = {
+                                model.repeat()?.let { modeNotice = PlayerModeNotice.Repeat(it) }
+                            }, Modifier.weight(1f))
                     }
                     PlayerInteractionBar(track, signedIn, showCommentsButton = !wide)
                 }
@@ -340,10 +355,39 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                         controls(Modifier.fillMaxWidth())
                     }
                 }
+                modeNotice?.let { notice ->
+                    PlaybackModePill(notice, Modifier.align(Alignment.TopCenter).padding(horizontal = 20.dp, vertical = 8.dp))
+                }
             }
         }
     }
     if (openComments && interaction != null) CommentsSheet(interaction, track, signedIn) { openComments = false }
+}
+
+private sealed interface PlayerModeNotice {
+    class Shuffle(val enabled: Boolean, val repeatMode: Int) : PlayerModeNotice
+    class Repeat(val mode: Int) : PlayerModeNotice
+}
+
+@Composable
+private fun PlaybackModePill(notice: PlayerModeNotice, modifier: Modifier) {
+    val text = when (notice) {
+        is PlayerModeNotice.Shuffle -> if (notice.enabled) mb("已切换为随机播放", "Switched to shuffle")
+            else repeatModeNotice(notice.repeatMode, mb("已切换为顺序播放", "Switched to sequential playback"))
+        is PlayerModeNotice.Repeat -> repeatModeNotice(notice.mode, mb("已关闭循环", "Repeat turned off"))
+    }
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(22.dp)
+    Text(text, modifier.background(colors.surfaceContainerHighest, shape).border(0.5.dp, colors.outlineVariant, shape)
+        .padding(horizontal = 16.dp, vertical = 8.dp).semantics { liveRegion = LiveRegionMode.Polite },
+        color = colors.onSurface, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+}
+
+@Composable
+private fun repeatModeNotice(mode: Int, off: String): String = when (mode) {
+    Player.REPEAT_MODE_ALL -> mb("已切换为列表循环", "Switched to repeat all")
+    Player.REPEAT_MODE_ONE -> mb("已切换为单曲循环", "Switched to repeat one")
+    else -> off
 }
 
 @Composable

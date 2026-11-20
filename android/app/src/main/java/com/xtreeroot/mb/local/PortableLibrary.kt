@@ -38,7 +38,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 
 internal data class PortableStatus(val linked: Boolean = false, val busy: Boolean = false,
-                                   val savedAt: Long = 0, val error: PortableFailure? = null)
+                                   val savedAt: Long = 0, val error: PortableFailure? = null, val folderName: String? = null)
 
 @OptIn(FlowPreview::class)
 internal class PortableLibrary(private val context: Context, private val local: LocalAudioSource,
@@ -53,7 +53,8 @@ internal class PortableLibrary(private val context: Context, private val local: 
     private val operations = Mutex()
     private var measuredBackground: Pair<Long, PortableAsset>? = null
     private fun linkedTree(): Uri? = preferences.getString("tree", null)?.let(Uri::parse)
-    private val state = MutableStateFlow(PortableStatus(linkedTree() != null, savedAt = preferences.getLong("savedAt", 0)))
+    private val state = MutableStateFlow(PortableStatus(linkedTree() != null, savedAt = preferences.getLong("savedAt", 0),
+        folderName = preferences.getString("folderName", null)))
     private val changes = MutableStateFlow(0L)
     private val restored = MutableStateFlow<QueueSnapshot?>(null)
     val status = state.asStateFlow()
@@ -81,11 +82,17 @@ internal class PortableLibrary(private val context: Context, private val local: 
                 val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 resolver.takePersistableUriPermission(tree, flags)
                 try {
-                    val directory = PortableDocuments(resolver, tree).library(create = true) ?: throw PortableFailure(PortableProblem.Write)
+                    val documents = PortableDocuments(resolver, tree)
+                    val directory = documents.library(create = true) ?: throw PortableFailure(PortableProblem.Write)
                     latest(directory)?.manifest?.let { restore(directory, it) }
                     val stamp = save(directory, verifyAssets = true)
-                    preferences.edit(commit = true) { putString("tree", tree.toString()); putLong("savedAt", stamp) }
-                    state.value = PortableStatus(true, savedAt = stamp)
+                    val folder = documents.folderName()
+                    preferences.edit(commit = true) {
+                        putString("tree", tree.toString())
+                        putString("folderName", folder)
+                        putLong("savedAt", stamp)
+                    }
+                    state.value = PortableStatus(true, savedAt = stamp, folderName = folder)
                 } catch (failure: Exception) {
                     if (previous != tree) runCatching { resolver.releasePersistableUriPermission(tree, flags) }
                     throw failure
@@ -116,10 +123,12 @@ internal class PortableLibrary(private val context: Context, private val local: 
 
     private suspend fun checkpoint(tree: Uri, verifyAssets: Boolean = false) {
         if (tree != linkedTree()) return
-        val directory = PortableDocuments(resolver, tree).library(create = false) ?: throw PortableFailure(PortableProblem.FolderMissing)
+        val documents = PortableDocuments(resolver, tree)
+        val directory = documents.library(create = false) ?: throw PortableFailure(PortableProblem.FolderMissing)
         val stamp = save(directory, verifyAssets)
-        preferences.edit { putLong("savedAt", stamp) }
-        state.value = PortableStatus(true, savedAt = stamp)
+        val folder = state.value.folderName ?: documents.folderName()
+        preferences.edit { putLong("savedAt", stamp); putString("folderName", folder) }
+        state.value = PortableStatus(true, savedAt = stamp, folderName = folder)
     }
 
     private data class Checkpoint(val doc: PortableDocument, val manifest: PortableManifest) {

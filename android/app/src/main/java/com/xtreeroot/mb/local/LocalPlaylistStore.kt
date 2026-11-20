@@ -71,6 +71,15 @@ internal class LocalPlaylistStore(private val file: File) {
         })
     }
 
+    @Synchronized
+    fun reorder(id: String, from: Int, to: Int, visible: List<String>) = edit(id) { playlist ->
+        require(from in visible.indices && to in visible.indices)
+        val visibleIds = visible.toSet()
+        if (playlist.trackIds.filter { it in visibleIds } != visible) throw IOException("曲目位置已变化，请重试")
+        val order = visible.toMutableList().apply { add(to, removeAt(from)) }.iterator()
+        playlist.copy(trackIds = playlist.trackIds.map { if (it in visibleIds) order.next() else it })
+    }
+
     private fun checkedName(name: String): String = name.trim().takeUnless(String::isEmpty) ?: throw IOException("请输入歌单名称")
 
     private fun edit(id: String, change: (LocalPlaylist) -> LocalPlaylist) {

@@ -28,7 +28,7 @@ internal data class PluginWebLink(val title: String, val url: URI, val id: UUID 
 
 internal const val pluginBrowserLogTag = "MBPluginBrowser"
 
-internal enum class PluginBrowserIssue { MissingProvider, UnsupportedProvider, Startup, Renderer }
+internal enum class PluginBrowserIssue { MissingProvider, UnsupportedProvider, Startup, Navigation, Renderer }
 
 @MainThread
 @SuppressLint("RequiresFeature")
@@ -92,7 +92,7 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
         fun available(): Boolean = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE) &&
             WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)
 
-        fun create(context: Context, userAgent: String? = null, rendererGone: () -> Unit = {},
+        fun create(context: Context, userAgent: String? = null, onFailure: (PluginBrowserIssue) -> Unit = {},
                    onPage: (String) -> Unit = {}): PluginBrowserSession {
             if (!available()) throw PluginException("Isolated browsing requires a newer Android System WebView")
             if (!removedStaleProfiles) {
@@ -102,7 +102,7 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
                 }
                 removedStaleProfiles = true
             }
-            return create(context, userAgent, rendererGone, onPage) { view ->
+            return create(context, userAgent, onFailure, onPage) { view ->
                 WebViewCompat.setProfile(view, prefix + UUID.randomUUID())
                 val profile = WebViewCompat.getProfile(view)
                 PluginBrowserSession(view, profile.cookieManager) { cleared ->
@@ -111,10 +111,10 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
             }
         }
 
-        fun createInDisposableProcess(context: Context, userAgent: String?, rendererGone: () -> Unit,
+        fun createInDisposableProcess(context: Context, userAgent: String?, onFailure: (PluginBrowserIssue) -> Unit,
                                       onPage: (String) -> Unit): PluginBrowserSession {
             check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isPluginBrowserProcess(context.packageName))
-            return create(context, userAgent, rendererGone, onPage) { view ->
+            return create(context, userAgent, onFailure, onPage) { view ->
                 val manager = CookieManager.getInstance()
                 PluginBrowserSession(view, manager) { cleared ->
                     WebStorage.getInstance().deleteAllData()
@@ -124,7 +124,7 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
         }
 
         @SuppressLint("SetJavaScriptEnabled")
-        private fun create(context: Context, userAgent: String?, rendererGone: () -> Unit, onPage: (String) -> Unit,
+        private fun create(context: Context, userAgent: String?, onFailure: (PluginBrowserIssue) -> Unit, onPage: (String) -> Unit,
                            bind: (WebView) -> PluginBrowserSession): PluginBrowserSession {
             val view = WebView(context)
             try {
@@ -150,13 +150,15 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
                         !navigation.url.scheme.equals("https", true) || navigation.url.host.isNullOrBlank() || navigation.url.userInfo != null
 
                     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                        if (request.isForMainFrame) Log.w(pluginBrowserLogTag, "main frame error=${error.errorCode}")
+                        if (!request.isForMainFrame || session.closed || session.rendererExited) return
+                        Log.w(pluginBrowserLogTag, "main frame error=${error.errorCode}")
+                        onFailure(PluginBrowserIssue.Navigation)
                     }
 
                     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                         Log.w(pluginBrowserLogTag, "renderer exited crashed=${detail.didCrash()}")
                         session.rendererExited = true
-                        rendererGone()
+                        if (!session.closed) onFailure(PluginBrowserIssue.Renderer)
                         return true
                     }
                 }

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,23 +15,30 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,7 +51,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -124,13 +141,16 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     val portable by saved.portable.status.collectAsStateWithLifecycle()
     val offline by saved.offline.collectAsStateWithLifecycle()
     val activity by saved.activity.collectAsStateWithLifecycle()
+    val playlists by saved.playlists.collectAsStateWithLifecycle()
     var category by rememberSaveable { mutableStateOf(Category.Songs) }
     var query by rememberSaveable { mutableStateOf("") }
     var collectionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var collectionCategory by rememberSaveable { mutableStateOf<Category?>(null) }
     var collectionQuery by rememberSaveable { mutableStateOf("") }
     var editingLyrics by rememberSaveable { mutableStateOf<String?>(null) }
     var deleting by rememberSaveable { mutableStateOf<String?>(null) }
     var page by rememberSaveable { mutableStateOf<LibraryPage?>(null) }
+    var searchPlaylist by rememberSaveable { mutableStateOf<String?>(null) }
     var importMenu by remember { mutableStateOf(false) }
     val importAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), model::import)
     val importFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree(), model::importFolder)
@@ -143,33 +163,41 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
     val index = remember(state.value, offline.downloads, locale) { LocalMusicIndex(state.value, offline.downloads.map { it.track }, locale) }
     val imports = remember(state.value) { state.value.mapTo(mutableSetOf()) { it.track.id } }
-    fun closeCollection() { collectionId = null; collectionQuery = "" }
-    BackHandler(page != null || collectionId != null) { if (page != null) page = null else closeCollection() }
+    fun openCollection(kind: Category, id: String) { collectionCategory = kind; collectionId = id }
+    fun closeCollection() { collectionId = null; collectionCategory = null; collectionQuery = "" }
+    fun closePage() { page = null; searchPlaylist = null }
+    BackHandler(page != null || collectionId != null) { if (page != null) closePage() else closeCollection() }
     when (page) {
         LibraryPage.Downloads -> { DownloadsPage(saved, play) { page = null }; return }
-        LibraryPage.Playlists -> { PlaylistsPage(saved, index, play, playGroup) { page = null }; return }
+        LibraryPage.Playlists -> { PlaylistsPage(saved, index, play, playGroup, searchPlaylist, ::closePage); return }
         LibraryPage.DataLocation -> { DataLocationPage(saved.portable) { page = null }; return }
         null -> Unit
     }
-    val collections = when (category) {
+    val searching = collectionId == null && query.isNotBlank()
+    val activeCategory = collectionCategory ?: category
+    val collections = when (activeCategory) {
         Category.Albums -> index.albums
         Category.Artists -> index.artists
         else -> null
     }
     val collection = collections?.firstOrNull { it.id == collectionId }
-    val entries = when (category) {
+    val entries = if (searching) index.songs else when (activeCategory) {
         Category.Albums, Category.Artists -> collection?.tracks.orEmpty()
         Category.Recent -> index.songs.filter { (activity[it.id]?.playedAt ?: 0) > 0 }.sortedByDescending { activity[it.id]?.playedAt }.take(100)
         Category.Favorites -> index.songs.filter { (activity[it.id]?.likedAt ?: 0) > 0 }.sortedByDescending { activity[it.id]?.likedAt }
         Category.Songs -> index.songs
     }
     val matching = index.filter(entries, if (collectionId == null) query else collectionQuery)
-    val listState = key(category, collectionId) { rememberLazyListState() }
+    val matchedAlbums = if (searching) index.albums.filter { matchesLocalMusic(it.title, query) } else emptyList()
+    val matchedArtists = if (searching) index.artists.filter { matchesLocalMusic(it.title, query) } else emptyList()
+    val matchedPlaylists = if (searching) playlists.filter { matchesLocalMusic(it.name, query) } else emptyList()
+    val songsById = remember(index) { index.songs.associateBy(Track::id) }
+    val listState = key(activeCategory, collectionId) { rememberLazyListState() }
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
         item(key = "local-controls") {
             Column {
                 if (collectionId != null) {
-                    LibraryPageHeader(collection?.title ?: mb(category.chinese, category.english), back = ::closeCollection)
+                    LibraryPageHeader(collection?.title ?: mb(activeCategory.chinese, activeCategory.english), back = ::closeCollection)
                     LocalMusicSearch(collectionQuery, { collectionQuery = it }, mb("在此页面搜索", "Search This Page"))
                 } else {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -192,7 +220,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
                         TextButton(onClick = { page = LibraryPage.DataLocation }) { Text(mb("数据位置", "Data Location")) }
                     }
                     LocalMusicSearch(query, { query = it }, mb("搜索本地音乐", "Search Local Music"))
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!searching) LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(Category.entries) { item -> FilterChip(item == category, { category = item },
                             label = { Text(mb(item.chinese, item.english)) }) }
                     }
@@ -201,19 +229,15 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
         }
         if (state.loading) item { Loading() }
         state.error?.let { error -> item { Retry(error, model::refresh) } }
-        if (collections != null && collectionId == null) {
-            val visible = collections.filter { matchesLocalMusic(it.title, query) }
-            if (!state.loading && visible.isEmpty()) item { EmptyMessage(mb("没有匹配的分类", "No Matching Collections")) }
-            items(visible, key = { it.id }) { group ->
-                ListItem(headlineContent = { Text(group.title) }, supportingContent = {
-                    val count = localSongCount(group.tracks.size)
-                    Text(listOf(group.artist, count).filter(String::isNotBlank).joinToString(" · "))
-                }, leadingContent = { Artwork(group.artwork, Modifier.size(48.dp)) },
-                    modifier = Modifier.clickable { collectionId = group.id })
+        if (!searching && collections != null && collectionId == null) {
+            if (!state.loading && collections.isEmpty()) item { EmptyMessage(mb("没有匹配的分类", "No Matching Collections")) }
+            items(collections, key = { it.id }) { group ->
+                LocalGroupRow(group.title, group.artist, group.tracks, group.artwork) { openCollection(activeCategory, group.id) }
             }
         } else {
-            if (entries.isNotEmpty()) item { LocalPlaybackButtons(matching, playGroup) }
-            if (!state.loading && matching.isEmpty()) item { EmptyMessage(mb("暂无本地曲目", "No Local Tracks")) }
+            if (searching && matching.isNotEmpty()) item { LibrarySearchHeading(mb("歌曲", "Songs")) }
+            if (if (searching) matching.isNotEmpty() else entries.isNotEmpty()) item { LocalPlaybackButtons(matching, playGroup) }
+            if (!searching && !state.loading && matching.isEmpty()) item { EmptyMessage(mb("暂无本地曲目", "No Local Tracks")) }
             items(matching, key = Track::id) { track ->
                 var menu by remember { mutableStateOf(false) }
                 val trackActions = LocalTrackActions.current
@@ -239,6 +263,24 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
                     }
                 }) { play(matching, track) }
             }
+            if (matchedAlbums.isNotEmpty()) item { LibrarySearchHeading(mb("专辑", "Albums")) }
+            items(matchedAlbums, key = { "album:${it.id}" }) { group ->
+                LocalGroupRow(group.title, group.artist, group.tracks, group.artwork) { openCollection(Category.Albums, group.id) }
+            }
+            if (matchedArtists.isNotEmpty()) item { LibrarySearchHeading(mb("歌手", "Artists")) }
+            items(matchedArtists, key = { "artist:${it.id}" }) { group ->
+                LocalGroupRow(group.title, group.artist, group.tracks, group.artwork) { openCollection(Category.Artists, group.id) }
+            }
+            if (matchedPlaylists.isNotEmpty()) item { LibrarySearchHeading(mb("歌单", "Playlists")) }
+            items(matchedPlaylists, key = { "playlist:${it.id}" }) { playlist ->
+                LocalGroupRow(playlist.name, "", playlist.trackIds.mapNotNull(songsById::get)) {
+                    searchPlaylist = playlist.id
+                    page = LibraryPage.Playlists
+                }
+            }
+            if (searching && !state.loading && matching.isEmpty() && matchedAlbums.isEmpty() && matchedArtists.isEmpty() && matchedPlaylists.isEmpty()) {
+                item { EmptyMessage(mb("没有匹配的本地内容", "No Matching Library Items")) }
+            }
         }
     }
     deleting?.let { id ->
@@ -251,8 +293,42 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
 
 @Composable
 internal fun LocalMusicSearch(query: String, change: (String) -> Unit, label: String) {
+    val colors = MaterialTheme.colorScheme
+    val focus = LocalFocusManager.current
     OutlinedTextField(query, onValueChange = change, singleLine = true,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), placeholder = { Text(label) })
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(14.dp), placeholder = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = if (query.isEmpty()) null else {
+            { IconButton(onClick = { change("") }) { Icon(Icons.Default.Close, mb("清空搜索", "Clear Search")) } }
+        }, colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Color.Transparent,
+            focusedContainerColor = colors.surfaceContainer, unfocusedContainerColor = colors.surfaceContainer),
+        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }))
+}
+
+@Composable
+private fun LibrarySearchHeading(title: String) {
+    Text(title, Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp).semantics { heading() },
+        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+}
+
+@Composable
+internal fun LocalGroupRow(title: String, subtitle: String, tracks: List<Track>, artwork: Track? = tracks.firstOrNull(), open: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)
+        .clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLow).heightIn(min = 64.dp)
+        .clickable(role = Role.Button, onClick = open).padding(horizontal = 8.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Artwork(artwork?.artworkUrl, artwork?.artworkHeaders.orEmpty(), Modifier.size(48.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(listOf(subtitle, localSongCount(tracks.size)).filter(String::isNotBlank).joinToString(" · "),
+                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant)
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+    }
 }
 
 @Composable

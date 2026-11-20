@@ -3,20 +3,28 @@ package com.xtreeroot.mb.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -36,7 +44,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xtreeroot.mb.local.LocalPlaylist
@@ -56,30 +66,54 @@ internal fun DataLocationPage(library: PortableLibrary, back: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize()) {
         item { LibraryPageHeader(mb("数据位置", "Data Location"), back) }
         item {
-            ListItem(headlineContent = {
-                Text(if (status.linked) mb("已连接独立资料库目录", "Backup Folder Connected") else mb("未设置独立资料库目录", "No Backup Folder Selected"))
-            },
-                supportingContent = {
+            val colors = MaterialTheme.colorScheme
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)
+                .clip(RoundedCornerShape(22.dp)).background(colors.surfaceContainerLow).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(colors.primaryContainer),
+                        contentAlignment = Alignment.Center) {
+                        Icon(if (status.linked) Icons.Default.Check else Icons.AutoMirrored.Filled.List, null, tint = colors.onPrimaryContainer)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(if (status.linked) mb("已连接独立资料库目录", "Backup Folder Connected")
+                            else mb("未设置独立资料库目录", "No Backup Folder Selected"),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        if (status.linked) status.folderName?.let {
+                            Text("$it / MB Data", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                        }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (status.savedAt > 0) {
                         val locale = if (LocalMBEnglish.current) Locale.ENGLISH else Locale.SIMPLIFIED_CHINESE
                         val date = DateFormat.getDateTimeInstance(DateFormat.DEFAULT, DateFormat.DEFAULT, locale).format(Date(status.savedAt))
-                        Text(mb("最近备份：$date", "Last backup: $date"))
-                    } else Text(mb("选择‘文档’下的文件夹，MB 会创建 MB Data 子目录。", "Choose a folder in Documents. MB will create an MB Data subfolder."))
-                })
-            Text(mb("歌曲、歌单、歌词、本地喜欢、最近播放、队列、插件安装包、背景图片和非敏感设置会备份。重装后重新选择同一目录，恢复的插件默认停用。登录凭据、插件私有存储和播放缓存不备份。",
-                "The backup keeps songs, playlists, lyrics, local likes, recent plays, your queue, plugin packages, the background image, and non-sensitive settings. After reinstalling, select the same folder to restore them. Restored plugins stay disabled until enabled. Sign-in credentials, private plugin data, and playback cache aren’t backed up."),
-                Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium)
-            FlowRow(Modifier.padding(horizontal = 8.dp)) {
-                TextButton(enabled = !status.busy, onClick = { choose.launch(null) }) {
-                    Text(if (status.linked) mb("更换或恢复目录", "Change or Restore Folder") else mb("选择目录或恢复", "Choose Folder or Restore"))
+                        Text(mb("最近备份：$date", "Last backup: $date"), style = MaterialTheme.typography.labelLarge)
+                    }
+                    Text(if (status.linked) mb("卸载后备份仍在。重装后选回同一个文件夹。", "The backup survives uninstall. Select this same folder after reinstalling.")
+                        else mb("在‘文档’下选择文件夹。MB 会把备份放进其中的 MB Data。", "Choose a folder in Documents. MB keeps the backup in its MB Data subfolder."),
+                        style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                 }
-                if (status.linked) TextButton(enabled = !status.busy, onClick = library::saveNow) { Text(mb("立即备份", "Back Up Now")) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (status.linked) {
+                        Button(enabled = !status.busy, onClick = library::saveNow) { Text(mb("立即备份", "Back Up Now")) }
+                        TextButton(enabled = !status.busy, onClick = { choose.launch(null) }) {
+                            Text(mb("更换或恢复目录", "Change or Restore Folder"))
+                        }
+                    } else Button(enabled = !status.busy, onClick = { choose.launch(null) }) {
+                        Text(mb("选择目录或恢复", "Choose Folder or Restore"))
+                    }
+                }
+                if (status.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                status.error?.let { error ->
+                    val message = mb(error.problem.chinese, error.problem.english)
+                    Text(listOfNotNull(message, error.asset).joinToString("\n"), color = colors.error)
+                }
             }
-            if (status.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            status.error?.let { error ->
-                val message = mb(error.problem.chinese, error.problem.english)
-                Text(listOfNotNull(message, error.asset).joinToString("\n"), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
-            }
+            Text(mb("登录凭据、插件私有数据和播放缓存不备份。恢复的插件需重新启用。",
+                "Sign-in credentials, private plugin data, and playback cache are not backed up. Restored plugins must be enabled again."),
+                Modifier.padding(horizontal = 24.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -143,27 +177,29 @@ internal fun DownloadsPage(saved: SavedLibraryModel, play: (List<Track>, Track) 
 
 @Composable
 internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
-                           play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit, back: () -> Unit) {
+                           play: (List<Track>, Track) -> Unit, playGroup: (List<Track>, Boolean) -> Unit,
+                           initialPlaylistId: String? = null, back: () -> Unit) {
     val playlists by saved.playlists.collectAsStateWithLifecycle()
     val available = remember(library) { library.songs.associateBy(Track::id) }
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable(initialPlaylistId) { mutableStateOf(initialPlaylistId) }
     var create by rememberSaveable { mutableStateOf(false) }
     var rename by rememberSaveable { mutableStateOf(false) }
     var delete by rememberSaveable { mutableStateOf(false) }
     var chooseTracks by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var trackQuery by rememberSaveable(selected) { mutableStateOf("") }
+    var sorting by rememberSaveable(selected) { mutableStateOf(false) }
     val current = playlists.firstOrNull { it.id == selected }
     val actions = LocalTrackActions.current
-    BackHandler(current != null) { selected = null }
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            LibraryPageHeader(current?.name ?: mb("本地歌单", "Local Playlists"), back = { if (current == null) back() else selected = null }) {
-                if (current == null) TextButton(onClick = { create = true }) { Text(mb("新建歌单", "New Playlist")) }
-                else PlaylistMenu(current, { rename = true }, { delete = true })
+    fun closePlaylist() { if (initialPlaylistId == null) selected = null else back() }
+    BackHandler(current != null, onBack = ::closePlaylist)
+    if (current == null) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                LibraryPageHeader(mb("本地歌单", "Local Playlists"), back) {
+                    TextButton(onClick = { create = true }) { Text(mb("新建歌单", "New Playlist")) }
+                }
             }
-        }
-        if (current == null) {
             item {
                 OutlinedTextField(query, { query = it }, singleLine = true, label = { Text(mb("搜索歌单", "Search Playlists")) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
@@ -171,25 +207,38 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
             val matching = playlists.filter { matchesLocalMusic(it.name, query) }
             if (matching.isEmpty()) item { EmptyMessage(mb("没有匹配的歌单", "No Matching Playlists")) }
             items(matching, key = LocalPlaylist::id) { playlist ->
-                ListItem(headlineContent = { Text(playlist.name) },
-                    supportingContent = {
-                        val count = playlist.trackIds.count(available::containsKey)
-                        Text(mb("$count 首", if (count == 1) "1 song" else "$count songs"))
-                    },
-                    modifier = Modifier.clickable { selected = playlist.id })
+                LocalGroupRow(playlist.name, "", playlist.trackIds.mapNotNull(available::get)) { selected = playlist.id }
             }
-        } else {
-            val tracks = current.trackIds.mapNotNull(available::get)
-            val matching = library.filter(tracks, trackQuery)
-            item { LocalMusicSearch(trackQuery, { trackQuery = it }, mb("在此页面搜索", "Search This Page")) }
-            if (tracks.isNotEmpty()) item { LocalPlaybackButtons(matching, playGroup) }
-            item { TextButton(onClick = { chooseTracks = true }) { Text(mb("添加歌曲", "Add Songs")) } }
-            if (tracks.isEmpty()) item { EmptyMessage(mb("歌单暂无歌曲", "This Playlist Is Empty")) }
-            else if (matching.isEmpty()) item { EmptyMessage(mb("没有匹配的歌曲", "No Matching Songs")) }
-            items(matching, key = Track::id) { track ->
-                val index = tracks.indexOf(track)
-                TrackRow(track, actions = {
-                    SavedTrackMenu(track, more = { actions(track) }) { close ->
+        }
+    } else {
+        val tracks = current.trackIds.mapNotNull(available::get)
+        val matching = library.filter(tracks, trackQuery)
+        val canSort = trackQuery.isBlank() && tracks.size > 1
+        val editing = canSort && sorting
+        TrackReorderList(matching, editing, { from, to -> saved.reorder(current.id, from, to, matching.map(Track::id)) },
+            Modifier.fillMaxSize(), header = {
+                Column {
+                    LibraryPageHeader(current.name, back = ::closePlaylist) {
+                        if (canSort) TextButton(onClick = { sorting = !sorting }) {
+                            Text(if (editing) mb("完成排序", "Done Sorting") else mb("排序", "Sort"))
+                        }
+                        PlaylistMenu(current, { rename = true }, { delete = true })
+                    }
+                    LocalMusicSearch(trackQuery, { trackQuery = it; sorting = false }, mb("在此页面搜索", "Search This Page"))
+                    if (tracks.isNotEmpty()) LocalPlaybackButtons(matching, playGroup)
+                    TextButton(onClick = { chooseTracks = true }) { Text(mb("添加歌曲", "Add Songs")) }
+                    if (tracks.isEmpty()) EmptyMessage(mb("歌单暂无歌曲", "This Playlist Is Empty"))
+                    else if (matching.isEmpty()) EmptyMessage(mb("没有匹配的歌曲", "No Matching Songs"))
+                }
+            }) { visibleIndex, placement, lifted, dragging ->
+            val track = matching[visibleIndex]
+            val index = if (trackQuery.isBlank()) visibleIndex else -1
+            val surface = if (lifted) Modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                else Modifier
+            Box(placement.then(surface)) {
+                TrackRow(track, enabled = !editing && !dragging, actions = {
+                    if (lifted) Box(Modifier.size(trackReorderHandleSize), contentAlignment = Alignment.Center) { TrackReorderHandle(null) }
+                    else SavedTrackMenu(track, more = { actions(track) }, reorder = editing, enabled = !dragging) { close ->
                         DropdownMenuItem(text = { Text(mb("上移", "Move Up")) }, enabled = trackQuery.isBlank() && index > 0, onClick = {
                             close(); saved.move(current.id, track.id, -1, available.keys)
                         })
@@ -209,7 +258,7 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
         }
         if (delete) LibraryConfirmation(mb("删除歌单“${current.name}”？", "Delete playlist “${current.name}”?"),
             mb("音频文件会保留在资料库里。", "Audio files will stay in your library."), mb("删除", "Delete"), { delete = false }) {
-            delete = false; selected = null; saved.delete(current)
+            delete = false; saved.delete(current); closePlaylist()
         }
         if (chooseTracks) TrackPicker(available.values.filterNot { it.id in current.trackIds }, close = { chooseTracks = false }) {
             chooseTracks = false; saved.add(current.id, it)
@@ -239,10 +288,14 @@ private fun PlaylistMenu(playlist: LocalPlaylist, rename: () -> Unit, delete: ()
 }
 
 @Composable
-private fun SavedTrackMenu(track: Track, more: () -> Unit, entries: @Composable (() -> Unit) -> Unit) {
+private fun SavedTrackMenu(track: Track, more: () -> Unit, reorder: Boolean = false, enabled: Boolean = true,
+                           entries: @Composable (() -> Unit) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, mb("操作 ${track.title}", "Actions for ${track.title}")) }
+        IconButton(onClick = { open = true }, enabled = enabled) {
+            if (reorder) TrackReorderHandle(mb("调整 ${track.title} 顺序", "Reorder ${track.title}"))
+            else Icon(Icons.Default.MoreVert, mb("操作 ${track.title}", "Actions for ${track.title}"))
+        }
         DropdownMenu(open, { open = false }) {
             entries { open = false }
             DropdownMenuItem(text = { Text(mb("播放、歌单与导出", "Playback, Playlists & Export")) }, onClick = { open = false; more() })

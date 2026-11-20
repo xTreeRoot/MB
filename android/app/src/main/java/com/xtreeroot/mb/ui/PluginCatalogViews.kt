@@ -22,7 +22,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -280,23 +284,33 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
             scope.launch { refresh() }
         }
     }) {
-        account?.let { profile -> item {
-            ListItem(headlineContent = { Text(profile.name) }, leadingContent = {
-                Artwork(profile.avatarUrl, profile.avatarHeaders, Modifier.size(48.dp))
-            })
-        } }
-        if (account != null && state.canSignOut) item {
-            TextButton(onClick = { signOut = true }, enabled = !state.loading) { Text(mb("退出登录", "Sign Out")) }
-        } else if (account == null && state.canSignIn) item {
-            TextButton(onClick = model::signIn, enabled = !state.loading) { Text(mb("登录音源", "Sign In to Source")) }
+        if (account != null || state.canSignIn) item {
+            AccountHeader(source.manifest.name, account, state.loading,
+                mb("登录音源", "Sign In to Source").takeIf { state.canSignIn }, model::signIn)
         }
-        account?.page?.takeIf(String::isNotBlank)?.let { page -> item {
-            val title = mb("我的主页", "My Profile")
-            CatalogLinkRow(PluginCatalogLink(title, "", PluginCatalogRequest.Browse(page, title)), navigator::open)
-        } }
-        items(collections) { collection ->
-            val title = collection.label()
-            CatalogLinkRow(PluginCatalogLink(title, "", PluginCatalogRequest.Collection(collection, title)), navigator::open)
+        val profile = account?.page?.takeIf(String::isNotBlank)
+        if (profile != null || collections.isNotEmpty()) item {
+            val destinations = buildList {
+                if (profile != null) {
+                    val title = mb("我的主页", "My Profile")
+                    add(AccountDestination(title, Icons.Default.Person) { navigator.open(PluginCatalogRequest.Browse(profile, title)) })
+                }
+                collections.forEach { collection ->
+                    val title = collection.label()
+                    val icon = when (collection) {
+                        PluginCollection.Liked -> Icons.Default.Favorite
+                        PluginCollection.Recent, PluginCollection.Shows, PluginCollection.Stations -> Icons.Default.PlayArrow
+                        else -> Icons.AutoMirrored.Filled.List
+                    }
+                    add(AccountDestination(title, icon) { navigator.open(PluginCatalogRequest.Collection(collection, title)) })
+                }
+            }
+            AccountDestinations(destinations)
+        }
+        if (account != null && state.canSignOut) item {
+            TextButton(onClick = { signOut = true }, enabled = !state.loading, modifier = Modifier.padding(horizontal = 20.dp)) {
+                Text(mb("退出登录", "Sign Out"), color = if (state.loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+            }
         }
         if (!refreshing && (loading || state.loading && !state.signingIn)) item { Loading() }
         state.error?.takeUnless { state.signingIn }?.let { message -> item { Retry(message, model::refresh) } }

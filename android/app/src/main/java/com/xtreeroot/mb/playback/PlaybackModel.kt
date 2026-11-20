@@ -351,18 +351,22 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         select(player.manualNeighbor(forward))
     }
 
-    fun shuffle() {
-        controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }
+    fun shuffle(): Boolean? {
+        val player = controller?.takeIf { it.isCommandAvailable(Player.COMMAND_SET_SHUFFLE_MODE) } ?: return null
+        val previous = player.shuffleModeEnabled
+        player.shuffleModeEnabled = !previous
+        return player.shuffleModeEnabled.takeIf { it != previous }
     }
 
-    fun repeat() {
-        controller?.let { player ->
-            player.repeatMode = when (player.repeatMode) {
-                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                else -> Player.REPEAT_MODE_OFF
-            }
+    fun repeat(): Int? {
+        val player = controller?.takeIf { it.isCommandAvailable(Player.COMMAND_SET_REPEAT_MODE) } ?: return null
+        val previous = player.repeatMode
+        player.repeatMode = when (previous) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
         }
+        return player.repeatMode.takeIf { it != previous }
     }
 
     fun loadCaptions(track: Track) {
