@@ -315,7 +315,20 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
 
     fun remove(index: Int, queue: List<Track>) {
         val player = controller ?: return
-        if (index in queue.indices && player.matchesQueue(queue)) player.removeMediaItem(index)
+        if (index !in queue.indices || !player.matchesQueue(queue)) return
+        if (index != player.currentMediaItemIndex) {
+            player.removeMediaItem(index)
+            return
+        }
+        if (queue.size == 1) {
+            clear()
+            return
+        }
+        contentSelection = null
+        val replacement = if (index == queue.lastIndex) index - 1 else index + 1
+        player.seekToDefaultPosition(replacement)
+        player.removeMediaItem(index)
+        start(player)
     }
 
     private fun MediaController.matchesQueue(queue: List<Track>): Boolean = mediaItemCount == queue.size &&
@@ -376,8 +389,7 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         captionState.value = LoadState(emptyList(), loading = true)
         captionJob = viewModelScope.launch {
             try {
-                val source = getApplication<MBApplication>().playbackSource(track.sourceId)
-                captionState.value = LoadState(source?.captions(track.sourceTrackId).orEmpty())
+                app.observeCaptions(track).collect { lines -> captionState.value = LoadState(lines) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {

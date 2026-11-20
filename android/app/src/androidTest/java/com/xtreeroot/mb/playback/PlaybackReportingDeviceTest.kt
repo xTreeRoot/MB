@@ -14,6 +14,7 @@ import android.media.MediaMetadata as PlatformMediaMetadata
 import android.media.browse.MediaBrowser as PlatformMediaBrowser
 import android.media.session.MediaController as PlatformMediaController
 import android.media.session.MediaSessionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -307,6 +308,63 @@ class PlaybackReportingDeviceTest {
             }
         } finally {
             app.settings.update { it.copy(nowPlayingLyrics = original) }
+        }
+    }
+
+    @Test fun replacingLocalLyricsUpdatesPausedPlayerAndSystemMetadataWithoutReplacingQueue() = runBlocking {
+        val original = app.settings.values.value.nowPlayingLyrics
+        val wav = app.local.catalog.temporaryFile()
+        val lrc = File.createTempFile("mb-local-lyrics-", ".lrc", app.cacheDir)
+        val audio = wave(16).also { UUID.randomUUID().toString().encodeToByteArray().copyInto(it, 128) }
+        val id = MessageDigest.getInstance("SHA-256").digest(audio).toHexString()
+        try {
+            wav.writeBytes(audio)
+            val asset = PortableAsset("mb-import-$id.audio", audio.size.toLong(), id)
+            val track = app.local.restoreImport(wav,
+                PortableImport(id, "Local Lyric Fixture", asset, "", false, 0)).track
+            app.settings.update { it.copy(nowPlayingLyrics = true) }
+            withFixture { player ->
+                val store = ViewModelStore()
+                val model = withContext(Dispatchers.Main) {
+                    ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+                }
+                try {
+                    withContext(Dispatchers.Main) {
+                        player.pause()
+                        player.setMediaItems(listOf(track.mediaItem(), first.mediaItem()), 0, 6_500)
+                        player.prepare()
+                    }
+                    eventually { model.playback.value.current?.id == track.id && player.playbackState == Player.STATE_READY }
+                    withContext(Dispatchers.Main) { model.loadCaptions(track) }
+                    eventually { !model.captions.value.loading && model.captions.value.value.isEmpty() &&
+                        player.mediaMetadata.title?.toString() == track.title }
+                    suspend fun replace(text: String) {
+                        lrc.writeText("[00:05.00]$text\n[00:10.00]Later line")
+                        app.local.attachLyrics(id, Uri.fromFile(lrc))
+                        assertEquals(text, app.local.captions(id).first().text)
+                        eventually { model.captions.value.value.firstOrNull()?.text == text &&
+                            player.mediaMetadata.title?.toString() == text }
+                        withContext(Dispatchers.Main) {
+                            assertEquals(track.title, player.mediaMetadata.artist?.toString())
+                            assertEquals(track, player.getMediaItemAt(0).track())
+                            assertEquals(first, player.getMediaItemAt(1).track())
+                            assertEquals(6_500L, player.currentPosition)
+                            assertTrue(!player.playWhenReady && !player.isPlaying)
+                        }
+                    }
+                    replace("Attached line")
+                    replace("Replacement line")
+                    withContext(Dispatchers.Main) { player.seekTo(0) }
+                    eventually { player.mediaMetadata.title?.toString() == track.title }
+                } finally {
+                    withContext(Dispatchers.Main) { store.clear() }
+                }
+            }
+        } finally {
+            app.settings.update { it.copy(nowPlayingLyrics = original) }
+            app.local.delete(id)
+            wav.delete()
+            lrc.delete()
         }
     }
 
@@ -735,6 +793,7 @@ class PlaybackReportingDeviceTest {
             }
             open("资料库", "Library")
             open("本地歌单", "Local Playlists")
+            automation.queueNode("搜索歌单", "Search Playlists")
             open(name)
             automation.press(automation.queueNode("排序", "Sort"))
             automation.waitForIdle(250, 5_000)
@@ -824,6 +883,70 @@ class PlaybackReportingDeviceTest {
                 automation.press(automation.queueNode("从队列移除", "Remove from Queue"))
                 eventually { player.queueIds() == listOf(first.id) && player.isPlaying }
             } finally { withContext(Dispatchers.Main) { activity.finish() } }
+        }
+    }
+
+    @Test fun removingTheSelectedQueueRowPlaysItsReplacementEvenWhenPausedOrShuffled() = runBlocking {
+        withFixture { player ->
+            val store = ViewModelStore()
+            val model = withContext(Dispatchers.Main) {
+                ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory.getInstance(app))[PlaybackModel::class.java]
+            }
+            try {
+                eventually { model.playback.value.connected }
+                val queue = listOf(first, second, first)
+                for (index in queue.indices) {
+                    val remaining = queue.filterIndexed { candidate, _ -> candidate != index }
+                    val replacement = index.coerceAtMost(remaining.lastIndex)
+                    withContext(Dispatchers.Main) {
+                        player.pause()
+                        player.shuffleModeEnabled = index == queue.lastIndex
+                        player.setMediaItems(queue.map { it.mediaItem() }, index, 8_000)
+                        player.prepare()
+                        if (index == queue.lastIndex) player.play()
+                    }
+                    eventually {
+                        player.playbackState == Player.STATE_READY && player.currentMediaItemIndex == index &&
+                            model.playback.value.tracks == queue && model.playback.value.index == index
+                    }
+                    withContext(Dispatchers.Main) { model.remove(index, model.playback.value.tracks) }
+                    try {
+                        eventually {
+                            player.queueIds() == remaining.map(Track::id) && player.currentMediaItemIndex == replacement &&
+                                player.isPlaying && player.currentPosition < 8_000
+                        }
+                    } catch (failure: TimeoutCancellationException) {
+                        throw AssertionError("Removing selected row $index did not play replacement row $replacement", failure)
+                    }
+                    withContext(Dispatchers.Main) {
+                        assertEquals(index == queue.lastIndex, player.shuffleModeEnabled)
+                    }
+                }
+
+                val station = PlaybackStation(first.sourceId, "daily", "Daily")
+                val stationQueue = listOf(first, second)
+                withContext(Dispatchers.Main) {
+                    player.pause()
+                    player.shuffleModeEnabled = false
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem().withStation(station)), 1, 8_000)
+                    player.prepare()
+                }
+                eventually {
+                    player.playbackState == Player.STATE_READY && app.stationStatus.value.station == station &&
+                        model.playback.value.tracks == stationQueue
+                }
+                withContext(Dispatchers.Main) { model.remove(0, model.playback.value.tracks) }
+                eventually { model.playback.value.tracks == listOf(second) }
+                withContext(Dispatchers.Main) {
+                    assertEquals(8_000L, player.currentPosition)
+                    assertTrue(!player.playWhenReady)
+                    assertEquals(station, app.stationStatus.value.station)
+                    model.remove(0, model.playback.value.tracks)
+                }
+                eventually { player.mediaItemCount == 0 && app.stationStatus.value.station == null }
+            } finally {
+                withContext(Dispatchers.Main) { store.clear() }
+            }
         }
     }
 

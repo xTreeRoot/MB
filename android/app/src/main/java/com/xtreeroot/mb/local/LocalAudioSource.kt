@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.xtreeroot.mb.music.MediaResource
+import com.xtreeroot.mb.music.CaptionLine
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
 import com.xtreeroot.mb.music.PlaybackSource
@@ -19,6 +20,11 @@ import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -51,9 +57,13 @@ internal class LocalAudioSource(private val context: Context, val catalog: Local
         MediaResource(Uri.fromFile(file).toString(), emptyMap())
     }
 
-    override suspend fun captions(trackId: String) = withContext(Dispatchers.IO) {
-        parseLrc(catalog.lyrics(trackId), catalog.get(trackId)?.track?.durationMs ?: 0)
-    }
+    override suspend fun captions(trackId: String): List<CaptionLine> = observeCaptions(trackId).first()
+
+    fun observeCaptions(trackId: String): Flow<List<CaptionLine>> = catalog.changes
+        .map { catalog.lyricDocument(trackId) }
+        .distinctUntilChanged()
+        .map { document -> document?.let { (lyrics, duration) -> parseLrc(lyrics, duration) }.orEmpty() }
+        .flowOn(Dispatchers.IO)
 
     suspend fun attachLyrics(trackId: String, uri: Uri) = withContext(Dispatchers.IO) {
         val text = readLyrics(uri)

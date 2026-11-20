@@ -18,6 +18,7 @@ import com.xtreeroot.mb.local.OfflineMediaStore
 import com.xtreeroot.mb.local.OfflineTransfers
 import com.xtreeroot.mb.local.PortableLibrary
 import com.xtreeroot.mb.local.localSourceId
+import com.xtreeroot.mb.music.CaptionLine
 import com.xtreeroot.mb.music.MusicSource
 import com.xtreeroot.mb.music.PlaybackSource
 import com.xtreeroot.mb.music.Track
@@ -47,10 +48,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -150,6 +153,10 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     }
 
     fun musicSource(id: String): MusicSource? = playbackSource(id)
+
+    fun observeCaptions(track: Track): Flow<List<CaptionLine>> =
+        if (track.sourceId == localSourceId) local.observeCaptions(track.sourceTrackId)
+        else flow { emit(playbackSource(track.sourceId)?.captions(track.sourceTrackId).orEmpty()) }
 
     suspend fun refreshPlugins() = synchronizePlugins.withLock {
         val records = plugins.installed()

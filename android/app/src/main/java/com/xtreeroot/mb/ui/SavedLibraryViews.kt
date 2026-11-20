@@ -255,13 +255,8 @@ internal fun PlaylistsPage(saved: SavedLibraryModel, library: LocalMusicIndex,
     }
     if (create) PlaylistNameDialog(mb("新建歌单", "New Playlist"), close = { create = false }) { name -> create = false; saved.create(name) }
     if (current != null) {
-        if (rename) PlaylistNameDialog(mb("重命名歌单", "Rename Playlist"), current.name, { rename = false }) { name ->
-            rename = false; saved.rename(current.id, name)
-        }
-        if (delete) LibraryConfirmation(mb("删除歌单“${current.name}”？", "Delete playlist “${current.name}”?"),
-            mb("音频文件会保留在资料库里。", "Audio files will stay in your library."), mb("删除", "Delete"), { delete = false }) {
-            delete = false; saved.delete(current); closePlaylist()
-        }
+        if (rename) RenameLocalPlaylist(current, saved) { rename = false }
+        if (delete) DeleteLocalPlaylist(current, saved, { delete = false }, ::closePlaylist)
         if (chooseTracks) TrackPicker(available.values.filterNot { it.id in current.trackIds }, close = { chooseTracks = false }) {
             chooseTracks = false; saved.add(current.id, it)
         }
@@ -279,7 +274,7 @@ internal fun LibraryPageHeader(title: String?, back: () -> Unit, actions: @Compo
 }
 
 @Composable
-private fun PlaylistMenu(playlist: LocalPlaylist, rename: () -> Unit, delete: () -> Unit) {
+internal fun PlaylistMenu(playlist: LocalPlaylist, rename: () -> Unit, delete: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, mb("操作歌单 ${playlist.name}", "Playlist Actions ${playlist.name}")) }
@@ -287,6 +282,22 @@ private fun PlaylistMenu(playlist: LocalPlaylist, rename: () -> Unit, delete: ()
             DropdownMenuItem(text = { Text(mb("重命名歌单", "Rename Playlist")) }, onClick = { open = false; rename() })
             DropdownMenuItem(text = { Text(mb("删除歌单", "Delete Playlist")) }, onClick = { open = false; delete() })
         }
+    }
+}
+
+@Composable
+internal fun RenameLocalPlaylist(playlist: LocalPlaylist, saved: SavedLibraryModel, close: () -> Unit) {
+    PlaylistNameDialog(mb("重命名歌单", "Rename Playlist"), playlist.name, close) { name ->
+        close(); saved.rename(playlist.id, name)
+    }
+}
+
+@Composable
+internal fun DeleteLocalPlaylist(playlist: LocalPlaylist, saved: SavedLibraryModel,
+                                 close: () -> Unit, afterConfirm: () -> Unit = {}) {
+    LibraryConfirmation(mb("删除歌单“${playlist.name}”？", "Delete playlist “${playlist.name}”?"),
+        mb("音频文件会保留在资料库里。", "Audio files will stay in your library."), mb("删除", "Delete"), close) {
+        close(); saved.delete(playlist); afterConfirm()
     }
 }
 

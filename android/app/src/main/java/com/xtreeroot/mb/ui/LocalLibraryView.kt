@@ -157,8 +157,11 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     var editingLyrics by rememberSaveable { mutableStateOf<String?>(null) }
     var deleting by rememberSaveable { mutableStateOf<String?>(null) }
     var page by rememberSaveable { mutableStateOf<LibraryPage?>(null) }
-    var searchPlaylist by rememberSaveable { mutableStateOf<String?>(null) }
-    var importMenu by remember { mutableStateOf(false) }
+    var openedPlaylist by rememberSaveable { mutableStateOf<String?>(null) }
+    var addMenu by remember { mutableStateOf(false) }
+    var createPlaylist by rememberSaveable { mutableStateOf(false) }
+    var renamePlaylist by rememberSaveable { mutableStateOf<String?>(null) }
+    var deletePlaylist by rememberSaveable { mutableStateOf<String?>(null) }
     val importAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), model::import)
     val importFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree(), model::importFolder)
     val importLyrics = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -172,11 +175,12 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     val imports = remember(state.value) { state.value.mapTo(mutableSetOf()) { it.track.id } }
     fun openCollection(kind: Category, id: String) { collectionCategory = kind; collectionId = id }
     fun closeCollection() { collectionId = null; collectionCategory = null; collectionQuery = "" }
-    fun closePage() { page = null; searchPlaylist = null }
+    fun openPlaylist(id: String? = null) { openedPlaylist = id; page = LibraryPage.Playlists }
+    fun closePage() { page = null; openedPlaylist = null }
     BackHandler(page != null || collectionId != null) { if (page != null) closePage() else closeCollection() }
     when (page) {
         LibraryPage.Downloads -> { DownloadsPage(saved, play) { page = null }; return }
-        LibraryPage.Playlists -> { PlaylistsPage(saved, index, play, playGroup, searchPlaylist, ::closePage); return }
+        LibraryPage.Playlists -> { PlaylistsPage(saved, index, play, playGroup, openedPlaylist, ::closePage); return }
         LibraryPage.DataLocation -> { DataLocationPage(saved.portable) { page = null }; return }
         null -> Unit
     }
@@ -212,19 +216,21 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(mb("本地资料库", "Local Library"), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                         Box {
-                            TextButton(enabled = !state.loading, onClick = { importMenu = true }) { Text(mb("添加到资料库", "Add to Library")) }
-                            DropdownMenu(importMenu, { importMenu = false }) {
-                                DropdownMenuItem(text = { Text(mb("导入音频", "Import Audio")) }, onClick = {
-                                    importMenu = false; importAudio.launch(arrayOf("audio/*", "application/ogg"))
+                            TextButton(onClick = { addMenu = true }) { Text(mb("添加到资料库", "Add to Library")) }
+                            DropdownMenu(addMenu, { addMenu = false }) {
+                                DropdownMenuItem(text = { Text(mb("导入音频", "Import Audio")) }, enabled = !state.loading, onClick = {
+                                    addMenu = false; importAudio.launch(arrayOf("audio/*", "application/ogg"))
                                 })
-                                DropdownMenuItem(text = { Text(mb("导入文件夹", "Import Folder")) }, onClick = {
-                                    importMenu = false; importFolder.launch(null)
+                                DropdownMenuItem(text = { Text(mb("导入文件夹", "Import Folder")) }, enabled = !state.loading, onClick = {
+                                    addMenu = false; importFolder.launch(null)
+                                })
+                                DropdownMenuItem(text = { Text(mb("新建歌单", "New Playlist")) }, onClick = {
+                                    addMenu = false; createPlaylist = true
                                 })
                             }
                         }
                     }
                     FlowRow(Modifier.padding(horizontal = 8.dp)) {
-                        TextButton(onClick = { page = LibraryPage.Playlists }) { Text(mb("本地歌单", "Local Playlists")) }
                         TextButton(onClick = { page = LibraryPage.Downloads }) { Text(mb("下载与缓存", "Downloads & Cache")) }
                         TextButton(onClick = { page = LibraryPage.DataLocation }) { Text(mb("数据位置", "Data Location")) }
                     }
@@ -240,6 +246,28 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
         state.error?.let { error -> item { Retry(error, model::refresh) } }
         if (!searching && collectionId == null && category == Category.Songs && index.recentAdditions.isNotEmpty()) {
             item(key = "recent-additions") { RecentAdditions(index.recentAdditions, play) }
+        }
+        if (!searching && collectionId == null && category == Category.Songs) {
+            item(key = "playlist-section") {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val allPlaylistsLabel = mb("本地歌单", "Local Playlists")
+                    Text(mb("我的歌单", "My Playlists"), Modifier.weight(1f).semantics { heading() },
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = { openPlaylist() }, modifier = Modifier.semantics {
+                        contentDescription = allPlaylistsLabel
+                    }) { Text(mb("全部", "See All")) }
+                }
+            }
+            items(playlists.takeLast(3).asReversed(), key = { "home-playlist:${it.id}" }) { playlist ->
+                LocalGroupRow(playlist.name, "", playlist.trackIds.mapNotNull(songsById::get), actions = {
+                    PlaylistMenu(playlist, { renamePlaylist = playlist.id }, { deletePlaylist = playlist.id })
+                }) { openPlaylist(playlist.id) }
+            }
+            if (playlists.isEmpty()) item(key = "create-first-playlist") {
+                TextButton(onClick = { createPlaylist = true }, modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Text(mb("新建歌单", "New Playlist"))
+                }
+            }
         }
         if (!searching && collections != null && collectionId == null) {
             if (!state.loading && collections.isEmpty()) item { EmptyMessage(mb("没有匹配的分类", "No Matching Collections")) }
@@ -287,15 +315,21 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
             }
             if (matchedPlaylists.isNotEmpty()) item { LibrarySearchHeading(mb("歌单", "Playlists")) }
             items(matchedPlaylists, key = { "playlist:${it.id}" }) { playlist ->
-                LocalGroupRow(playlist.name, "", playlist.trackIds.mapNotNull(songsById::get)) {
-                    searchPlaylist = playlist.id
-                    page = LibraryPage.Playlists
-                }
+                LocalGroupRow(playlist.name, "", playlist.trackIds.mapNotNull(songsById::get)) { openPlaylist(playlist.id) }
             }
             if (searching && !state.loading && matching.isEmpty() && matchedAlbums.isEmpty() && matchedArtists.isEmpty() && matchedPlaylists.isEmpty()) {
                 item { EmptyMessage(mb("没有匹配的本地内容", "No Matching Library Items")) }
             }
         }
+    }
+    if (createPlaylist) PlaylistNameDialog(mb("新建歌单", "New Playlist"), close = { createPlaylist = false }) { name ->
+        createPlaylist = false; saved.create(name)
+    }
+    playlists.firstOrNull { it.id == renamePlaylist }?.let { playlist ->
+        RenameLocalPlaylist(playlist, saved) { renamePlaylist = null }
+    }
+    playlists.firstOrNull { it.id == deletePlaylist }?.let { playlist ->
+        DeleteLocalPlaylist(playlist, saved, { deletePlaylist = null })
     }
     deleting?.let { id ->
         AlertDialog(onDismissRequest = { deleting = null }, title = { Text(mb("删除本地音频？", "Delete Local Audio?")) },
@@ -346,21 +380,25 @@ private fun LibrarySearchHeading(title: String) {
 }
 
 @Composable
-internal fun LocalGroupRow(title: String, subtitle: String, tracks: List<Track>, artwork: Track? = tracks.firstOrNull(), open: () -> Unit) {
+internal fun LocalGroupRow(title: String, subtitle: String, tracks: List<Track>, artwork: Track? = tracks.firstOrNull(),
+                           actions: (@Composable () -> Unit)? = null, open: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)
-        .clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLow).heightIn(min = 64.dp)
-        .clickable(role = Role.Button, onClick = open).padding(horizontal = 8.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Artwork(artwork?.artworkUrl, artwork?.artworkHeaders.orEmpty(), Modifier.size(48.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(listOf(subtitle, localSongCount(tracks.size)).filter(String::isNotBlank).joinToString(" · "),
-                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant)
+        .clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLow), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f).heightIn(min = 64.dp).clickable(role = Role.Button, onClick = open)
+            .padding(horizontal = 8.dp, vertical = 7.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Artwork(artwork?.artworkUrl, artwork?.artworkHeaders.orEmpty(), Modifier.size(48.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                Text(listOf(subtitle, localSongCount(tracks.size)).filter(String::isNotBlank).joinToString(" · "),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant)
+            }
+            if (actions == null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
         }
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+        actions?.invoke()
     }
 }
 

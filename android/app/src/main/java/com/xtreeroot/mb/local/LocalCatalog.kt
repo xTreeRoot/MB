@@ -153,6 +153,10 @@ internal class LocalCatalog(context: Context, databaseName: String = "local-libr
     fun lyrics(identifier: String): String = readableDatabase.rawQuery("SELECT lyrics FROM audio WHERE id = ?",
         arrayOf(identifier)).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else "" }
 
+    fun lyricDocument(identifier: String): Pair<String, Long>? = readableDatabase.rawQuery(
+        "SELECT lyrics, duration FROM audio WHERE id = ?", arrayOf(identifier),
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) to cursor.getLong(1) else null }
+
     fun writeLyrics(identifier: String, value: String) {
         check(writableDatabase.update("audio", ContentValues().apply { put("lyrics", value) }, "id = ?",
             arrayOf(identifier)) == 1) { "曲目不存在" }

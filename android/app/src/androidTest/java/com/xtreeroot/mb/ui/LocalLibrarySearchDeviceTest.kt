@@ -40,6 +40,68 @@ class LocalLibrarySearchDeviceTest {
     private val automation = instrumentation.uiAutomation
     private val app = instrumentation.targetContext.applicationContext as MBApplication
 
+    @Test fun libraryHomeCreatesOpensRenamesAndDeletesAPlaylistWithoutRemovingAudio() = runBlocking {
+        val initial = "Rain Room Fixture"
+        val renamed = "Rain Room Renamed"
+        val track = addTrack("Rain Room Intro", "Fixture Artist", "", "", artwork = albumArt())
+        var activity: MainActivity? = null
+        var playlistId: String? = null
+        try {
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            tap("资料库", "Library")
+            tap("添加到资料库", "Add to Library")
+            node("导入音频", "Import Audio")
+            tap("新建歌单", "New Playlist")
+            node("保存", "Save")
+            setQuery(initial)
+            expectQuery(initial)
+            tap("保存", "Save")
+            withTimeout(5_000) {
+                while (app.playlists.playlists.value.none { it.name == initial }) delay(50)
+            }
+            val id = app.playlists.playlists.value.single { it.name == initial }.id
+            playlistId = id
+            tap(initial)
+            node("歌单暂无歌曲", "This Playlist Is Empty")
+            tap("添加歌曲", "Add Songs")
+            tap(track.title)
+            tap("添加", "Add")
+            withTimeout(5_000) {
+                while (app.playlists.playlists.value.single { it.id == id }.trackIds != listOf(track.id)) delay(50)
+            }
+            tap("返回资料库", "Back to Library")
+            node("我的歌单", "My Playlists")
+            tap("操作歌单 $initial", "Playlist Actions $initial")
+            tap("重命名歌单", "Rename Playlist")
+            node("保存", "Save")
+            setQuery(renamed)
+            expectQuery(renamed)
+            tap("保存", "Save")
+            node(renamed)
+            capture("libraryHomeScreenshot", "android-library-home-playlists.png")
+            tap("操作歌单 $renamed", "Playlist Actions $renamed")
+            tap("删除歌单", "Delete Playlist")
+            tap("取消", "Cancel")
+            assertEquals(listOf(track.id), app.playlists.playlists.value.single { it.id == id }.trackIds)
+            tap("操作歌单 $renamed", "Playlist Actions $renamed")
+            tap("删除歌单", "Delete Playlist")
+            tap("删除", "Delete")
+            withTimeout(5_000) {
+                while (app.playlists.playlists.value.any { it.id == id }) delay(50)
+            }
+            assertTrue(app.local.catalog.file(track.sourceTrackId).isFile)
+        } catch (failure: Throwable) {
+            capture("libraryHomeScreenshot", "android-library-home-failed.png")
+            throw failure
+        } finally {
+            withContext(Dispatchers.Main) { activity?.finish() }
+            app.playlists.playlists.value.filter { it.id == playlistId || it.name == initial || it.name == renamed }
+                .forEach { app.playlists.delete(it.id) }
+            app.local.delete(track.sourceTrackId)
+        }
+    }
+
     @Test fun recentCoverPlaysTheSelectedDownloadInAMixedQueue() = runBlocking {
         val tracks = mutableListOf<Track>()
         val downloaded = Track("bilibili", "recent-download-${UUID.randomUUID()}", "Evening Download", "Fixture Artist", durationMs = 12_000)
@@ -241,13 +303,15 @@ class LocalLibrarySearchDeviceTest {
             item
         } ?: error("Missing UI element: $description")
 
-    private suspend fun node(vararg labels: String) = await(labels.joinToString()) {
-        labels.any { label -> it.text?.toString() == label || it.contentDescription?.toString() == label }
-    }
+    private fun AccessibilityNodeInfo.matchesLabel(labels: Array<out String>) =
+        labels.any { label -> text?.toString() == label || contentDescription?.toString() == label }
+
+    private suspend fun node(vararg labels: String) = await(labels.joinToString()) { it.matchesLabel(labels) }
 
     private suspend fun tap(vararg labels: String) {
-        val button = generateSequence(node(*labels)) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }
-        assertEquals("Expected to tap ${labels.joinToString()}", true, button?.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        fun clickable(node: AccessibilityNodeInfo) = generateSequence(node) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }
+        val node = await("Enabled ${labels.joinToString()}") { it.matchesLabel(labels) && clickable(it) != null }
+        assertEquals("Expected to tap ${labels.joinToString()}", true, clickable(node)?.performAction(AccessibilityNodeInfo.ACTION_CLICK))
     }
 
     private suspend fun searchField() = await("Library search field") { it.isEditable }

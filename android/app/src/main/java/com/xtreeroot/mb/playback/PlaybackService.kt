@@ -65,10 +65,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
@@ -500,15 +499,20 @@ internal class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun showSystemCaptions(app: MBApplication, track: Track, player: Player, sessionPlayer: CaptionSessionPlayer) {
-        val lines = try { app.playbackSource(track.sourceId)?.captions(track.sourceTrackId).orEmpty() }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { return }
-        currentCoroutineContext().ensureActive()
-        if (lines.isEmpty()) return
-        while (player.currentMediaItem?.mediaId == track.id) {
-            val active = if (player.playbackState == Player.STATE_ENDED) -1 else lines.activeCaption(player.currentPosition)
-            sessionPlayer.showCaption(track.id, lines.getOrNull(active)?.text)
-            delay(250)
+        app.observeCaptions(track).catch { error ->
+            if (error !is Exception) throw error
+            emit(emptyList())
+        }.collectLatest { lines ->
+            if (player.currentMediaItem?.mediaId != track.id) return@collectLatest
+            if (lines.isEmpty()) {
+                sessionPlayer.showCaption(track.id, null)
+                return@collectLatest
+            }
+            while (player.currentMediaItem?.mediaId == track.id) {
+                val active = if (player.playbackState == Player.STATE_ENDED) -1 else lines.activeCaption(player.currentPosition)
+                sessionPlayer.showCaption(track.id, lines.getOrNull(active)?.text)
+                delay(250)
+            }
         }
     }
 
