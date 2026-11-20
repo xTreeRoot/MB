@@ -44,6 +44,8 @@ import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.internal.http2.ErrorCode
+import okhttp3.internal.http2.StreamResetException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -158,6 +160,44 @@ class StreamingDeviceTest {
             withContext(Dispatchers.Main) { player.release() }
             fallback.clear()
             directory.deleteRecursively()
+        }
+    }
+
+    @Test fun reopensResetHttp2StreamWithoutReplacingTheQueueOrRefreshingTheAddress() = runBlocking {
+        val bytes = wave(25)
+        val requests = AtomicInteger()
+        val refreshes = AtomicInteger()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            if (requests.incrementAndGet() == 1) throw StreamResetException(ErrorCode.CANCEL)
+            media(chain.request(), bytes)
+        }.build()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val first = MediaItem.fromUri("https://fixture.invalid/first")
+        val second = MediaItem.fromUri("https://fixture.invalid/second")
+        val audio = withContext(Dispatchers.Main) {
+            player(client).apply {
+                val recovery = AudioRecovery(scope, this) { refreshes.incrementAndGet() }
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        recovery.onError(error, currentMediaItem) { true }
+                    }
+                })
+                setMediaItems(listOf(first, second), 0, 4_000)
+                prepare()
+                play()
+            }
+        }
+        try {
+            eventually { audio.isPlaying && audio.currentPosition > 4_200 }
+            withContext(Dispatchers.Main) {
+                assertEquals(first, audio.currentMediaItem)
+                assertEquals(second, audio.getMediaItemAt(1))
+                assertEquals(2, audio.mediaItemCount)
+                assertTrue(requests.get() >= 2)
+                assertEquals(0, refreshes.get())
+            }
+        } finally {
+            withContext(Dispatchers.Main) { scope.cancel(); audio.release() }
         }
     }
 

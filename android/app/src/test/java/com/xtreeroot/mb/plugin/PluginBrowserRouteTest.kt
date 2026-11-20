@@ -24,4 +24,13 @@ class PluginBrowserRouteTest {
         assertEquals(PluginBrowserIssue.Startup, pluginBrowserRoute(absent, present, failed).issue)
         assertEquals(PluginBrowserIssue.Startup, pluginBrowserRoute(failed, present, absent).issue)
     }
+
+    @Test fun processFailureDoesNotTellTheUserToUpdateAProviderThatCouldNotBeChecked() {
+        val unsupported = PluginBrowserIssue.UnsupportedProvider
+        assertEquals(PluginBrowserIssue.Startup, pluginBrowserRoute(absent, present, failed, unsupported).issue)
+        assertEquals(PluginBrowserIssue.MissingProvider, pluginBrowserRoute(absent, absent, null, unsupported).issue)
+        assertEquals(unsupported, pluginBrowserRoute(absent, present, absent, unsupported).issue)
+        assertEquals(PluginBrowserIssue.Startup, pluginBrowserRoute(absent, present, absent, PluginBrowserIssue.Startup).issue)
+        assertEquals(PluginBrowserRoute.Profile, pluginBrowserRoute(absent, present, present, PluginBrowserIssue.Startup))
+    }
 }

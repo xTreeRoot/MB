@@ -32,6 +32,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import okhttp3.internal.http2.ErrorCode
+import okhttp3.internal.http2.StreamResetException
 
 internal enum class MediaRecovery { Reopen, RefreshAddress }
 
@@ -45,6 +47,7 @@ internal fun Throwable.playbackDiagnostic(code: Int): String {
         when (failure) {
             is MediaFetchFailure -> failure.status?.let { if (failure.html) "HTTP $it / HTML" else "HTTP $it" }
             is HttpDataSource.InvalidResponseCodeException -> "HTTP ${failure.responseCode}"
+            is StreamResetException -> "HTTP/2 ${failure.errorCode.name}"
             is SourceResponseFailure -> "${failure.kind.name} ${failure.code}"
             is UnknownHostException -> "DNS"
             is SSLException -> "TLS"
@@ -96,6 +99,9 @@ internal class AudioRecovery(private val scope: CoroutineScope, private val play
 @OptIn(UnstableApi::class)
 private fun mediaCauses(error: Throwable) = generateSequence(error) { it.cause }.take(16)
 
+private fun Throwable.isRecoverableMediaConnectionFailure(): Boolean = isMediaConnectionFailure() ||
+    this is StreamResetException && (errorCode == ErrorCode.CANCEL || errorCode == ErrorCode.REFUSED_STREAM)
+
 @OptIn(UnstableApi::class)
 internal class MediaAddressDataSource(private val upstream: DataSource) : DataSource by upstream {
     var backupUrls: List<String> = emptyList()
@@ -121,7 +127,7 @@ internal class MediaAddressDataSource(private val upstream: DataSource) : DataSo
     private fun canTryBackup(error: IOException): Boolean = mediaCauses(error).any { cause ->
         when (cause) {
             is MediaFetchFailure -> cause.html || cause.status?.isMediaAddressUnavailable() == true
-            else -> cause.isMediaConnectionFailure()
+            else -> cause.isRecoverableMediaConnectionFailure()
         }
     }
 }
@@ -133,7 +139,7 @@ internal fun mediaRecovery(error: Throwable): MediaRecovery? {
     if (failure != null) return failure.recovery
     return MediaRecovery.Reopen.takeIf {
         mediaCauses(remote).any { cause ->
-            cause.isMediaConnectionFailure() ||
+            cause.isRecoverableMediaConnectionFailure() ||
                 (cause is ProtocolException && remote.type == HttpDataSource.HttpDataSourceException.TYPE_READ)
         }
     }

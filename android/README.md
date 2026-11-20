@@ -1,6 +1,6 @@
 # MB Android
 
-安卓客户端在 `android` 分支独立开发，参考 iOS 0.1.0 Build 23（`8c6522c`）。0.1.20 预览 APK 沿用 0.1.19 的签名，可覆盖安装，不需要先卸载。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
+安卓客户端在 `android` 分支独立开发，参考 iOS 0.1.0 Build 23（`8c6522c`）。0.1.21 预览 APK 沿用 0.1.20 的签名，可覆盖安装，不需要先卸载。已实现、已实测和待补项见 [PARITY.md](PARITY.md)。桌面与 iOS 公开发行包不是安卓版本。
 
 ## 终端构建
 
@@ -15,7 +15,9 @@ cd android
 
 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。以上命令不会启动 IDE 或模拟器。显式执行设备测试时，只用独立的无窗口模拟器或用户指定的设备；不复用手机端生产账号。
 
-原生音频与 QuickJS 宿主测试需另构建 `:app:assembleDebugAndroidTest`。把两个 APK 安装到专用的干净测试设备或模拟器用户后，用 `adb -s <测试设备序列号> shell am instrument -w com.xtreeroot.mb.test/androidx.test.runner.AndroidJUnitRunner` 运行。播放回归需要初始队列为空。测试使用生成的 PCM 波形和固定插件响应，不要求联网或账号。
+原生音频与 QuickJS 宿主测试需另构建 `:app:assembleDebugAndroidTest`。把两个 APK 安装到专用的干净测试设备或模拟器用户后，用 `adb -s <测试设备序列号> shell am instrument -w com.xtreeroot.mb.test/androidx.test.runner.AndroidJUnitRunner` 运行。播放回归需要初始队列为空。默认测试使用生成的 PCM 波形和固定插件响应，不要求联网或账号。
+
+可选游客实网测试：只在干净的测试用户中把校验过的插件 ZIP 放入调试 App 的 `cache/guest-playback.zip`，运行 `adb -s <测试设备序列号> shell am instrument --user <测试用户ID> -w -e class com.xtreeroot.mb.playback.GuestPlaybackDeviceTest -e guestPlugin <netease|ximalaya|soda> com.xtreeroot.mb.test/androidx.test.runner.AndroidJUnitRunner`。预期插件版本见测试中的 `releases`。该测试不登录，验证实际起播和拖动；游客权限、曲目可用性与平台网络都会影响结果，不纳入默认回归。
 
 ## 卸载后保留资料库
 

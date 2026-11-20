@@ -36,12 +36,13 @@ internal enum class PluginBrowserRoute(val issue: PluginBrowserIssue? = null) {
 }
 
 internal fun pluginBrowserRoute(disposableProcess: Result<Boolean>, provider: Result<Boolean>,
-                                profiles: Result<Boolean>?): PluginBrowserRoute = when {
+                                profiles: Result<Boolean>?, processIssue: PluginBrowserIssue? = null): PluginBrowserRoute = when {
     disposableProcess.getOrNull() == true -> PluginBrowserRoute.DisposableProcess
     provider.getOrNull() == true && profiles?.getOrNull() == true -> PluginBrowserRoute.Profile
     provider.isFailure || profiles?.isFailure == true -> PluginBrowserRoute.StartupFailure
     provider.getOrNull() == false -> PluginBrowserRoute.MissingProvider
-    disposableProcess.isFailure -> PluginBrowserRoute.StartupFailure
+    disposableProcess.isFailure || processIssue == PluginBrowserIssue.Startup ||
+        processIssue == PluginBrowserIssue.MissingProvider -> PluginBrowserRoute.StartupFailure
     else -> PluginBrowserRoute.UnsupportedProvider
 }
 

@@ -79,22 +79,21 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         issue = failure
         onFailure(failure)
     }
-    fun openProfile(disposable: Result<Boolean>, fallback: PluginBrowserIssue? = null) {
+    fun openProfile(disposable: Result<Boolean>, processIssue: PluginBrowserIssue? = null) {
         val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(context) }
         val installed = provider.getOrNull()
         Log.i(pluginBrowserLogTag, "SDK=${Build.VERSION.SDK_INT} provider=${installed?.packageName} version=${installed?.versionName}")
         provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
         val profiles = if (installed != null) runCatching { PluginBrowserSession.available() } else null
         profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
-        val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles)
+        val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles, processIssue)
         if (route == PluginBrowserRoute.Profile) useProfiles = true
-        else if (fallback == PluginBrowserIssue.MissingProvider && installed != null) fail(PluginBrowserIssue.Startup)
-        else fail(fallback ?: checkNotNull(route.issue))
+        else fail(checkNotNull(route.issue))
     }
     fun compatFailed(failure: PluginBrowserIssue) {
         when (failure) {
             PluginBrowserIssue.Startup, PluginBrowserIssue.MissingProvider, PluginBrowserIssue.UnsupportedProvider ->
-                openProfile(Result.success(false), fallback = failure)
+                openProfile(Result.success(false), processIssue = failure)
             else -> fail(failure)
         }
     }
