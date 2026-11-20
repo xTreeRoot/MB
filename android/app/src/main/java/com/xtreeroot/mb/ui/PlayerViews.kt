@@ -89,7 +89,6 @@ import com.xtreeroot.mb.music.quietCommentAt
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.preferences.AppPreferences
-import com.xtreeroot.mb.preferences.LyricStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -245,9 +244,9 @@ internal fun NowPlaying(model: PlaybackModel, state: PlaybackState, preferences:
                 when {
                     captions.loading -> Loading()
                     captions.error != null -> Retry(checkNotNull(captions.error)) { model.loadCaptions(track) }
-                    captions.value.isEmpty() && rhythm -> PlayerArtwork(track, state, preferences.playerStyle, animate, Modifier)
                     captions.value.isEmpty() -> EmptyMessage(mb("暂无歌词", "No Lyrics"))
-                    else -> CaptionStage(captions.value, state.positionMs, if (rhythm) LyricStyle.Tilt else preferences.lyricStyle,
+                    rhythm -> RhythmCaptionStage(captions.value, state.positionMs, state.playing, animate, seekCurrent)
+                    else -> CaptionStage(captions.value, state.positionMs, preferences.lyricStyle,
                         preferences.stageSparks, animate, seekCurrent)
                 }
             }

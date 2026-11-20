@@ -41,11 +41,13 @@ import androidx.webkit.WebViewCompat
 import com.xtreeroot.mb.plugin.CompatPluginBrowserActivity
 import com.xtreeroot.mb.plugin.PluginBrowserIssue
 import com.xtreeroot.mb.plugin.PluginBrowserPage
+import com.xtreeroot.mb.plugin.PluginBrowserRoute
 import com.xtreeroot.mb.plugin.PluginBrowserSession
 import com.xtreeroot.mb.plugin.PluginWebLink
 import com.xtreeroot.mb.plugin.PluginWebSignIn
 import com.xtreeroot.mb.plugin.PluginWebSignInBroker
 import com.xtreeroot.mb.plugin.pluginBrowserLogTag
+import com.xtreeroot.mb.plugin.pluginBrowserRoute
 import kotlinx.coroutines.delay
 
 @Composable
@@ -107,14 +109,11 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
         val profiles = if (installed != null) runCatching { PluginBrowserSession.available() } else null
         profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
-        when {
-            provider.isFailure && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> openCompat()
-            provider.isFailure -> fail(PluginBrowserIssue.Startup)
-            installed == null -> fail(PluginBrowserIssue.MissingProvider)
-            profiles?.getOrNull() == true -> useProfiles = true
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> openCompat()
-            profiles?.isFailure == true -> fail(PluginBrowserIssue.Startup)
-            else -> fail(PluginBrowserIssue.UnsupportedProvider)
+        when (val route = pluginBrowserRoute(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P,
+            provider.map { it != null }, profiles)) {
+            PluginBrowserRoute.Profile -> useProfiles = true
+            PluginBrowserRoute.DisposableProcess -> openCompat()
+            else -> fail(checkNotNull(route.issue))
         }
     }
     if (!useProfiles && issue == null) return

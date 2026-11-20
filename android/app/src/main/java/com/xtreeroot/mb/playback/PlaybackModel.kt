@@ -256,7 +256,11 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
         if (audioFocusBlocked(player)) { start(player); return }
-        if (player.playerError == null && !player.isPlaying && stationError(player) != null) { requestStationNext(player); return }
+        if (player.playerError == null && !player.isPlaying && atStationTail(player) &&
+            (player.playbackState == Player.STATE_ENDED || stationError(player) != null)) {
+            requestStationNext(player)
+            return
+        }
         if (player.playWhenReady && player.playerError == null) player.pause() else start(player)
     }
 

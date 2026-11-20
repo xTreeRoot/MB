@@ -22,7 +22,7 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
     init { video.onGateChanged = { invalidateState() } }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
-        stations?.updateIntent(playWhenReady)
+        if (stations?.updateIntent(playWhenReady) == true) return Futures.immediateVoidFuture()
         return if (video.changeIntent(playWhenReady)) Futures.immediateVoidFuture()
         else super.handleSetPlayWhenReady(playWhenReady)
     }
@@ -57,11 +57,15 @@ internal class CaptionSessionPlayer(private val audio: ExoPlayer, private val vi
         val forward = when (seekCommand) {
             Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> true
             Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> false
-            else -> return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+            else -> {
+                if (seekCommand == Player.COMMAND_SEEK_TO_MEDIA_ITEM) stations?.cancelPendingAdvance()
+                return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+            }
         }
         if (!audio.isPlayingAd && !(forward && stations?.next() == true)) {
             val target = audio.manualNeighbor(forward)
             if (target != C.INDEX_UNSET) {
+                stations?.cancelPendingAdvance()
                 audio.seekToDefaultPosition(target)
                 if (audio.playbackState == Player.STATE_IDLE) audio.prepare()
                 return handleSetPlayWhenReady(true)

@@ -45,6 +45,7 @@ import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.plugin.InstalledPlugin
 import com.xtreeroot.mb.plugin.PluginSource
+import com.xtreeroot.mb.preferences.AppAppearance
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -742,6 +743,57 @@ class PlaybackReportingDeviceTest {
                     assertTrue(!player.playWhenReady)
                 }
             } finally { withContext(Dispatchers.Main) { activity.finish() } }
+        }
+    }
+
+    @Test fun landscapeRhythmShowsTheCurrentLineAndSeeksToTheNextWithoutResuming() = runBlocking {
+        withFixture { player ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val automation = instrumentation.uiAutomation
+            val screenshot = InstrumentationRegistry.getArguments().getString("rhythmScreenshot") == "true"
+            val appearance = app.settings.values.value.appearance
+            if (screenshot) withContext(Dispatchers.Main) { app.settings.update { it.copy(appearance = AppAppearance.Dark) } }
+            val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            try {
+                withContext(Dispatchers.Main) {
+                    player.pause()
+                    player.setMediaItems(listOf(first.mediaItem(), second.mediaItem()), 0, 0)
+                    player.prepare()
+                }
+                eventually { player.playbackState == Player.STATE_READY && !player.isPlaying }
+                automation.press(automation.queueNode("First"))
+                automation.press(automation.queueNode("横屏播放", "Landscape Player"))
+                automation.press(automation.queueNode("律动", "Rhythm"))
+                automation.queueNode("First  line")
+                val nextLine = arrayOf("下一句：Next line", "Next line: Next line")
+                automation.queueNode(*nextLine)
+
+                withContext(Dispatchers.Main) { player.seekTo(2_850) }
+                eventually { player.currentPosition == 2_850L }
+                if (screenshot) {
+                    automation.waitForIdle(250, 5_000)
+                    val frame = checkNotNull(automation.takeScreenshot())
+                    try { File(app.cacheDir, "android-rhythm-stage.png").outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+                    finally { frame.recycle() }
+                }
+
+                automation.press(automation.queueNode(*nextLine))
+                eventually { player.currentMediaItem?.mediaId == first.id && player.currentPosition == 4_000L }
+                automation.queueNode("Next line")
+                assertNull(automation.findQueueNode(nextLine.toSet()))
+                withContext(Dispatchers.Main) {
+                    assertTrue(!player.playWhenReady)
+                    assertEquals(listOf(first.id, second.id), player.queueIds())
+                    player.seekTo(1, 0)
+                }
+                automation.queueNode("暂无歌词", "No Lyrics")
+            } finally {
+                withContext(Dispatchers.Main) {
+                    activity.finish()
+                    if (screenshot) app.settings.update { it.copy(appearance = appearance) }
+                }
+            }
         }
     }
 

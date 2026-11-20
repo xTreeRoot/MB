@@ -4,6 +4,8 @@ import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import com.xtreeroot.mb.music.StationPlaybackSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -29,13 +31,14 @@ internal enum class StationFailure { Empty, Load }
 internal data class StationStatus(val station: PlaybackStation? = null, val failure: StationFailure? = null)
 
 @OptIn(UnstableApi::class)
-internal class StationPlayback(private val player: Player, private val scope: CoroutineScope,
+internal class StationPlayback(private val player: ExoPlayer, private val scope: CoroutineScope,
                                private val sourceFor: (String) -> StationPlaybackSource?,
                                private val publish: (StationStatus) -> Unit) : Player.Listener {
     var station: PlaybackStation? = null
         private set
     private var job: Job? = null
     private var advanceFrom: MediaItem? = null
+    private var waitingAtEnd = false
     private var shouldPlay = false
     private var failure: StationFailure? = null
 
@@ -44,10 +47,10 @@ internal class StationPlayback(private val player: Player, private val scope: Co
     fun set(station: PlaybackStation?, prefetch: Boolean = false) {
         job?.cancel()
         job = null
-        advanceFrom = null
-        shouldPlay = false
+        cancelPendingAdvance()
         failure = null
         this.station = station
+        updateTailPause()
         publish(StationStatus(station))
         if (prefetch) refill()
     }
@@ -58,26 +61,52 @@ internal class StationPlayback(private val player: Player, private val scope: Co
         return true
     }
 
-    fun updateIntent(play: Boolean) { if (advanceFrom != null) shouldPlay = play }
+    fun updateIntent(play: Boolean): Boolean {
+        if (advanceFrom == null) return false
+        shouldPlay = play
+        return waitingAtEnd
+    }
+
+    fun cancelPendingAdvance() {
+        advanceFrom = null
+        waitingAtEnd = false
+        shouldPlay = false
+    }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-        if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) updateIntent(false)
+        if (playWhenReady) return
+        if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && station != null) {
+            if (atTail()) finishTail()
+            else if (player.currentMediaItem?.track()?.sourceId == station?.sourceId) player.play()
+        } else if (reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) updateIntent(false)
     }
 
     override fun onEvents(player: Player, events: Player.Events) {
         val selected = station ?: return
         if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
             if (player.currentMediaItem?.track()?.sourceId != selected.sourceId) { set(null); return }
-            if (advanceFrom !== player.currentMediaItem) advanceFrom = null
+            if (advanceFrom !== player.currentMediaItem) cancelPendingAdvance()
         }
-        if (!player.playWhenReady || failure != null) return
+        updateTailPause()
+        if (!player.playWhenReady) return
         if (player.playbackState == Player.STATE_ENDED && events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) && atTail()) {
-            seekAfterAppend(play = true)
+            finishTail()
         } else if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_PLAY_WHEN_READY_CHANGED) ||
             (player.playbackState == Player.STATE_READY && events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED))) refill()
     }
 
     private fun atTail() = player.mediaItemCount > 0 && player.currentMediaItemIndex == player.mediaItemCount - 1
+
+    private fun updateTailPause() {
+        val enabled = station != null && atTail()
+        if (player.pauseAtEndOfMediaItems != enabled) player.pauseAtEndOfMediaItems = enabled
+    }
+
+    private fun finishTail() {
+        waitingAtEnd = true
+        seekAfterAppend(play = true)
+        if (player.playWhenReady) player.pause()
+    }
 
     private fun seekAfterAppend(play: Boolean) {
         advanceFrom = player.currentMediaItem
@@ -105,7 +134,9 @@ internal class StationPlayback(private val player: Player, private val scope: Co
                         val advance = advanceFrom != null && advanceFrom === player.currentMediaItem && atTail()
                         val resume = shouldPlay
                         val first = player.mediaItemCount
+                        val order = player.shuffledQueueOrder()?.plus(first until first + tracks.size)
                         player.addMediaItems(tracks.map { it.mediaItem() })
+                        if (order != null) player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(order.toIntArray(), System.nanoTime()))
                         if (advance) {
                             player.seekToDefaultPosition(first)
                             if (player.playbackState == Player.STATE_IDLE) player.prepare()
@@ -126,7 +157,7 @@ internal class StationPlayback(private val player: Player, private val scope: Co
     }
 
     private fun finish(failure: StationFailure?) {
-        advanceFrom = null
+        cancelPendingAdvance()
         job = null
         this.failure = failure
         publish(StationStatus(station, failure))

@@ -277,7 +277,7 @@ internal class PlaybackService : MediaLibraryService() {
                     val current = player.currentMediaItemIndex
                     val next = args.getBoolean("next") && current in 0 until player.mediaItemCount
                     val insertion = if (next) current + 1 else player.mediaItemCount
-                    val shuffled = playOrder(player)?.let { order -> shuffledInsertion(order, insertion, current.takeIf { next }) }
+                    val shuffled = player.shuffledQueueOrder()?.let { order -> shuffledInsertion(order, insertion, current.takeIf { next }) }
                     if (player.mediaItemCount == 0) player.pause()
                     player.addMediaItem(insertion, track.mediaItem())
                     if (shuffled != null) player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(shuffled, System.nanoTime()))
@@ -568,20 +568,12 @@ internal class PlaybackService : MediaLibraryService() {
         player.shuffleModeEnabled = snapshot.shuffle
     }
 
-    private fun playOrder(player: Player): List<Int>? {
-        if (!player.shuffleModeEnabled) return null
-        val timeline = player.currentTimeline
-        return generateSequence(timeline.getFirstWindowIndex(true)) { index ->
-            timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, true)
-        }.takeWhile { it != C.INDEX_UNSET }.toList()
-    }
-
     private fun persist(periodic: Boolean = false) {
         val player = player ?: return
         val tracks = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).track() ?: return }
         if (tracks.isEmpty()) storage.edit().remove("queue").apply()
         else storage.edit().putString("queue", QueueSnapshot(tracks, player.currentMediaItemIndex,
-            player.currentPosition, player.repeatMode, player.shuffleModeEnabled, playOrder(player), stations?.station).encode()).apply()
+            player.currentPosition, player.repeatMode, player.shuffleModeEnabled, player.shuffledQueueOrder(), stations?.station).encode()).apply()
         val now = SystemClock.elapsedRealtime()
         if (!periodic || now - lastPortableQueueNotification >= 30_000) {
             lastPortableQueueNotification = now

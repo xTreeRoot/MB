@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
@@ -27,8 +28,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.xtreeroot.mb.music.CaptionLine
 import com.xtreeroot.mb.music.CaptionWord
@@ -112,7 +115,8 @@ private fun LyricWord(word: CaptionWord, position: Long, style: LyricStyle, inde
     val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (position >= 0) 0.92f else 0.62f)
     val progress = word.progress(position)
     val age = (position - word.startMs) / 600f
-    Box(Modifier.graphicsLayer { rotationZ = if (style == LyricStyle.Tilt && animate && index % 3 == 0) -4f else 0f }
+    TimedCaptionWord(word.text, progress, typography, weight, dim,
+        Modifier.graphicsLayer { rotationZ = if (style == LyricStyle.Tilt && animate && index % 3 == 0) -4f else 0f }
         .drawWithContent {
             drawContent()
             if (sparks && age >= 0f && age < 1f) {
@@ -123,10 +127,17 @@ private fun LyricWord(word: CaptionWord, position: Long, style: LyricStyle, inde
                         size.height / 2 + (sin(angle).toFloat() * 22 - 15) * age * 1.dp.toPx()))
                 }
             }
-        }) {
-        Text(word.text, color = dim, style = typography, fontWeight = weight)
-        if (progress > 0f) Text(word.text, Modifier.matchParentSize().clearAndSetSemantics { }.drawWithContent {
-            if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Ltr) {
+        })
+}
+
+@Composable
+internal fun TimedCaptionWord(text: String, progress: Float, typography: TextStyle, weight: FontWeight,
+                              dim: Color, modifier: Modifier = Modifier) {
+    val accent = MaterialTheme.colorScheme.primary
+    Box(modifier) {
+        Text(text, color = dim, style = typography, fontWeight = weight)
+        if (progress > 0f) Text(text, Modifier.matchParentSize().clearAndSetSemantics { }.drawWithContent {
+            if (layoutDirection == LayoutDirection.Ltr) {
                 clipRect(right = size.width * progress) { this@drawWithContent.drawContent() }
             } else clipRect(left = size.width * (1f - progress)) { this@drawWithContent.drawContent() }
         }, color = accent, style = typography, fontWeight = weight)

@@ -13,6 +13,7 @@ import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xtreeroot.mb.music.AudioQuality
 import com.xtreeroot.mb.music.MediaResource
@@ -30,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -326,6 +328,136 @@ class StreamingDeviceTest {
             }
         } finally {
             withContext(Dispatchers.Main) { scope.cancel(); audio.release() }
+        }
+    }
+
+    @Test fun stationTailTakesPrecedenceOverRepeatAndShuffleEvenAfterAnEmptyPrefetch() = runBlocking {
+        for ((repeat, shuffle) in listOf(Player.REPEAT_MODE_OFF to false, Player.REPEAT_MODE_ALL to false,
+            Player.REPEAT_MODE_ONE to false, Player.REPEAT_MODE_OFF to true)) {
+            val tail = Track("radio", "first", "Tail", "", durationMs = 1000)
+            val previous = tail.copy(sourceTrackId = "previous", title = "Previous")
+            val next = tail.copy(sourceTrackId = "next", title = "Next")
+            val final = tail.copy(sourceTrackId = "final", title = "Final")
+            val batch = CompletableDeferred<List<Track>>()
+            val calls = AtomicInteger()
+            val client = stationFixture()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val audio = withContext(Dispatchers.Main) { player(client, stationMedia(client)) }
+            var status = StationStatus()
+            var video: VideoPlayback? = null
+            try {
+                val session = withContext(Dispatchers.Main) {
+                    val source = stationProvider {
+                        when (calls.incrementAndGet()) {
+                            in 1..3 -> emptyList()
+                            4 -> batch.await()
+                            else -> awaitCancellation()
+                        }
+                    }
+                    val radio = StationPlayback(audio, scope, { source }, { status = it })
+                    audio.setMediaItems(listOf(previous.mediaItem(), tail.mediaItem()), 1, 0)
+                    audio.repeatMode = repeat
+                    audio.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(intArrayOf(1, 0), 2L))
+                    audio.shuffleModeEnabled = shuffle
+                    radio.set(PlaybackStation(tail.sourceId, "daily", "Daily"), prefetch = true)
+                    audio.prepare()
+                    val coordinator = VideoPlayback(instrumentation.targetContext, client, audio, scope, { null }, { AudioQuality.Standard })
+                    video = coordinator
+                    CaptionSessionPlayer(audio, coordinator, radio) {}
+                }
+                eventually { status.failure == StationFailure.Empty && audio.playbackState == Player.STATE_READY }
+                withContext(Dispatchers.Main) { session.play() }
+                try {
+                    eventually { calls.get() == 4 && !audio.isPlaying && audio.currentMediaItem?.mediaId == tail.id }
+                } catch (failure: TimeoutCancellationException) {
+                    throw AssertionError("Station did not wait at the tail: repeat=$repeat, shuffle=$shuffle", failure)
+                }
+                val pause = repeat == Player.REPEAT_MODE_ONE
+                if (pause) withContext(Dispatchers.Main) { session.pause() }
+                batch.complete(listOf(next, final))
+                eventually {
+                    audio.currentMediaItem?.mediaId == next.id && audio.playbackState == Player.STATE_READY && audio.isPlaying != pause
+                }
+                withContext(Dispatchers.Main) {
+                    assertEquals(4, audio.mediaItemCount)
+                    assertEquals(repeat, audio.repeatMode)
+                    assertEquals(shuffle, audio.shuffleModeEnabled)
+                    if (shuffle) {
+                        val timeline = audio.currentTimeline
+                        assertEquals(listOf(1, 0, 2, 3), generateSequence(timeline.getFirstWindowIndex(true)) { index ->
+                            timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, true).takeIf { it >= 0 }
+                        }.toList())
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) { video?.close(); scope.cancel(); audio.release() }
+            }
+        }
+    }
+
+    @Test fun stationWithAPrefetchedSuccessorDoesNotPauseAtTheOldTail() = runBlocking {
+        val current = Track("radio", "long-tail", "Tail", "", durationMs = 12_000)
+        val next = current.copy(sourceTrackId = "next", title = "Next")
+        val batch = CompletableDeferred<List<Track>>()
+        val calls = AtomicInteger()
+        val client = stationFixture()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) { player(client, stationMedia(client)) }
+        try {
+            withContext(Dispatchers.Main) {
+                val source = stationProvider { if (calls.incrementAndGet() == 1) batch.await() else awaitCancellation() }
+                val radio = StationPlayback(audio, scope, { source }, {})
+                audio.setMediaItem(current.mediaItem())
+                radio.set(PlaybackStation(current.sourceId, "daily", "Daily"), prefetch = true)
+                audio.prepare()
+                audio.play()
+            }
+            eventually { audio.isPlaying && audio.currentMediaItem?.mediaId == current.id }
+            batch.complete(listOf(next))
+            eventually { audio.mediaItemCount == 2 && audio.isPlaying && audio.currentMediaItem?.mediaId == current.id }
+            withContext(Dispatchers.Main) { audio.seekTo(11_800) }
+            eventually { audio.isPlaying && audio.currentMediaItem?.mediaId == next.id }
+        } finally {
+            withContext(Dispatchers.Main) { scope.cancel(); audio.release() }
+        }
+    }
+
+    @Test fun manuallyReplayingTheStationTailKeepsTheSelectionWhenTheBatchArrives() = runBlocking {
+        val tail = Track("radio", "long-tail", "Tail", "", durationMs = 12_000)
+        val next = tail.copy(sourceTrackId = "next", title = "Next")
+        val batch = CompletableDeferred<List<Track>>()
+        val calls = AtomicInteger()
+        val client = stationFixture()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) { player(client, stationMedia(client)) }
+        val video = withContext(Dispatchers.Main) {
+            VideoPlayback(instrumentation.targetContext, client, audio, scope, { null }, { AudioQuality.Standard })
+        }
+        try {
+            val session = withContext(Dispatchers.Main) {
+                val provider = stationProvider { if (calls.incrementAndGet() == 1) batch.await() else awaitCancellation() }
+                val radio = StationPlayback(audio, scope, { provider }, {})
+                val session = CaptionSessionPlayer(audio, video, radio) {}
+                audio.setMediaItems(listOf(tail.mediaItem()), 0, 11_800)
+                radio.set(PlaybackStation(tail.sourceId, "daily", "Daily"), prefetch = true)
+                session.prepare()
+                session.play()
+                session
+            }
+            eventually { calls.get() == 1 && audio.playbackState == Player.STATE_ENDED }
+            withContext(Dispatchers.Main) {
+                session.seekToDefaultPosition(0)
+                session.play()
+            }
+            eventually { audio.isPlaying && audio.currentPosition in 1..2_000L }
+            batch.complete(listOf(next))
+            eventually { audio.mediaItemCount == 2 }
+            withContext(Dispatchers.Main) {
+                assertEquals(tail.id, audio.currentMediaItem?.mediaId)
+                assertTrue(audio.isPlaying)
+            }
+        } finally {
+            withContext(Dispatchers.Main) { video.close(); scope.cancel(); audio.release() }
         }
     }
 

@@ -19,6 +19,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.WebViewCompat
 import com.xtreeroot.mb.ui.LocalMBEnglish
 import com.xtreeroot.mb.ui.PluginBrowserPanel
 import com.xtreeroot.mb.ui.mb
@@ -52,8 +53,9 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
             Log.w(pluginBrowserLogTag, "compat activity is outside the isolated process")
             return finishWithIssue(PluginBrowserIssue.Startup)
         }
-        val suffix = directorySuffix ?: return finishWithIssue(PluginBrowserIssue.Startup)
         if (attempt != null && attempt != page.id) return finishWithIssue(PluginBrowserIssue.Startup)
+        ownsProcess = true
+        val suffix = directorySuffix ?: return finishWithIssue(startupIssue())
         try {
             if (attempt == null) {
                 File(applicationInfo.dataDir).listFiles { file ->
@@ -64,7 +66,6 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
                 }?.forEach(File::deleteRecursively)
                 attempt = page.id
             }
-            ownsProcess = true
         } catch (failure: RuntimeException) {
             Log.w(pluginBrowserLogTag, "compat data cleanup: ${failure.javaClass.simpleName}")
             return finishWithIssue(PluginBrowserIssue.Startup)
@@ -79,7 +80,10 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
                     if (!closing.value) PluginBrowserPanel(page, mb("取消", "Cancel").takeIf { page.signIn != null }
                         ?: mb("完成", "Done"), close = { complete(Activity.RESULT_CANCELED) },
                         create = PluginBrowserSession::createInDisposableProcess,
-                        onFailure = { complete(failed, Intent().putExtra(issueKey, it.name)) },
+                        onFailure = { issue ->
+                            val result = if (issue == PluginBrowserIssue.Startup) startupIssue() else issue
+                            complete(failed, Intent().putExtra(issueKey, result.name))
+                        },
                         onDocumentError = { complete(failed, Intent().putExtra(documentErrorKey, it)) },
                         onCookies = { complete(Activity.RESULT_OK, Intent().putExtra(cookieKey, it)) },
                         onReleased = { if (closing.value) finish() })
@@ -98,6 +102,11 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
     private fun finishWithIssue(issue: PluginBrowserIssue) {
         setResult(failed, Intent().putExtra(issueKey, issue.name))
         finish()
+    }
+
+    private fun startupIssue(): PluginBrowserIssue {
+        val present = runCatching { WebViewCompat.getCurrentWebViewPackage(this) != null }.getOrNull()
+        return if (present == false) PluginBrowserIssue.MissingProvider else PluginBrowserIssue.Startup
     }
 
     override fun onDestroy() {

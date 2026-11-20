@@ -31,6 +31,20 @@ internal const val pluginBrowserLogTag = "MBPluginBrowser"
 
 internal enum class PluginBrowserIssue { MissingProvider, UnsupportedProvider, Startup, Navigation, ServerUnavailable, Renderer }
 
+internal enum class PluginBrowserRoute(val issue: PluginBrowserIssue? = null) {
+    Profile, DisposableProcess, MissingProvider(PluginBrowserIssue.MissingProvider),
+    StartupFailure(PluginBrowserIssue.Startup), UnsupportedProvider(PluginBrowserIssue.UnsupportedProvider)
+}
+
+internal fun pluginBrowserRoute(disposableProcessSupported: Boolean, provider: Result<Boolean>,
+                                profiles: Result<Boolean>?): PluginBrowserRoute = when {
+    provider.getOrNull() == true && profiles?.getOrNull() == true -> PluginBrowserRoute.Profile
+    disposableProcessSupported -> PluginBrowserRoute.DisposableProcess
+    provider.isFailure || profiles?.isFailure == true -> PluginBrowserRoute.StartupFailure
+    provider.getOrNull() == false -> PluginBrowserRoute.MissingProvider
+    else -> PluginBrowserRoute.UnsupportedProvider
+}
+
 @MainThread
 @SuppressLint("RequiresFeature")
 internal class PluginBrowserSession private constructor(val view: WebView, private val cookies: CookieManager,
