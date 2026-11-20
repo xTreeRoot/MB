@@ -196,7 +196,7 @@ private fun LazyListScope.videoQueue(state: PlaybackState, select: (Int) -> Unit
             .semantics { contentDescription = queueLabel }
             .padding(horizontal = 8.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            TrackRowArtwork(track, mark, Modifier.width(88.dp).aspectRatio(16f / 9f))
+            VideoArtwork(track, mark, Modifier.width(88.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,

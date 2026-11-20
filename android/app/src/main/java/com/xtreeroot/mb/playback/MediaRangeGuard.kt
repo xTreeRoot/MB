@@ -106,6 +106,10 @@ internal class MediaRangeGuard(private val sequentialFile: SequentialAudioFile? 
             }
             if (response.header("Content-Encoding")?.equals("identity", ignoreCase = true) == false) throw MediaFetchFailure()
             val body = response.body ?: throw MediaFetchFailure()
+            if ((response.code == 200 || start == 0L) && (contentType.isNullOrEmpty() || contentType == "application/octet-stream") &&
+                htmlStart.containsMatchIn(response.peekBody(256).string().trimStart('\uFEFF', ' ', '\t', '\r', '\n'))) {
+                throw MediaFetchFailure(status = response.code, html = true)
+            }
             val length = body.contentLength().takeIf { it >= 0 }
             val rangeHeader = response.header("Content-Range")
             val positions = rangeHeader?.let(satisfied::matchEntire)?.groupValues?.drop(1)?.map { it.toLongOrNull() }
@@ -183,6 +187,7 @@ internal class MediaRangeGuard(private val sequentialFile: SequentialAudioFile? 
         val requested = Regex("bytes=(\\d+)-(\\d*)")
         val satisfied = Regex("bytes (\\d+)-(\\d+)/(\\d+)", RegexOption.IGNORE_CASE)
         val unsatisfied = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE)
+        val htmlStart = Regex("^(?:<!doctype[\\t\\r\\n ]+html|<html)(?:[\\t\\r\\n />]|$)", RegexOption.IGNORE_CASE)
         val explicitExpiry = Regex("<Code>(?:ExpiredToken|RequestExpired)</Code>")
         val transientStatus = setOf(408, 429, 500, 502, 503, 504)
     }

@@ -2,6 +2,7 @@ package com.xtreeroot.mb.ui
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
@@ -13,10 +14,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.platform.app.InstrumentationRegistry
 import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.MainActivity
+import com.xtreeroot.mb.music.DiscoveryCategory
+import com.xtreeroot.mb.music.DiscoverySection
+import com.xtreeroot.mb.music.DiscoverySource
 import com.xtreeroot.mb.music.Track
+import com.xtreeroot.mb.music.TrackPage
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.playback.PlaybackState
 import com.xtreeroot.mb.playback.wave
@@ -39,6 +46,66 @@ import org.junit.Test
 class VideoDetailsDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as MBApplication
+
+    @Test fun discoveryAndCategoryUseVideoCardsWithDurationsAndKeepTheSectionQueue() = runBlocking {
+        val tracks = listOf(
+            Track("video-grid", "first", "Morning Lights", "Fixture Artist", durationMs = 61_000),
+            Track("video-grid", "second", "Night Drive", "Fixture Artist"),
+            Track("video-grid", "third", "After the Rain", "Fixture Artist", durationMs = 122_000))
+        val category = DiscoveryCategory.Chart
+        val source = object : DiscoverySource {
+            override val id = "video-grid"
+            override suspend fun home() = listOf(discovery(category))
+            override suspend fun discovery(category: DiscoveryCategory) = DiscoverySection(category, tracks)
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+        }
+        val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val opened = mutableStateOf(false)
+        val video = mutableStateOf(true)
+        val selection = mutableStateOf<Pair<List<Track>, Track>?>(null)
+        try {
+            withContext(Dispatchers.Main) {
+                val factory = viewModelFactory { initializer { BrowseModel(app, source) } }
+                val model = ViewModelProvider(activity, factory)["video-grid", BrowseModel::class.java]
+                model.refresh()
+                activity.setContent {
+                    MaterialTheme(colorScheme = musicDark) {
+                        CompositionLocalProvider(LocalMBEnglish provides true, LocalVideoBrowse provides video.value) {
+                            Surface {
+                                val play: (List<Track>, Track) -> Unit = { queue, track -> selection.value = queue to track }
+                                if (opened.value) CategoryView(model, category, play)
+                                else Discover(model, play) { model.open(it); opened.value = true }
+                            }
+                        }
+                    }
+                }
+            }
+            suspend fun verifyCards() {
+                await(tracks.first().title)
+                await(tracks[1].title)
+                val first = Rect().also(matches(tracks.first().title).first()::getBoundsInScreen)
+                val second = Rect().also(matches(tracks[1].title).first()::getBoundsInScreen)
+                assertTrue("Video cards should share a row: $first and $second", first.top == second.top && first.right <= second.left)
+                await("1:01")
+                assertTrue(matches("0:00").isEmpty())
+            }
+            verifyCards()
+            captureVideoControl("android-discovery-video-grid.png")
+            tap("More")
+            await("Play All")
+            verifyCards()
+            tap(tracks[1].title)
+            assertEquals(tracks to tracks[1], withContext(Dispatchers.Main) { selection.value })
+            withContext(Dispatchers.Main) { video.value = false }
+            await(tracks[1].title) { node ->
+                val first = matches(tracks.first().title).firstOrNull()?.let { Rect().also(it::getBoundsInScreen) }
+                first != null && first.bottom <= Rect().also(node::getBoundsInScreen).top
+            }
+        } finally {
+            withContext(Dispatchers.Main) { activity.finish() }
+        }
+    }
 
     @Test fun videoTabsShareTheLoadedCommentPageAndResetOnTrackChange() = runBlocking {
         val id = "video-comments-${UUID.randomUUID()}"

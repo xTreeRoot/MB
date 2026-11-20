@@ -61,6 +61,20 @@ class MediaRangeGuardTest {
         assertThrows(MediaFetchFailure::class.java) { get("bytes=0-2") }
     }
 
+    @Test fun mislabelledHtmlIsRejectedWithoutChangingTheStreamRepresentation() {
+        server.enqueue(MockResponse().setBody("\uFEFF \r\n<!DOCTYPE html><html>Unavailable</html>")
+            .setHeader("Content-Type", "application/octet-stream").setHeader("ETag", "\"error\""))
+        server.enqueue(MockResponse().setBody("<HTML lang=en>Unavailable</HTML>"))
+        server.enqueue(part("bytes 0-3/10", "RIFF", "\"media\""))
+        server.enqueue(part("bytes 4-9/10", "<html>", "\"media\""))
+
+        repeat(2) {
+            assertEquals(true, assertThrows(MediaFetchFailure::class.java) { get() }.html)
+        }
+        assertEquals("RIFF", get("bytes=0-3"))
+        assertEquals("<html>", get("bytes=4-9"))
+    }
+
     @Test fun forbiddenDoesNotTriggerRenewalWithoutExplicitExpiry() {
         server.enqueue(MockResponse().setResponseCode(403).setBody("<Error><Code>AccessDenied</Code></Error>"))
         server.enqueue(MockResponse().setResponseCode(403).setBody("<Error><Code>ExpiredToken</Code></Error>"))

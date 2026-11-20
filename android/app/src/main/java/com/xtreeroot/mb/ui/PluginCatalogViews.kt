@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -176,7 +175,7 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
                 section.tracks.forEach { track ->
                     val index = trackIndex++
                     val playSection = { select(if (entity != null) tracks else section.tracks, track) }
-                    if (section.videos || videoMode && entity?.editable != true) item { PluginVideoCard(track, playSection) }
+                    if (section.videos || videoMode && entity?.editable != true) item { VideoCoverCard(track, playSection) }
                     else item(span = { GridItemSpan(maxLineSpan) }) {
                         TrackRow(track, actions = {
                             if (entity?.editable == true && ("removeFromPlaylist" in capabilities || "movePlaylistTrack" in capabilities && index > 0)) {
@@ -430,21 +429,6 @@ private fun CatalogLinkRow(link: PluginCatalogLink, open: (PluginCatalogRequest)
     val title = link.title.ifBlank { (link.destination as? PluginCatalogRequest.Collection)?.collection?.label() ?: mb("查看更多", "See More") }
     ListItem(modifier = Modifier.clickable { open(link.destination) }, headlineContent = { Text(title) },
         supportingContent = link.subtitle.takeIf(String::isNotBlank)?.let { subtitle -> { Text(subtitle) } })
-}
-
-@Composable
-private fun PluginVideoCard(track: Track, play: () -> Unit) {
-    Column(Modifier.padding(8.dp).clickable(enabled = !track.isUnavailable, onClick = play)) {
-        Artwork(track, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                TrackPlaybackStatus(track)
-            }
-            TrackActionsButton(track)
-        }
-    }
 }
 
 @Composable

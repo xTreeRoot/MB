@@ -58,6 +58,8 @@ class StreamingDeviceTest {
 
     @Test fun exoplayerSkipsAWebPageReturnedAsThePrimaryStream() = startsOnTheBackup(200, "text/html; charset=utf-8")
 
+    @Test fun exoplayerSkipsAWebPageMislabelledAsBinary() = startsOnTheBackup(200, "application/octet-stream")
+
     private fun startsOnTheBackup(status: Int, contentType: String) = runBlocking {
         val wave = wave(180)
         val requests = CopyOnWriteArrayList<Request>()

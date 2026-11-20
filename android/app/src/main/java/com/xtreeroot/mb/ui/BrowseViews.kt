@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -105,12 +107,11 @@ internal fun Discover(
 ) {
     val home by model.home.collectAsStateWithLifecycle()
     val wideCovers = LocalVideoBrowse.current
-    RefreshableList(refreshing = home.loading && home.value.isNotEmpty(), refresh = { if (!home.loading) model.refresh() },
-        contentPadding = PaddingValues(bottom = 20.dp)) {
-        if (home.loading && home.value.isEmpty()) item { Loading() }
-        home.error?.let { message -> item { Retry(message, model::refresh) } }
+    RefreshableDiscoveryGrid(wideCovers, refreshing = home.loading && home.value.isNotEmpty(), refresh = { if (!home.loading) model.refresh() }) {
+        if (home.loading && home.value.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Loading() }
+        home.error?.let { message -> item(span = { GridItemSpan(maxLineSpan) }) { Retry(message, model::refresh) } }
         home.value.forEach { section ->
-            item(key = "header-${section.category}") {
+            item(key = "header-${section.category}", span = { GridItemSpan(maxLineSpan) }) {
                 Row(Modifier.padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 3.dp).fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -124,18 +125,23 @@ internal fun Discover(
                     }
                 }
             }
-            section.error?.let { item { Retry(it, model::refresh) } }
+            section.error?.let { item(span = { GridItemSpan(maxLineSpan) }) { Retry(it, model::refresh) } }
             when {
-                section.tracks.isEmpty() -> if (section.error == null) item { EmptyMessage(mb("暂无内容", "No Content")) }
+                section.tracks.isEmpty() -> if (section.error == null) item(span = { GridItemSpan(maxLineSpan) }) {
+                    EmptyMessage(mb("暂无内容", "No Content"))
+                }
+                wideCovers -> gridItems(section.tracks, key = { "${section.category}-${it.id}" }) { track ->
+                    VideoCoverCard(track) { play(section.tracks, track) }
+                }
                 section.category != DiscoveryCategory.Chart -> item {
                     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(section.tracks, key = Track::id) { track ->
                             val lead = section.category == DiscoveryCategory.Recommended
-                            val width = if (lead) 236.dp else if (wideCovers) 168.dp else 136.dp
+                            val width = if (lead) 236.dp else 136.dp
                             Column(Modifier.width(width).clip(RoundedCornerShape(8.dp))
                                 .clickable(enabled = !track.isUnavailable) { play(section.tracks, track) }) {
                                 Box {
-                                    Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (wideCovers || lead) 16f / 9f else 1f))
+                                    Artwork(track, Modifier.fillMaxWidth().aspectRatio(if (lead) 16f / 9f else 1f))
                                     TrackActionsButton(track, Modifier.align(Alignment.TopEnd), onArtwork = true)
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -147,10 +153,9 @@ internal fun Discover(
                         }
                     }
                 }
-                else -> items(section.tracks.take(3), key = { "${section.category}-${it.id}" }) { track ->
+                else -> gridItems(section.tracks.take(3), key = { "${section.category}-${it.id}" }) { track ->
                     val rank = section.tracks.indexOf(track) + 1
-                    if (wideCovers) VideoPreviewRow(track) { play(section.tracks, track) }
-                    else TrackRow(track, rank = rank) { play(section.tracks, track) }
+                    TrackRow(track, rank = rank) { play(section.tracks, track) }
                 }
             }
         }
@@ -163,18 +168,22 @@ internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory,
     val details by model.details.collectAsStateWithLifecycle()
     val tracks = details.value?.takeIf { it.category == category }?.tracks.orEmpty()
     val refresh = { model.refreshCategory(category) }
-    RefreshableList(refreshing = details.loading && tracks.isNotEmpty(), refresh = refresh) {
+    val video = LocalVideoBrowse.current
+    RefreshableDiscoveryGrid(video, refreshing = details.loading && tracks.isNotEmpty(), refresh = refresh) {
         when {
-            details.error != null -> item { Retry(checkNotNull(details.error), refresh) }
-            details.loading && tracks.isEmpty() -> item { Loading() }
-            !details.loading && tracks.isEmpty() -> item { EmptyMessage(mb("暂无内容", "No Content")) }
+            details.error != null -> item(span = { GridItemSpan(maxLineSpan) }) { Retry(checkNotNull(details.error), refresh) }
+            details.loading && tracks.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) { Loading() }
+            !details.loading && tracks.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) { EmptyMessage(mb("暂无内容", "No Content")) }
         }
         val first = tracks.firstOrNull { !it.isUnavailable }
-        if (first != null) item {
+        if (first != null) item(span = { GridItemSpan(maxLineSpan) }) {
             Button(onClick = { play(tracks, first) },
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) { Text(mb("播放全部", "Play All")) }
         }
-        items(tracks, key = Track::id) { track -> BrowsingTrackRow(track) { play(tracks, track) } }
+        gridItems(tracks, key = Track::id) { track ->
+            if (video) VideoCoverCard(track) { play(tracks, track) }
+            else TrackRow(track) { play(tracks, track) }
+        }
     }
 }
 
@@ -269,7 +278,7 @@ internal fun VideoPreviewRow(track: Track, enabled: Boolean = true, selectedTrac
         headlineContent = { Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
             color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
         supportingContent = { TrackSubtitle(track) },
-        leadingContent = { TrackRowArtwork(track, mark, Modifier.width(112.dp).aspectRatio(16f / 9f)) },
+        leadingContent = { VideoArtwork(track, mark, Modifier.width(112.dp)) },
         trailingContent = { TrackActionsButton(track) })
 }
 
