@@ -1,6 +1,8 @@
 package com.xtreeroot.mb.plugin
 
+import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -8,7 +10,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.util.Log
-import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -19,7 +20,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.ProcessGlobalConfig
 import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.xtreeroot.mb.ui.LocalMBEnglish
 import com.xtreeroot.mb.ui.PluginBrowserPanel
 import com.xtreeroot.mb.ui.mb
@@ -33,8 +36,16 @@ private const val processName = ":plugin_browser"
 private const val directorySuffixPrefix = "mb-plugin-browser-"
 internal const val compatDataDirectoryPrefix = "app_webview_$directorySuffixPrefix"
 
-internal fun isPluginBrowserProcess(packageName: String): Boolean =
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && Application.getProcessName() == "$packageName$processName"
+internal fun isPluginBrowserProcess(context: Context): Boolean {
+    val current = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Application.getProcessName()
+    else context.getSystemService(ActivityManager::class.java)?.runningAppProcesses
+        ?.firstOrNull { it.pid == Process.myPid() }?.processName
+    return current == "${context.packageName}$processName"
+}
+
+internal fun disposableBrowserSupport(context: Context): Result<Boolean> = runCatching {
+    WebViewFeature.isStartupFeatureSupported(context, WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX)
+}
 
 internal data class PluginBrowserPage(val title: String, val url: URI, val id: UUID, val signIn: PluginWebSignIn? = null)
 
@@ -46,16 +57,13 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         val page = intent.page() ?: return finishWithIssue(PluginBrowserIssue.Startup)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            return finishWithIssue(PluginBrowserIssue.UnsupportedProvider)
-        }
-        if (!isPluginBrowserProcess(packageName)) {
+        if (!isPluginBrowserProcess(this)) {
             Log.w(pluginBrowserLogTag, "compat activity is outside the isolated process")
             return finishWithIssue(PluginBrowserIssue.Startup)
         }
         if (attempt != null && attempt != page.id) return finishWithIssue(PluginBrowserIssue.Startup)
         ownsProcess = true
-        val suffix = directorySuffix ?: return finishWithIssue(startupIssue())
+        val suffix = directorySuffix ?: return finishWithIssue(startupIssue(directoryProblem))
         try {
             if (attempt == null) {
                 File(applicationInfo.dataDir).listFiles { file ->
@@ -106,9 +114,9 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         finish()
     }
 
-    private fun startupIssue(): PluginBrowserIssue {
+    private fun startupIssue(fallback: PluginBrowserIssue = PluginBrowserIssue.Startup): PluginBrowserIssue {
         val present = runCatching { WebViewCompat.getCurrentWebViewPackage(this) != null }.getOrNull()
-        return if (present == false) PluginBrowserIssue.MissingProvider else PluginBrowserIssue.Startup
+        return if (present == false) PluginBrowserIssue.MissingProvider else fallback
     }
 
     override fun onDestroy() {
@@ -118,6 +126,7 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
 
     companion object {
         private var directorySuffix: String? = null
+        private var directoryProblem = PluginBrowserIssue.Startup
         private var attempt: UUID? = null
         const val failed = Activity.RESULT_FIRST_USER
         const val cookieKey = "completed-cookies"
@@ -125,11 +134,20 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         const val documentErrorKey = "browser-document-error"
         const val userCancelledKey = "browser-user-cancelled"
 
-        fun prepareProcess() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || directorySuffix != null) return
+        @SuppressLint("RequiresFeature")
+        fun prepareProcess(context: Context) {
+            val support = disposableBrowserSupport(context)
+            support.exceptionOrNull()?.let { failure ->
+                Log.w(pluginBrowserLogTag, "compat data directory capability: ${failure.javaClass.simpleName}")
+                return
+            }
+            if (support.getOrNull() != true) {
+                directoryProblem = PluginBrowserIssue.UnsupportedProvider
+                return
+            }
             val suffix = directorySuffixPrefix + UUID.randomUUID()
             try {
-                WebView.setDataDirectorySuffix(suffix)
+                ProcessGlobalConfig.apply(ProcessGlobalConfig().setDataDirectorySuffix(context, suffix))
                 directorySuffix = suffix
             } catch (failure: RuntimeException) {
                 Log.w(pluginBrowserLogTag, "compat data directory: ${failure.javaClass.simpleName}")

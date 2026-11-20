@@ -15,10 +15,13 @@ import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
 import java.io.EOFException
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
 import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,14 +36,18 @@ internal class MediaFetchFailure(val recovery: MediaRecovery? = null, val status
 @OptIn(UnstableApi::class)
 internal fun Throwable.playbackDiagnostic(code: Int): String {
     val name = PlaybackException.getErrorCodeName(code)
-    val httpStatus = mediaCauses(this).mapNotNull { failure ->
+    val detail = mediaCauses(this).mapNotNull { failure ->
         when (failure) {
-            is MediaFetchFailure -> failure.status
-            is HttpDataSource.InvalidResponseCodeException -> failure.responseCode
+            is MediaFetchFailure -> failure.status?.let { "HTTP $it" }
+            is HttpDataSource.InvalidResponseCodeException -> "HTTP ${failure.responseCode}"
+            is UnknownHostException -> "DNS"
+            is SSLException -> "TLS"
+            is SocketTimeoutException -> "TIMEOUT"
+            is ConnectException, is NoRouteToHostException -> "CONNECT"
             else -> null
         }
     }.firstOrNull()
-    return if (httpStatus == null) name else "$name / HTTP $httpStatus"
+    return if (detail == null) name else "$name / $detail"
 }
 
 internal class MediaRecoveryBudget {

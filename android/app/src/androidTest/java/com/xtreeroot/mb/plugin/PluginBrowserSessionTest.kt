@@ -3,7 +3,6 @@ package com.xtreeroot.mb.plugin
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.view.accessibility.AccessibilityNodeInfo
@@ -38,13 +37,14 @@ class PluginBrowserSessionTest {
     @Test fun compatibilityBrowserStartsInADifferentProcessAndDiscardsPreviousAttemptData() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
         assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
         val automation = instrumentation.uiAutomation
         fun profiles() = File(context.applicationInfo.dataDir).listFiles { file ->
             file.isDirectory && file.name.startsWith(compatDataDirectoryPrefix)
         }.orEmpty()
-        val target = URI("https://example.invalid/")
+        val target = URI("https://${UUID.randomUUID()}.fixture.test/")
+        val ordinary = withContext(Dispatchers.Main) { CookieManager.getInstance() }
         suspend fun waitFor(condition: () -> Boolean) = withTimeout(10_000) {
             while (!condition()) delay(50)
         }
@@ -56,7 +56,9 @@ class PluginBrowserSessionTest {
             val title = "Compatibility fixture"
             val id = UUID.randomUUID()
             val html = if (completeWithCookie) {
-                """<script>setTimeout(() => { document.cookie = 'session=fixture; Secure; Path=/'; }, 1500);</script>"""
+                """<script>setTimeout(() => {
+                    if (!document.cookie.includes('ordinary=fixture')) document.cookie = 'session=fixture; Secure; Path=/';
+                }, 1500);</script>"""
             } else "<p>Waiting for cancel</p>"
             val request = PluginWebSignIn(title, target, target, setOf("session"), null, id, html = html)
             val page = PluginBrowserPage(title, target, id, request)
@@ -76,6 +78,10 @@ class PluginBrowserSessionTest {
             waitFor { processId().isEmpty() }
         }
         try {
+            withContext(Dispatchers.Main) {
+                ordinary.store(target.toString(), "ordinary=fixture; Secure; Path=/")
+                ordinary.flush()
+            }
             val first = open()
             File(first, "fixture").writeText("Disposable test data")
             close()
@@ -83,15 +89,17 @@ class PluginBrowserSessionTest {
             assertTrue(first != second)
             assertTrue(!first.exists())
             waitFor { processId().isEmpty() }
+            assertEquals("ordinary=fixture", withContext(Dispatchers.Main) { ordinary.getCookie(target.toString()) })
         } finally {
             if (processId().isNotEmpty()) shell("input keyevent KEYCODE_BACK")
+            withContext(Dispatchers.Main) { ordinary.store(target.toString(), "ordinary=; Max-Age=0; Secure; Path=/") }
         }
     }
 
     @Test fun compatibilityBrowserReturnsNavigationFailureToItsCaller() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
         assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
         val target = unavailableAddress()
         val request = PluginWebSignIn("Fixture", target, target, setOf("session"), null)
@@ -119,7 +127,7 @@ class PluginBrowserSessionTest {
     @Test fun compatibilityBrowserDistinguishesAnInvalidLaunchFromUserCancellation() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
         assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
         val automation = instrumentation.uiAutomation
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)

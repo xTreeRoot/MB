@@ -46,6 +46,7 @@ import com.xtreeroot.mb.plugin.PluginBrowserSession
 import com.xtreeroot.mb.plugin.PluginWebLink
 import com.xtreeroot.mb.plugin.PluginWebSignIn
 import com.xtreeroot.mb.plugin.PluginWebSignInBroker
+import com.xtreeroot.mb.plugin.disposableBrowserSupport
 import com.xtreeroot.mb.plugin.pluginBrowserLogTag
 import com.xtreeroot.mb.plugin.pluginBrowserRoute
 import kotlinx.coroutines.delay
@@ -114,8 +115,9 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
         val profiles = if (installed != null) runCatching { PluginBrowserSession.available() } else null
         profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
-        when (val route = pluginBrowserRoute(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P,
-            provider.map { it != null }, profiles)) {
+        val disposable = disposableBrowserSupport(context)
+        disposable.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "data directory capability: ${it.javaClass.simpleName}") }
+        when (val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles)) {
             PluginBrowserRoute.Profile -> useProfiles = true
             PluginBrowserRoute.DisposableProcess -> openCompat()
             else -> fail(checkNotNull(route.issue))
@@ -125,7 +127,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false,
         decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.SecureOn)) {
         PluginBrowserPanel(page, closeLabel, close, if (useProfiles) PluginBrowserSession::create else null, onFailure = { failure ->
-            if (failure == PluginBrowserIssue.Startup && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && !launched) openCompat()
+            if (failure == PluginBrowserIssue.Startup && !launched && disposableBrowserSupport(context).getOrNull() == true) openCompat()
             else fail(failure)
         }, onCookies = onCookies, initialIssue = issue, onDocumentError = onDocumentError)
     }

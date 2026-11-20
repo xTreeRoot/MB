@@ -118,12 +118,12 @@ internal class MBApplication : Application(), ImageLoaderFactory {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
-        if (isPluginBrowserProcess(base.packageName)) CompatPluginBrowserActivity.prepareProcess()
+        if (isPluginBrowserProcess(base)) CompatPluginBrowserActivity.prepareProcess(base)
     }
 
     override fun onCreate() {
         super.onCreate()
-        if (isPluginBrowserProcess(packageName)) return
+        if (isPluginBrowserProcess(this)) return
         portableLibrary = PortableLibrary(this, local, offline.store, playlists, settings, plugins, appearanceBackground)
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
             val languages = settings.values.map { it.language }.distinctUntilChanged()

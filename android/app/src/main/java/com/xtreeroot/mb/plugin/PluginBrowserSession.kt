@@ -3,7 +3,6 @@ package com.xtreeroot.mb.plugin
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Build
 import android.util.Log
 import android.view.View
 import android.webkit.CookieManager
@@ -36,12 +35,13 @@ internal enum class PluginBrowserRoute(val issue: PluginBrowserIssue? = null) {
     StartupFailure(PluginBrowserIssue.Startup), UnsupportedProvider(PluginBrowserIssue.UnsupportedProvider)
 }
 
-internal fun pluginBrowserRoute(disposableProcessSupported: Boolean, provider: Result<Boolean>,
+internal fun pluginBrowserRoute(disposableProcess: Result<Boolean>, provider: Result<Boolean>,
                                 profiles: Result<Boolean>?): PluginBrowserRoute = when {
     provider.getOrNull() == true && profiles?.getOrNull() == true -> PluginBrowserRoute.Profile
-    disposableProcessSupported -> PluginBrowserRoute.DisposableProcess
+    disposableProcess.getOrNull() == true -> PluginBrowserRoute.DisposableProcess
     provider.isFailure || profiles?.isFailure == true -> PluginBrowserRoute.StartupFailure
     provider.getOrNull() == false -> PluginBrowserRoute.MissingProvider
+    disposableProcess.isFailure -> PluginBrowserRoute.StartupFailure
     else -> PluginBrowserRoute.UnsupportedProvider
 }
 
@@ -94,7 +94,7 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
         closed = true
         if (!rendererExited) {
             view.stopLoading()
-            if (isPluginBrowserProcess(view.context.packageName)) view.clearCache(true)
+            if (isPluginBrowserProcess(view.context)) view.clearCache(true)
         }
         view.destroy()
         clearData(cleared)
@@ -128,7 +128,7 @@ internal class PluginBrowserSession private constructor(val view: WebView, priva
 
         fun createInDisposableProcess(context: Context, userAgent: String?, onFailure: (PluginBrowserIssue) -> Unit,
                                       onPage: (String) -> Unit): PluginBrowserSession {
-            check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && isPluginBrowserProcess(context.packageName))
+            check(isPluginBrowserProcess(context))
             return create(context, userAgent, onFailure, onPage) { view ->
                 val manager = CookieManager.getInstance()
                 PluginBrowserSession(view, manager) { cleared ->
