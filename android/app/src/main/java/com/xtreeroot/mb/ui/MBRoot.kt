@@ -180,6 +180,14 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val accountRoute = routes.lastOrNull().takeIf { tab == Tab.Account }
         val libraryPage by library.pages.state.collectAsStateWithLifecycle()
         val playback by player.playback.collectAsStateWithLifecycle()
+        val markedTrack = playback.current?.let { track ->
+            MarkedTrack(track.id, when {
+                playback.error != null -> TrackPlaybackMark.Failed
+                playback.playing -> TrackPlaybackMark.Playing
+                playback.playWhenReady && playback.loading -> TrackPlaybackMark.Buffering
+                else -> TrackPlaybackMark.Paused
+            })
+        }
         var playerDirection by rememberSaveable(showPlayer) { mutableStateOf<PlaybackDirection?>(null) }
         var videoFullscreen by rememberSaveable(showVideo, playback.current?.id) { mutableStateOf(false) }
         val canRotate = applyPlaybackOrientation(when {
@@ -311,7 +319,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     rotate = if (canRotate) ({ playerDirection = it }) else null)
             }
         } else if (showVideo && playback.current != null) {
-            CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
+            CompositionLocalProvider(LocalTrackActions provides openTrackActions, LocalMarkedTrack provides markedTrack) {
                 VideoDetailsScreen(player, playback, preferences, signedIn = playbackSignedIn, fullScreen = videoFullscreen,
                     setFullScreen = { videoFullscreen = it },
                     browse = { showVideo = false; player.closeVideo() },
@@ -381,7 +389,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         Column(Modifier.widthIn(max = 900.dp).fillMaxWidth().fillMaxHeight()) {
                             if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource)
                             Box(Modifier.weight(1f).fillMaxWidth()) { tabState.SaveableStateProvider(tab) {
-                                CompositionLocalProvider(LocalTrackActions provides openTrackActions) {
+                                CompositionLocalProvider(LocalTrackActions provides openTrackActions, LocalMarkedTrack provides markedTrack) {
                                     when {
                                         visibleCatalog != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
                                             visibleCatalog, catalog, select, player::play)

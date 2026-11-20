@@ -39,11 +39,12 @@ internal class PortableDocuments(private val resolver: ContentResolver, private 
         fun open(document: PortableDocument): InputStream = resolver.openInputStream(document.uri)
             ?: throw PortableFailure(PortableProblem.Read, document.name)
 
-        fun write(name: String, mime: String, action: (OutputStream) -> Unit) {
+        fun write(name: String, mime: String, verify: (() -> Unit)? = null, action: (OutputStream) -> Unit) {
             val uri = create(id, mime, name)
             try {
                 val stream = resolver.openOutputStream(uri, "wt") ?: throw PortableFailure(PortableProblem.Write, name)
                 stream.use(action)
+                verify?.invoke()
             } catch (exception: Exception) {
                 runCatching { DocumentsContract.deleteDocument(resolver, uri) }
                 throw exception

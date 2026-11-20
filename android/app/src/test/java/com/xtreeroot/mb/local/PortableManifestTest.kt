@@ -11,10 +11,12 @@ import com.xtreeroot.mb.preferences.LyricStyle
 import com.xtreeroot.mb.preferences.PlaybackMode
 import com.xtreeroot.mb.preferences.PlayerStyle
 import com.xtreeroot.mb.preferences.ProxyPolicy
+import java.io.FileNotFoundException
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PortableManifestTest {
@@ -27,6 +29,35 @@ class PortableManifestTest {
         listOf(LocalPlaylist("playlist", "我的歌单", listOf("local:$id", remote.id))),
         512,
     )
+
+    @Test fun selectsPreviousCheckpointWhenTheNewestDocumentCannotBeOpened() {
+        val older = "mb-state-1795120000000-11111111-1111-1111-1111-111111111111.json"
+        val newer = "mb-state-1795120000001-22222222-2222-2222-2222-222222222222.json"
+        val bytes = manifest.encode()
+        val files = mapOf(older to bytes.size.toLong(), newer to -1L)
+        val checkpoint = latestPortableCheckpoint(files) { name ->
+            if (name == newer) throw FileNotFoundException()
+            bytes.inputStream()
+        }
+        assertEquals(older, checkpoint?.name)
+        assertEquals(manifest.playlists, checkpoint?.manifest?.playlists)
+        assertTrue(checkpoint?.skippedUnreadable == true)
+        val failure = assertThrows(PortableFailure::class.java) {
+            latestPortableCheckpoint(files) { throw FileNotFoundException() }
+        }
+        assertEquals(PortableProblem.Read, failure.problem)
+        assertThrows(SecurityException::class.java) {
+            latestPortableCheckpoint(files) { throw SecurityException() }
+        }
+    }
+
+    @Test fun rejectsAWriteReadBackThatIsValidJsonButHasDifferentContent() {
+        val expected = manifest.copy(history = listOf("Alpha")).encode()
+        val wrong = manifest.copy(history = listOf("Bravo")).encode()
+        assertEquals(expected.size, wrong.size)
+        assertTrue(portableIndexMatches(expected.inputStream(), expected))
+        assertFalse(portableIndexMatches(wrong.inputStream(), expected))
+    }
 
     @Test fun restoresPortableTracksAndPreservesLyricsAndPlaylistOrderWithoutCredentials() {
         val bytes = manifest.encode()

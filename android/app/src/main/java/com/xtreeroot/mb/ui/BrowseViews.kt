@@ -2,6 +2,7 @@ package com.xtreeroot.mb.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -22,9 +23,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -34,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +49,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -52,6 +58,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,6 +73,21 @@ import com.xtreeroot.mb.plugin.PluginSource
 import kotlinx.coroutines.CancellationException
 
 internal val LocalVideoBrowse = staticCompositionLocalOf { false }
+
+internal enum class TrackPlaybackMark {
+    Playing, Paused, Buffering, Failed;
+
+    @Composable
+    fun label(): String = when (this) {
+        Playing -> mb("正在播放", "Now Playing")
+        Paused -> mb("已暂停", "Paused")
+        Buffering -> mb("正在缓冲", "Buffering")
+        Failed -> mb("播放失败", "Playback Failed")
+    }
+}
+
+internal data class MarkedTrack(val id: String, val playback: TrackPlaybackMark)
+internal val LocalMarkedTrack = compositionLocalOf<MarkedTrack?> { null }
 
 @Composable
 internal fun DiscoveryCategory.title(): String = when (this) {
@@ -241,32 +263,73 @@ internal fun BrowsingTrackRow(track: Track, enabled: Boolean = true, play: () ->
 
 @Composable
 internal fun VideoPreviewRow(track: Track, enabled: Boolean = true, selectedTrack: Boolean = false, play: () -> Unit) {
-    ListItem(modifier = Modifier.clickable(enabled = enabled && !track.isUnavailable, onClick = play)
-        .semantics { selected = selectedTrack },
+    val mark = LocalMarkedTrack.current?.takeIf { it.id == track.id }?.playback
+    val highlighted = selectedTrack || mark != null
+    ListItem(modifier = Modifier.trackRowInput(track, enabled, mark, highlighted, play = play),
         headlineContent = { Text(track.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            color = if (selectedTrack) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
         supportingContent = { TrackSubtitle(track) },
-        leadingContent = { Artwork(track, Modifier.width(112.dp).aspectRatio(16f / 9f)) },
+        leadingContent = { TrackRowArtwork(track, mark, Modifier.width(112.dp).aspectRatio(16f / 9f)) },
         trailingContent = { TrackActionsButton(track) })
 }
 
 @Composable
 internal fun TrackRow(track: Track, enabled: Boolean = true, rank: Int? = null,
-                      actions: @Composable () -> Unit = { TrackActionsButton(track) }, play: () -> Unit) {
+                      actions: @Composable () -> Unit = { TrackActionsButton(track) }, picker: Boolean = false, play: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val mark = if (picker) null else LocalMarkedTrack.current?.takeIf { it.id == track.id }?.playback
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp)
-        .clickable(enabled = enabled && !track.isUnavailable, onClick = play).padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        .trackRowInput(track, enabled, mark, mark != null, picker, play)
+        .padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
         rank?.let { Text(it.toString(), Modifier.width(28.dp), style = MaterialTheme.typography.titleMedium,
             color = if (it == 1) colors.primary else colors.onSurfaceVariant, fontWeight = FontWeight.Bold) }
-        Artwork(track, Modifier.size(44.dp))
+        TrackRowArtwork(track, mark, Modifier.size(44.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = colors.onSurface)
+                style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                color = if (mark == null) colors.onSurface else colors.primary)
             TrackSubtitle(track)
         }
         if (track.durationMs > 0) Text(timeLabel(track.durationMs), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
         actions()
+    }
+}
+
+@Composable
+private fun Modifier.trackRowInput(track: Track, enabled: Boolean, mark: TrackPlaybackMark?, highlighted: Boolean,
+                                   picker: Boolean = false, play: () -> Unit): Modifier {
+    val available = enabled && !track.isUnavailable
+    if (picker) return clickable(enabled = available, onClick = play)
+    val open = LocalTrackActions.current
+    val label = mark?.label()
+    val input = combinedClickable(enabled = available, onClick = play,
+        onLongClickLabel = mb("打开歌曲操作", "Open Song Actions"), onLongClick = { open(track) })
+    return if (highlighted) input.semantics {
+        selected = true
+        if (label != null) stateDescription = label
+    } else input
+}
+
+@Composable
+private fun TrackRowArtwork(track: Track, mark: TrackPlaybackMark?, modifier: Modifier) {
+    if (mark == null) {
+        Artwork(track, modifier)
+        return
+    }
+    Box(modifier.clip(RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+        Artwork(track, Modifier.matchParentSize())
+        Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.56f)))
+        when (mark) {
+            TrackPlaybackMark.Playing -> Row(Modifier.height(14.dp), horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.Bottom) {
+                listOf(7, 14, 10).forEach { height -> Box(Modifier.size(2.dp, height.dp).background(Color.White, CircleShape)) }
+            }
+            TrackPlaybackMark.Paused -> Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp), tint = Color.White)
+            TrackPlaybackMark.Buffering -> CircularProgressIndicator(progress = { 0.35f }, modifier = Modifier.size(14.dp),
+                color = Color.White, strokeWidth = 2.dp)
+            TrackPlaybackMark.Failed -> Icon(Icons.Default.Warning, null, Modifier.size(18.dp), tint = Color.White)
+        }
     }
 }
 

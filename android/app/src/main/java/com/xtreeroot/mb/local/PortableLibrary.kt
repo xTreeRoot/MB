@@ -10,7 +10,6 @@ import com.xtreeroot.mb.plugin.backupSettings
 import com.xtreeroot.mb.preferences.AppearanceBackgroundStore
 import com.xtreeroot.mb.preferences.SettingsStore
 import com.xtreeroot.mb.preferences.appearanceBackgroundByteLimit
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -84,7 +83,11 @@ internal class PortableLibrary(private val context: Context, private val local: 
                 try {
                     val documents = PortableDocuments(resolver, tree)
                     val directory = documents.library(create = true) ?: throw PortableFailure(PortableProblem.Write)
-                    latest(directory)?.manifest?.let { restore(directory, it) }
+                    latest(directory)?.let { checkpoint ->
+                        if (checkpoint.skippedUnreadable && previous == tree) throw PortableFailure(PortableProblem.Read)
+                        restore(directory, checkpoint.manifest)
+                        if (checkpoint.skippedUnreadable) throw PortableFailure(PortableProblem.RestoredPrevious)
+                    }
                     val stamp = save(directory, verifyAssets = true)
                     val folder = documents.folderName()
                     preferences.edit(commit = true) {
@@ -131,37 +134,16 @@ internal class PortableLibrary(private val context: Context, private val local: 
         state.value = PortableStatus(true, savedAt = stamp, folderName = folder)
     }
 
-    private data class Checkpoint(val doc: PortableDocument, val manifest: PortableManifest) {
-        val stamp get() = doc.name.removePrefix("mb-state-").substringBefore('-').toLong()
-    }
-
-    private fun latest(directory: PortableDocuments.PortableDirectory, files: Map<String, PortableDocument> = directory.files()): Checkpoint? {
-        val snapshots = files.values.filter { PortableManifest.snapshotName.matches(it.name) }.sortedByDescending { it.name }
-        for (snapshot in snapshots) {
-            if (snapshot.size > PortableManifest.maxManifestBytes) continue
-            val raw = directory.open(snapshot).use { input ->
-                val buffer = ByteArray(16 * 1024)
-                val contents = ByteArrayOutputStream()
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    if (contents.size() + count > PortableManifest.maxManifestBytes) return@use null
-                    contents.write(buffer, 0, count)
-                }
-                contents.toByteArray()
-            } ?: continue
-            val decoded = runCatching { PortableManifest.decode(raw) }.getOrNull() ?: continue
-            return Checkpoint(snapshot, decoded)
-        }
-        if (snapshots.isNotEmpty()) throw PortableFailure(PortableProblem.Read)
-        return null
-    }
+    private fun latest(directory: PortableDocuments.PortableDirectory,
+                       files: Map<String, PortableDocument> = directory.files()): PortableCheckpoint? =
+        latestPortableCheckpoint(files.mapValues { it.value.size }) { name -> directory.open(files.getValue(name)) }
 
     private suspend fun save(directory: PortableDocuments.PortableDirectory, verifyAssets: Boolean): Long {
         offline.refresh()
         playlists.refresh()
         val files = directory.files()
         val prior = latest(directory, files)
+        if (prior?.skippedUnreadable == true) throw PortableFailure(PortableProblem.Read)
         val knownAssets = prior?.manifest?.assets.orEmpty().associateBy(PortableAsset::name)
         val coroutine = currentCoroutineContext()
         val writtenAssets = mutableListOf<PortableAsset>()
@@ -244,9 +226,13 @@ internal class PortableLibrary(private val context: Context, private val local: 
         if (prior != null && writtenAssets.isEmpty() && prior.manifest.encode().contentEquals(encoded)) return prior.stamp
         val stamp = maxOf(System.currentTimeMillis(), (prior?.stamp ?: 0) + 1)
         val snapshot = "mb-state-$stamp-${UUID.randomUUID()}.json"
-        directory.write(snapshot, "application/json") { it.write(encoded) }
-        if (latest(directory)?.doc?.name != snapshot) throw PortableFailure(PortableProblem.Write)
-        val previous = prior?.doc?.name
+        directory.write(snapshot, "application/json", verify = {
+            val document = directory.files()[snapshot] ?: throw PortableFailure(PortableProblem.Write, snapshot)
+            val confirmed = try { directory.open(document).use { portableIndexMatches(it, encoded) } }
+            catch (_: IOException) { false }
+            if (!confirmed) throw PortableFailure(PortableProblem.Write, snapshot)
+        }) { it.write(encoded) }
+        val previous = prior?.name
         val keep = (knownAssets.keys + manifest.assets.map(PortableAsset::name)).toSet()
         files.values.filter { document ->
             PortableManifest.snapshotName.matches(document.name) && document.name != previous ||

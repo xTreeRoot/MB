@@ -8,6 +8,8 @@ internal enum class PortableProblem(val chinese: String, val english: String) {
     DuplicateFiles("备份目录包含重名文件。", "The backup folder contains duplicate file names."),
     Permission("无法访问资料库目录，请重新选择并授权。", "MB cannot access the backup folder. Select it again to grant access."),
     Read("无法读取资料库备份。", "Could not read the library backup."),
+    RestoredPrevious("最新备份暂时读不到，已恢复上一份，未改动备份目录。恢复访问后可重新选择该目录。",
+        "Restored the previous backup because the latest could not be read. Select the folder again once it is accessible."),
     Write("无法写入资料库备份，请检查可用空间和目录权限。", "Could not write the library backup. Check available space and folder permissions."),
     SourceFile("本地文件不存在或超出备份上限。", "A local file is missing or exceeds the backup size limit."),
     LocalAudioInvalid("本地音频未通过完整性检查。", "A local audio file failed its integrity check."),

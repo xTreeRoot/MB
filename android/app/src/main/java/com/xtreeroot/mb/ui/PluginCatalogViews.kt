@@ -375,7 +375,7 @@ private fun PluginPlaylistAddDialog(source: PluginSource, playlist: PluginEntity
                     items(tracks, key = Track::id) { track ->
                         val id = track.sourceTrackId
                         val enabled = !saving && !track.isUnavailable && id !in existing
-                        TrackRow(track, enabled, actions = { Checkbox(id in selected || id in existing, null, enabled = enabled) }) {
+                        TrackRow(track, enabled, actions = { Checkbox(id in selected || id in existing, null, enabled = enabled) }, picker = true) {
                             selected = if (id in selected) selected - id else selected + id
                         }
                     }

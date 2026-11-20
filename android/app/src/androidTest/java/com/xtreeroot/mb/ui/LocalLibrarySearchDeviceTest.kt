@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.media3.session.MediaController
@@ -33,6 +34,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class LocalLibrarySearchDeviceTest {
@@ -258,6 +260,78 @@ class LocalLibrarySearchDeviceTest {
                 activity?.finish()
             }
             tracks.forEach { app.local.delete(it.sourceTrackId) }
+        }
+    }
+
+    @Test fun playingAndPausedSongStaysMarkedAndAnotherSongsLongPressDoesNotReplaceIt() = runBlocking {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+        val album = "Night Signals"
+        val artist = "Neon Studio"
+        val first = addTrack("Midnight Transmission", artist, album, artist, number = 1, seconds = 45, artwork = albumArt())
+        val second = addTrack("The Last Train Across the City", artist, album, artist, number = 2, seconds = 45, artwork = albumArt())
+        val future = withContext(Dispatchers.Main) {
+            MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+        }
+        var activity: MainActivity? = null
+        try {
+            val player = withContext(Dispatchers.IO) { future.get(10, TimeUnit.SECONDS) }
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            tap("资料库", "Library")
+            tap("专辑", "Albums")
+            tap(album)
+            tap(first.title)
+            suspend fun expectMarker(vararg states: String) {
+                await("${first.title}: ${states.joinToString()}") { node ->
+                    node.matchesLabel(arrayOf(first.title)) && generateSequence(node) { it.parent }.any {
+                        it.stateDescription?.toString() in states
+                    }
+                }
+            }
+            expectMarker("正在播放", "Now Playing")
+            capture("trackRowScreenshot", "android-track-row-playing.png")
+            tap("暂停", "Pause")
+            expectMarker("已暂停", "Paused")
+            val position = 12_000L
+            withTimeout(5_000) {
+                while (withContext(Dispatchers.Main) { player.playWhenReady || !player.isCurrentMediaItemSeekable }) delay(50)
+            }
+            withContext(Dispatchers.Main) { player.seekTo(position) }
+            withTimeout(5_000) {
+                while (withContext(Dispatchers.Main) { player.currentPosition != position }) delay(50)
+            }
+            val row = await("Long press ${second.title}") { node ->
+                node.matchesLabel(arrayOf(second.title)) && generateSequence(node) { it.parent }.any { it.isLongClickable }
+            }
+            val longPress = generateSequence(row) { it.parent }.first { it.isLongClickable }
+            assertNull(longPress.stateDescription)
+            assertTrue(longPress.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))
+            node("下一首播放", "Play Next")
+            node(second.title)
+            capture("trackRowScreenshot", "android-track-action-sheet.png")
+            tap("下一首播放", "Play Next")
+            withTimeout(5_000) {
+                while (withContext(Dispatchers.Main) { player.mediaItemCount } != 3) delay(50)
+            }
+            withContext(Dispatchers.Main) {
+                assertEquals(first.id, player.currentMediaItem?.mediaId)
+                assertEquals(second.id, player.getMediaItemAt(1).mediaId)
+                assertEquals(position, player.currentPosition)
+                assertFalse(player.playWhenReady)
+            }
+            expectMarker("已暂停", "Paused")
+        } finally {
+            withContext(Dispatchers.Main) {
+                if (future.isDone) runCatching { future.get() }.getOrNull()?.let { player ->
+                    if (player.currentMediaItem?.mediaId == first.id) {
+                        player.pause()
+                        player.clearMediaItems()
+                    }
+                }
+                MediaController.releaseFuture(future)
+                activity?.finish()
+            }
+            listOf(first, second).forEach { app.local.delete(it.sourceTrackId) }
         }
     }
 
