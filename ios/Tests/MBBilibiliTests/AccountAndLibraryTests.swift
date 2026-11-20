@@ -206,3 +206,20 @@ func qrCookieRejectsUntrustedCallback(_ callback: String) throws {
     await #expect(throws: BilibiliError.signInRequired) { try await source.library(.favorites, cursor: nil) }
     #expect(await routes.calls.isEmpty)
 }
+
+@Test func personalLibraryReusesAllPagesUntilRefreshAndSignOutCannotReadCachedLikes() async throws {
+    let routes = AccountRoutes([
+        "/x/web-interface/nav": [loggedIn],
+        "/x/space/like/video": [#"{"code":0,"data":{"list":[{"bvid":"BVcached","title":"已缓存","pic":"//i0.hdslb.com/c.jpg","duration":61,"owner":{"mid":8,"name":"作者"}}]}}"#],
+    ])
+    let source = accountSource(routes, store: SessionMemory(BilibiliSession(cookie: testCookie, active: true)))
+    let first = try await source.library(.liked, cursor: nil)
+    let again = try await source.library(.liked, cursor: nil)
+    #expect(first.tracks.map(\.id) == again.tracks.map(\.id))
+    #expect(await routes.calls.filter { $0.url?.path == "/x/space/like/video" }.count == 1)
+    await source.invalidateLibraryCache()
+    _ = try await source.library(.liked, cursor: nil)
+    #expect(await routes.calls.filter { $0.url?.path == "/x/space/like/video" }.count == 2)
+    try await source.signOut()
+    await #expect(throws: BilibiliError.signInRequired) { try await source.library(.liked, cursor: nil) }
+}

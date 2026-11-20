@@ -19,7 +19,7 @@ struct AccountLibraryView: View {
             List {
                 Section {
                     HStack(spacing: 16) {
-                        PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL).frame(width: 64, height: 64)
+                        PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL, headers: account.account?.avatarHeaders ?? [:], sourceID: account.displayName).frame(width: 64, height: 64)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(account.account?.name ?? AppLocalization.text("我的音乐")).font(.title2.bold())
                             Text(account.displayName).font(.subheadline).foregroundStyle(.secondary)
@@ -113,6 +113,7 @@ struct LibraryPageView: View {
     @State private var model: LibraryModel
     let select: ([Track], Int) -> Void
     let menu: (Track) -> AnyView
+    @State private var artworkPrefetch: Task<Void, Never>?
     init(source: any LibrarySource, route: LibraryRoute, select: @escaping ([Track], Int) -> Void, menu: @escaping (Track) -> AnyView = { _ in AnyView(EmptyView()) }) {
         _model = State(initialValue: LibraryModel(source: source, route: route)); self.select = select
         self.menu = menu
@@ -122,7 +123,9 @@ struct LibraryPageView: View {
             ForEach(model.links) { link in
                 NavigationLink(value: link.route) {
                     HStack {
-                        Image(systemName: link.route.isCreator ? "person.crop.circle" : "folder").font(.title2).frame(width: 40)
+                        if let url = link.imageURL {
+                            ArtworkView(track: Track(sourceID: model.sourceID, sourceTrackID: link.id, title: link.title, artist: "", artworkURL: url, durationMilliseconds: 0))
+                        } else { Image(systemName: link.route.isCreator ? "person.crop.circle" : "folder").font(.title2).frame(width: 40) }
                         VStack(alignment: .leading, spacing: 4) {
                             Text(link.title)
                             if !link.subtitle.isEmpty { Text(link.subtitle).font(.caption).foregroundStyle(.secondary) }
@@ -149,13 +152,21 @@ struct LibraryPageView: View {
                 ContentUnavailableView("暂无内容", systemImage: "tray")
             }
             if model.nextCursor != nil {
-                Button("加载更多") { Task { await model.loadMore() } }.disabled(model.isLoading)
+                Button("加载更多") { Task { await model.loadMore(); prefetchArtwork() } }.disabled(model.isLoading)
             }
         }
         .listStyle(.plain)
         .navigationTitle(Text(LocalizedStringKey(model.title)))
-        .task { await model.refresh() }
-        .refreshable { await model.refresh() }
+        .task { await model.restore(); prefetchArtwork() }
+        .onDisappear { artworkPrefetch?.cancel() }
+        .refreshable { await model.refresh(); prefetchArtwork() }
+    }
+    private func prefetchArtwork() {
+        artworkPrefetch?.cancel()
+        let images = model.tracks + model.links.map { link in
+            Track(sourceID: model.sourceID, sourceTrackID: link.id, title: link.title, artist: "", artworkURL: link.imageURL, durationMilliseconds: 0)
+        }
+        artworkPrefetch = Task { await ArtworkCache.shared.prefetch(images) }
     }
 }
 

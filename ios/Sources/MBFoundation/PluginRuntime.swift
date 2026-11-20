@@ -14,6 +14,7 @@ private final class PluginContext: @unchecked Sendable {
 public actor PluginRuntime {
     /// 单跳网络传输；由运行时执行 fetch 的重定向模式和逐跳权限检查。
     public typealias Transport = @Sendable (URLRequest, PluginManifest.Permissions) async throws -> (Data, HTTPURLResponse)
+    public nonisolated let catalogCache: ResponseCache
     private let host: PluginHostState
     private var signInDiagnostics: PluginSignInDiagnostics?
     private var context: PluginContext?
@@ -39,12 +40,16 @@ public actor PluginRuntime {
                     return (data, response)
                 }) throws {
         try manifest.validate()
+        catalogCache = ResponseCache(directory: dataDirectory.appendingPathComponent("catalog-cache", isDirectory: true))
         host = try PluginHostState(root: directory, data: dataDirectory, manifest: manifest, settings: settings)
         self.transport = transport; self.webSignIn = webSignIn; self.oauthSignIn = oauthSignIn; self.openURL = openURL
     }
     deinit { for task in events.values { task.cancel() } }
     public func headers(for url: URL, kind: String) throws -> [String: String] { try host.headers(for: url, kind: kind) }
-    public func updateSettings(_ settings: [String: String]) { host.settings = settings }
+    public func updateSettings(_ settings: [String: String]) async {
+        host.settings = settings
+        await catalogCache.invalidate()
+    }
     public func setPrompt(_ prompt: (@Sendable (SignInPrompt) -> Void)?) { host.prompt = prompt }
     public func supports(_ name: String) async throws -> Bool {
         await acquire(); defer { release() }

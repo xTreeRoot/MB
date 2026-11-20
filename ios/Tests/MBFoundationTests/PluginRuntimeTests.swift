@@ -416,3 +416,49 @@ private actor PluginRedirectFixture {
     await #expect(throws: PluginFailure.self) { try await task.value }
     #expect(service.signIn == nil)
 }
+
+@Test func personalCatalogCachesPagesAcrossRecreationAndSeparatesAccountsAndMutations() async throws {
+    try await withPlugin("""
+    let who = 'a', calls = 0;
+    export function account() { return {id:who,name:who}; }
+    export function signOut() { who = 'guest'; }
+    export function signIn() { who = 'b'; return account(); }
+    export function liked({offset}) { calls++; return {tracks:[{id:who+offset,name:who+calls}],more:offset===0}; }
+    export function like() {}
+    export function callsCount() { return calls; }
+    """) { runtime, _, manifest in
+        let first = PluginSource(manifest: manifest, runtime: runtime)
+        let (page, more, count) = try await first.collection("liked")
+        #expect(page.sections.first?.tracks.first?.title == "a1")
+        #expect(more && count == 1)
+        let reopened = PluginSource(manifest: manifest, runtime: runtime)
+        let again = try await reopened.collection("liked")
+        #expect(again.0.sections.first?.tracks.first?.title == "a1")
+        _ = try await reopened.collection("liked", offset: 1)
+        #expect(try await runtime.invoke("callsCount") == .number(2))
+        try await reopened.signOut()
+        _ = try await reopened.collection("liked")
+        _ = try await reopened.signIn { _ in }
+        let other = try await reopened.collection("liked")
+        #expect(other.0.sections.first?.tracks.first?.sourceTrackID == "b0")
+        #expect(try await runtime.invoke("callsCount") == .number(4))
+        try await reopened.like(trackID: "b0", enabled: true)
+        _ = try await reopened.collection("liked")
+        #expect(try await runtime.invoke("callsCount") == .number(5))
+        await reopened.invalidateCatalog()
+        _ = try await reopened.collection("liked")
+        #expect(try await runtime.invoke("callsCount") == .number(6))
+    }
+}
+
+@Test func accountNetworkFailureDoesNotBlockPublicHomeOrCacheUnknownAccountData() async throws {
+    try await withPlugin("""
+    export function account() { throw Error('temporary account failure'); }
+    export function home() { const calls = (host.storage.get('calls') || 0) + 1; host.storage.set('calls', calls); return {title:'Public',sections:[{tracks:[{id:'one',name:String(calls)}]}]}; }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let first = try await source.home(), second = try await source.home()
+        #expect(first.sections.first?.tracks.first?.title == "1")
+        #expect(second.sections.first?.tracks.first?.title == "2")
+    }
+}

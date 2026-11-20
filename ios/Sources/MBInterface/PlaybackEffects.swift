@@ -12,7 +12,7 @@ struct PlaybackFog: View {
                 .blur(radius: 65)
                 .scaleEffect(reduceMotion ? 1.15 : 1.15 + bass * 0.25)
                 .offset(y: reduceMotion ? 0 : -bass * 35)
-                .opacity(0.23 + bass * 0.12)
+                .opacity(0.14 + bass * 0.06)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: bass)
         }.clipped().allowsHitTesting(false).accessibilityHidden(true)
     }

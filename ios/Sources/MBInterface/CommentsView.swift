@@ -105,9 +105,15 @@ struct TrackCommentsList: View {
 struct PersonArtwork: View {
     let name: String
     let url: URL?
+    var headers: [String: String] = [:]
+    var sourceID = "avatar"
+    private func artwork(_ url: URL) -> Track {
+        var track = Track(sourceID: sourceID, sourceTrackID: url.absoluteString, title: name, artist: "", artworkURL: url, durationMilliseconds: 0)
+        track.artworkHeaders = headers; return track
+    }
     var body: some View {
         Group {
-            if let url { RemoteArtwork(track: Track(sourceID: "avatar", sourceTrackID: url.absoluteString, title: name, artist: "", artworkURL: url, durationMilliseconds: 0)) }
+            if let url { RemoteArtwork(track: artwork(url)) }
             else { Circle().fill(MBTheme.accent.opacity(0.1)).overlay { Text(String(name.prefix(1))).font(.subheadline.weight(.semibold)).foregroundStyle(MBTheme.accent) } }
         }.clipShape(Circle()).accessibilityHidden(true)
     }

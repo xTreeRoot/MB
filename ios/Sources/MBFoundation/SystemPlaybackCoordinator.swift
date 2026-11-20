@@ -103,14 +103,11 @@ import AppKit
             artworkTrack = track.id; artwork = nil; artworkTask?.cancel()
             if let url = track.artworkURL {
                 artworkTask = Task { [weak self] in
-                    var request = URLRequest(url: url); request.allHTTPHeaderFields = track.artworkHeaders
                     do {
                         let data: Data
                         if url.isFileURL { data = try await Task.detached(priority: .utility) { try Data(contentsOf: url) }.value }
                         else {
-                            let (bytes, response) = try await NetworkClient.shared.data(for: request)
-                            guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else { return }
-                            data = bytes
+                            data = try await ArtworkCache.shared.data(url: url, sourceID: track.sourceID, headers: track.artworkHeaders)
                         }
                         guard !Task.isCancelled, self?.artworkTrack == track.id else { return }
                         self?.artwork = Self.makeArtwork(data: data)

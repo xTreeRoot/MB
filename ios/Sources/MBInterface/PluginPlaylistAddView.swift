@@ -53,7 +53,7 @@ struct PluginPlaylistAddView: View {
                         Task {
                             defer { saving = false }
                             do {
-                                _ = try await source.runtime.invoke("addToPlaylist", arguments: .object(["id": .string(playlist.sourceID), "trackIds": .array(selected.sorted().map(PluginJSON.string))]))
+                                try await source.mutate("addToPlaylist", arguments: .object(["id": .string(playlist.sourceID), "trackIds": .array(selected.sorted().map(PluginJSON.string))]))
                                 await didAdd(); dismiss()
                             } catch { self.error = error.localizedDescription }
                         }

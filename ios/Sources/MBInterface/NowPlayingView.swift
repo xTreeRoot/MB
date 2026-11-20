@@ -43,11 +43,13 @@ struct NowPlayingView: View {
             } else { ContentUnavailableView("播放队列为空", systemImage: "music.note.list") }
         }
         .background {
-            MBTheme.background.ignoresSafeArea()
-            if let track = playback.queue.current {
-                RemoteArtwork(track: track).blur(radius: 90).opacity(0.12).ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
-                if preferences?.values.fog == true { PlaybackFog(track: track, bass: playback.bassLevel) }
-            }
+            // 同一个背景覆盖安全区和内容区，雾气不再只给中间区域叠色。
+            ZStack {
+                MBTheme.background
+                if let track = playback.queue.current, preferences?.values.fog == true {
+                    PlaybackFog(track: track, bass: playback.bassLevel)
+                }
+            }.ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
         }
         .overlay(alignment: .top) {
             if let modeNotice {

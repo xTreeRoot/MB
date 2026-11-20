@@ -147,6 +147,9 @@ public struct MBRootView: View {
 
     private var tabs: some View {
         tabsWithPlayer
+            #if os(iOS)
+            .statusBarHidden(video.isVisible)
+            #endif
             .environment(\.backgroundSkinImage, skin.image)
             .preferredColorScheme(preferences.values.appearance == .system ? nil : preferences.values.appearance == .dark ? .dark : .light)
             .playerPresentation(isPresented: $showingPlayer) { NowPlayingView(playback: playback, demo: demo, interactionSource: currentInteractions, librarySource: currentLibrarySource, accountRevision: account.revision, downloads: downloads, preferences: preferences, watchVideo: { video.watchCurrent() }).modifier(CoverTransitionDestination(enabled: preferences.values.growFromCover, namespace: playerTransition)) }

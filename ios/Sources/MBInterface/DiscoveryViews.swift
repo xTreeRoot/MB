@@ -9,6 +9,8 @@ struct DiscoveryHomeView: View {
     let select: ([Track], Int) -> Void
     var menu: (Track) -> AnyView = { _ in AnyView(EmptyView()) }
 
+    @ScaledMetric(relativeTo: .subheadline) private var cardHeight = 246.0
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 30) {
@@ -19,6 +21,7 @@ struct DiscoveryHomeView: View {
                         NavigationLink(value: MBPage.discovery(section.category)) {
                             HStack(alignment: .center) {
                                 MusicSectionHeading(title: section.category.title)
+                                Text("更多").font(.subheadline).foregroundStyle(.secondary)
                                 Image(systemName: "chevron.right").font(.subheadline.bold()).foregroundStyle(.tertiary)
                             }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityLabel("查看更多\(section.category.title)").padding(.horizontal, 20)
@@ -40,13 +43,11 @@ struct DiscoveryHomeView: View {
                                 }
                             }.padding(.horizontal, 20)
                         } else {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(alignment: .top, spacing: 16) {
-                                    ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
-                                        DiscoveryCoverCard(track: track, prominent: section.category == .recommended,
-                                                           play: { select(section.tracks, index) }, menu: { menu(track) })
-                                    }
-                                }.padding(.horizontal, 20).padding(.bottom, 4)
+                            DiscoveryShelf(count: section.tracks.count, rowHeight: cardHeight) {
+                                ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
+                                    DiscoveryCoverCard(track: track, prominent: section.category == .recommended,
+                                                       play: { select(section.tracks, index) }, menu: { menu(track) })
+                                }
                             }
                         }
                     }
@@ -84,7 +85,7 @@ private struct DiscoveryCoverCard<MenuContent: View>: View {
                 }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)，\(track.artist)")
                 Menu(content: menu) { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
             }
-        }.frame(width: prominent ? 240 : 168).contextMenu(menuItems: menu)
+        }.frame(width: 156).contextMenu(menuItems: menu)
     }
 }
 

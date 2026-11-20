@@ -382,7 +382,15 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(pluginTab.isSelected)
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].exists)
         capture("插件-首页-演示数据", app: app)
-        app.buttons["更多示例"].tap()
+        let shelf = app.scrollViews["plugin-shelf-0"]
+        let firstCard = app.buttons["播放 插件示例歌曲"]
+        let secondRowCard = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例专辑")).firstMatch
+        XCTAssertGreaterThan(secondRowCard.frame.minY, firstCard.frame.minY, "目录封面使用两行")
+        let moreCard = app.buttons["更多示例"]
+        shelf.swipeLeft()
+        XCTAssertTrue(moreCard.isHittable)
+        capture("插件-双行封面横滑到更多", app: app)
+        moreCard.tap()
         XCTAssertTrue(app.navigationBars["示例分页"].waitForExistence(timeout: 5))
         capture("插件-分页-演示数据", app: app)
     }
@@ -1126,6 +1134,31 @@ extension MBiOSUITests {
 }
 
 extension MBiOSUITests {
+    @MainActor func testVideoHidesStatusBarAndRestoresItAfterBrowsing() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.buttons["首页"].waitForExistence(timeout: 15))
+        } else {
+            XCTAssertTrue(app.buttons["查看更多为你推荐"].waitForExistence(timeout: 15))
+            app.buttons["查看更多为你推荐"].tap()
+        }
+        // iOS 26 把状态栏空容器保留在 SpringBoard，实际可见内容才表示显示。
+        let statusBar = XCUIApplication(bundleIdentifier: "com.apple.springboard").statusBars.descendants(matching: .any).firstMatch
+        XCTAssertTrue(statusBar.waitForExistence(timeout: 5))
+        chooseMode("视频模式", app: app)
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "播放 晚风里的片刻")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["video-open-music"].waitForExistence(timeout: 5))
+        XCTAssertTrue(statusBar.waitForNonExistence(timeout: 5))
+        capture("视频-详情隐藏系统状态栏", app: app)
+        app.buttons["返回浏览"].tap()
+        XCTAssertTrue(statusBar.waitForExistence(timeout: 5))
+        capture("视频-返回浏览恢复系统状态栏", app: app)
+    }
+
     @MainActor func testVideoSingleTapHidesControlsDoubleTapKeepsChromeAndSmallSeekWorks() throws {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -14,6 +14,7 @@ public actor BilibiliSource: DiscoverySource, PlaybackSource, VideoSource, Accou
     var sessionLoading: Task<BilibiliSession?, any Error>?
     var accountSnapshot: SourceAccount?
     var accountRevision = 0
+    let libraryCache: ResponseCache
     var visitorTask: Task<String, any Error>?
     var details: [String: DetailDTO] = [:]
     static let origin = "https://api.bilibili.com"
@@ -21,6 +22,7 @@ public actor BilibiliSource: DiscoverySource, PlaybackSource, VideoSource, Accou
     static var headers: [String: String] { ["Referer": "https://www.bilibili.com/", "User-Agent": userAgent] }
 
     public init() {
+        libraryCache = ResponseCache(directory: ResponseCache.directory("bilibili-library"))
         transport = { request in try await NetworkClient.shared.data(for: request) }
         now = { Date() }
         sessionStore = BilibiliFileSessionStore()
@@ -30,6 +32,7 @@ public actor BilibiliSource: DiscoverySource, PlaybackSource, VideoSource, Accou
     init(transport: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse),
          now: @escaping @Sendable () -> Date, sessionStore: (any BilibiliSessionStore)? = nil,
          pollDelay: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(2)) }) {
+        self.libraryCache = ResponseCache()
         self.transport = transport
         self.now = now
         self.sessionStore = sessionStore

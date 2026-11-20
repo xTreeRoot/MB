@@ -6,6 +6,8 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
     public nonisolated var displayName: String { manifest.displayName }
     public init(manifest: PluginManifest, runtime: PluginRuntime) { self.manifest = manifest; self.runtime = runtime }
     public func supports(_ name: String) async throws -> Bool { try await runtime.supports(name) }
+    private var cacheAccount: String?
+    private var accountGeneration = 0
     private var offsets: [String: [Int: Int]] = [:]
     private var commentOffsets: [String: [Int: Int]] = [:]
     public func suggestions(_ query: String) async throws -> [String] {
@@ -31,12 +33,36 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         let page = TrackPage(tracks: try await tracks(rawTracks), hasMore: result["more"] == .bool(true) && count > 0)
         return (page, offset + count)
     }
+    func catalogInvoke(_ method: String, arguments: PluginJSON = .object([:])) async throws -> PluginJSON {
+        if cacheAccount == nil {
+            do { _ = try await account(); if cacheAccount == nil { cacheAccount = "guest" } }
+            catch {
+                try Task.checkCancellation()
+                // 无法确定账号时不读写个人缓存，公开页面仍按原合同加载。
+                return try await runtime.invoke(method, arguments: arguments)
+            }
+        }
+        let scope = cacheAccount ?? "guest", generation = accountGeneration
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let key = ResponseCache.key([manifest.id, manifest.version ?? "", scope, method, String(decoding: try encoder.encode(arguments), as: UTF8.self)])
+        let runtime = runtime
+        let data = try await runtime.catalogCache.data(key: key, lifetime: 6 * 3600) {
+            try JSONEncoder().encode(try await runtime.invoke(method, arguments: arguments))
+        }
+        guard generation == accountGeneration else { throw CancellationError() }
+        return try JSONDecoder().decode(PluginJSON.self, from: data)
+    }
+    public func invalidateCatalog() async { await runtime.catalogCache.invalidate() }
+    public func mutate(_ method: String, arguments: PluginJSON) async throws {
+        _ = try await runtime.invoke(method, arguments: arguments)
+        await invalidateCatalog()
+    }
     public func home() async throws -> PluginBrowse {
         guard try await supports("home") else { return PluginBrowse(title: displayName) }
-        return try await browseResult(try await runtime.invoke("home"))
+        return try await browseResult(try await catalogInvoke("home"))
     }
     public func browse(_ page: String) async throws -> PluginBrowse {
-        try await browseResult(try await runtime.invoke("browse", arguments: .object(["page": .string(page)])))
+        try await browseResult(try await catalogInvoke("browse", arguments: .object(["page": .string(page)])))
     }
     public func audio(track: Track, quality: AudioQuality) async throws -> MediaResource {
         let result = try await runtime.invoke("stream", arguments: .object(["id": .string(track.sourceTrackID), "quality": .string(quality.rawValue)]))
@@ -65,18 +91,28 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
     }
     public func account() async throws -> SourceAccount? {
         guard try await supports("account") else { return nil }
-        return account(try await runtime.invoke("account"))
+        let generation = accountGeneration
+        let found = try await account(runtime.invoke("account"))
+        guard generation == accountGeneration else { throw CancellationError() }
+        let scope = found.map { "user:" + $0.id } ?? "guest"
+        if let previous = cacheAccount, previous != scope { accountGeneration += 1 }
+        cacheAccount = scope
+        return found
     }
     public func signIn(prompt: @escaping @Sendable (SignInPrompt) async -> Void) async throws -> SourceAccount {
         await runtime.setPrompt { value in Task { await prompt(value) } }
         do {
             let value = try await runtime.invoke("signIn", timeout: .seconds(300))
             await runtime.setPrompt(nil)
-            guard let account = account(value) else { throw PluginFailure.execution("Sign-in returned no account") }
+            guard let account = try await account(value) else { throw PluginFailure.execution("Sign-in returned no account") }
+            accountGeneration += 1; cacheAccount = "user:" + account.id
             return account
         } catch { await runtime.setPrompt(nil); throw error }
     }
-    public func signOut() async throws { _ = try await runtime.invoke("signOut") }
+    public func signOut() async throws {
+        _ = try await runtime.invoke("signOut")
+        accountGeneration += 1; cacheAccount = "guest"
+    }
     public func capabilities() async -> InteractionCapabilities {
         InteractionCapabilities(likes: (try? await supports("like")) == true,
                                 comments: (try? await supports("comments")) == true,
@@ -90,7 +126,7 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         try await runtime.invoke("isLiked", arguments: .object(["ids": .array([.string(trackID)])]))[trackID] == .bool(true)
     }
     public func like(trackID: String, enabled: Bool) async throws {
-        _ = try await runtime.invoke("like", arguments: .object(["id": .string(trackID), "on": .bool(enabled)]))
+        try await mutate("like", arguments: .object(["id": .string(trackID), "on": .bool(enabled)]))
     }
     public func comments(trackID: String, page: Int) async throws -> CommentPage {
         if page == 1 { commentOffsets[trackID] = [1: 0] }
@@ -104,9 +140,12 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         guard let result = comment(value) else { throw PluginFailure.execution("Invalid comment response") }
         return result
     }
-    private func account(_ value: PluginJSON) -> SourceAccount? {
+    private func account(_ value: PluginJSON) async throws -> SourceAccount? {
         guard let id = value["id"].string, let name = value["name"].string else { return nil }
-        return SourceAccount(id: id, name: name, avatarURL: value["imageUrl"].string.flatMap(URL.init(string:)), page: value["page"].string)
+        let url = value["imageUrl"].string.flatMap(URL.init(string:))
+        var headers: [String: String] = [:]
+        if let url { headers = try await runtime.headers(for: url, kind: "image") }
+        return SourceAccount(id: id, name: name, avatarURL: url, page: value["page"].string, avatarHeaders: headers)
     }
     private func comment(_ value: PluginJSON) -> TrackComment? {
         guard let id = value["id"].string, let text = value["text"].string else { return nil }
@@ -139,16 +178,22 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
     func browseResult(_ value: PluginJSON) async throws -> PluginBrowse {
         var sections: [PluginBrowse.Section] = []
         for (index, section) in value["sections"].array.enumerated() {
-            sections.append(PluginBrowse.Section(id: String(index), entities: entities(section), empty: section["empty"].string ?? "", trackLayout: section["trackLayout"].string ?? "", title: section["title"].string ?? "", tracks: try await tracks(section["tracks"]), links: section["links"].array.compactMap { link in
-                guard let title = link["title"].string, let page = link["page"].string else { return nil }; return PluginBrowse.Link(title: title, subtitle: link["subtitle"].string ?? "", page: page)
-            }, morePage: section["morePage"].string))
+            var links: [PluginBrowse.Link] = []
+            for link in section["links"].array {
+                guard let title = link["title"].string, let page = link["page"].string else { continue }
+                let url = link["imageUrl"].string.flatMap(URL.init(string:))
+                var headers: [String: String] = [:]
+                if let url { headers = try await runtime.headers(for: url, kind: "image") }
+                links.append(PluginBrowse.Link(title: title, subtitle: link["subtitle"].string ?? "", page: page, imageURL: url, artworkHeaders: headers))
+            }
+            sections.append(PluginBrowse.Section(id: String(index), entities: try await entities(section), empty: section["empty"].string ?? "", trackLayout: section["trackLayout"].string ?? "", title: section["title"].string ?? "", tracks: try await tracks(section["tracks"]), links: links, morePage: section["morePage"].string))
         }
         return PluginBrowse(title: value["title"].string ?? displayName, subtitle: value["subtitle"].string ?? "", description: value["description"].string ?? "", sections: sections)
     }
 }
 
 public struct PluginBrowse: Sendable {
-    public struct Link: Identifiable, Sendable { public let title: String; public let subtitle: String; public let page: String; public var id: String { page } }
+    public struct Link: Identifiable, Sendable { public let title: String; public let subtitle: String; public let page: String; public var imageURL: URL? = nil; public var artworkHeaders: [String: String] = [:]; public var id: String { page } }
     public struct Section: Identifiable, Sendable { public let id: String; public var entities: [PluginEntity] = []; public var empty = ""; public var trackLayout = ""; public let title: String; public let tracks: [Track]; public let links: [Link]; public let morePage: String? }
     public let title: String
     public var subtitle = ""
@@ -158,4 +203,15 @@ public struct PluginBrowse: Sendable {
 
 public extension PluginBrowse.Section {
     func reidentified(_ value: String) -> Self { Self(id: value, entities: entities, empty: empty, trackLayout: trackLayout, title: title, tracks: tracks, links: links, morePage: morePage) }
+}
+
+public extension PluginBrowse {
+    func artworkTracks(sourceID: String) -> [Track] {
+        sections.flatMap { section in
+            section.tracks + section.entities.map { $0.artworkTrack(sourceID: sourceID) } + section.links.map { link in
+                var track = Track(sourceID: sourceID, sourceTrackID: link.page, title: link.title, artist: "", artworkURL: link.imageURL, durationMilliseconds: 0)
+                track.artworkHeaders = link.artworkHeaders; return track
+            }
+        }
+    }
 }

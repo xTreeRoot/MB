@@ -22,8 +22,10 @@ struct VideoPageView: View {
                         .id("\(track.id):\(accountRevision)")
                 }
             }.accessibilityHidden(fullScreen)
-        }.background(MBTheme.background)
+        }.background(MBTheme.background, ignoresSafeAreaEdges: .bottom)
+        .background(Color.black.ignoresSafeArea(edges: .top))
         #if os(iOS)
+        .statusBarHidden(video.isVisible)
         .fullScreenCover(isPresented: $fullScreen) { VideoFullscreenView(video: video, playback: playback) }
         #else
         .sheet(isPresented: $fullScreen) { VideoFullscreenView(video: video, playback: playback) }

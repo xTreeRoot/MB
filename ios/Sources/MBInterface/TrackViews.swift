@@ -72,6 +72,7 @@ struct RemoteArtwork: View {
     let track: Track
     @State private var image: Image?
     private struct Request: Hashable {
+        let sourceID: String
         let url: URL?
         let headers: [String: String]
     }
@@ -89,7 +90,7 @@ struct RemoteArtwork: View {
                 else { Image(systemName: "music.note").foregroundStyle(.white.opacity(0.75)).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         }
-        .task(id: Request(url: track.artworkURL, headers: track.artworkHeaders)) {
+        .task(id: Request(sourceID: track.sourceID, url: track.artworkURL, headers: track.artworkHeaders)) {
             image = nil
             guard let url = track.artworkURL else { return }
             if url.isFileURL {
@@ -97,12 +98,9 @@ struct RemoteArtwork: View {
                 guard !Task.isCancelled else { return }
                 image = result.flatMap(decodedImage); return
             }
-            var request = URLRequest(url: url)
-            request.allHTTPHeaderFields = track.artworkHeaders
             do {
-                let (value, response) = try await NetworkClient.shared.data(for: request)
-                guard !Task.isCancelled, let response = response as? HTTPURLResponse,
-                      (200..<300).contains(response.statusCode) else { return }
+                let value = try await ArtworkCache.shared.data(url: url, sourceID: track.sourceID, headers: track.artworkHeaders)
+                guard !Task.isCancelled else { return }
                 image = decodedImage(value)
             } catch { /* 无封面时保留渐变占位。 */ }
         }
