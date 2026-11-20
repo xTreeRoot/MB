@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.util.Log
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -44,7 +45,8 @@ internal fun isPluginBrowserProcess(context: Context): Boolean {
 }
 
 internal fun disposableBrowserSupport(context: Context): Result<Boolean> = runCatching {
-    WebViewFeature.isStartupFeatureSupported(context, WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX)
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ||
+        WebViewFeature.isStartupFeatureSupported(context, WebViewFeature.STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX)
 }
 
 internal data class PluginBrowserPage(val title: String, val url: URI, val id: UUID, val signIn: PluginWebSignIn? = null)
@@ -115,8 +117,10 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
     }
 
     private fun startupIssue(fallback: PluginBrowserIssue = PluginBrowserIssue.Startup): PluginBrowserIssue {
-        val present = runCatching { WebViewCompat.getCurrentWebViewPackage(this) != null }.getOrNull()
-        return if (present == false) PluginBrowserIssue.MissingProvider else fallback
+        val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(this) }
+        val installed = provider.getOrNull()
+        Log.w(pluginBrowserLogTag, "compat SDK=${Build.VERSION.SDK_INT} provider=${installed?.packageName} version=${installed?.versionName}")
+        return if (provider.isSuccess && installed == null) PluginBrowserIssue.MissingProvider else fallback
     }
 
     override fun onDestroy() {
@@ -147,7 +151,8 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
             }
             val suffix = directorySuffixPrefix + UUID.randomUUID()
             try {
-                ProcessGlobalConfig.apply(ProcessGlobalConfig().setDataDirectorySuffix(context, suffix))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) WebView.setDataDirectorySuffix(suffix)
+                else ProcessGlobalConfig.apply(ProcessGlobalConfig().setDataDirectorySuffix(context, suffix))
                 directorySuffix = suffix
             } catch (failure: RuntimeException) {
                 Log.w(pluginBrowserLogTag, "compat data directory: ${failure.javaClass.simpleName}")

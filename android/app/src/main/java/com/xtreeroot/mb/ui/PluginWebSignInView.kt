@@ -72,12 +72,28 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
     val english = LocalMBEnglish.current
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     var issue by remember { mutableStateOf<PluginBrowserIssue?>(null) }
-    var useProfiles by remember { mutableStateOf(false) }
+    var useProfiles by rememberSaveable { mutableStateOf(false) }
     var launched by rememberSaveable { mutableStateOf(false) }
     fun fail(failure: PluginBrowserIssue) {
         Log.w(pluginBrowserLogTag, "isolated browser failed: $failure")
         issue = failure
         onFailure(failure)
+    }
+    fun openProfile(disposable: Result<Boolean>, fallback: PluginBrowserIssue? = null) {
+        val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(context) }
+        val installed = provider.getOrNull()
+        Log.i(pluginBrowserLogTag, "SDK=${Build.VERSION.SDK_INT} provider=${installed?.packageName} version=${installed?.versionName}")
+        provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
+        val profiles = if (installed != null) runCatching { PluginBrowserSession.available() } else null
+        profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
+        val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles)
+        if (route == PluginBrowserRoute.Profile) useProfiles = true
+        else fail(fallback ?: checkNotNull(route.issue))
+    }
+    fun compatFailed(failure: PluginBrowserIssue) {
+        if (failure == PluginBrowserIssue.Startup || failure == PluginBrowserIssue.UnsupportedProvider) {
+            openProfile(Result.success(false), fallback = failure)
+        } else fail(failure)
     }
     val compat = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         when (result.resultCode) {
@@ -91,7 +107,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
                 val pageError = result.data?.getStringExtra(CompatPluginBrowserActivity.documentErrorKey)
                 if (pageError != null) onDocumentError(pageError) else {
                     val name = result.data?.getStringExtra(CompatPluginBrowserActivity.issueKey)
-                    fail(PluginBrowserIssue.entries.firstOrNull { it.name == name } ?: PluginBrowserIssue.Startup)
+                    compatFailed(PluginBrowserIssue.entries.firstOrNull { it.name == name } ?: PluginBrowserIssue.Startup)
                 }
             }
             else -> fail(PluginBrowserIssue.Startup)
@@ -104,32 +120,20 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         try { compat.launch(CompatPluginBrowserActivity.intent(context, page, english, dark)) }
         catch (failure: Exception) {
             Log.w(pluginBrowserLogTag, "compat activity launch: ${failure.javaClass.simpleName}")
-            fail(PluginBrowserIssue.Startup)
+            compatFailed(PluginBrowserIssue.Startup)
         }
     }
     LaunchedEffect(page.id) {
         if (launched) return@LaunchedEffect
-        val provider = runCatching { WebViewCompat.getCurrentWebViewPackage(context) }
-        val installed = provider.getOrNull()
-        Log.i(pluginBrowserLogTag, "SDK=${Build.VERSION.SDK_INT} provider=${installed?.packageName} version=${installed?.versionName}")
-        provider.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "provider query: ${it.javaClass.simpleName}") }
-        val profiles = if (installed != null) runCatching { PluginBrowserSession.available() } else null
-        profiles?.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "profile capability query: ${it.javaClass.simpleName}") }
         val disposable = disposableBrowserSupport(context)
         disposable.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "data directory capability: ${it.javaClass.simpleName}") }
-        when (val route = pluginBrowserRoute(disposable, provider.map { it != null }, profiles)) {
-            PluginBrowserRoute.Profile -> useProfiles = true
-            PluginBrowserRoute.DisposableProcess -> openCompat()
-            else -> fail(checkNotNull(route.issue))
-        }
+        if (disposable.getOrNull() == true) openCompat() else openProfile(disposable)
     }
     if (!useProfiles && issue == null) return
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false,
         decorFitsSystemWindows = false, securePolicy = SecureFlagPolicy.SecureOn)) {
-        PluginBrowserPanel(page, closeLabel, close, if (useProfiles) PluginBrowserSession::create else null, onFailure = { failure ->
-            if (failure == PluginBrowserIssue.Startup && !launched && disposableBrowserSupport(context).getOrNull() == true) openCompat()
-            else fail(failure)
-        }, onCookies = onCookies, initialIssue = issue, onDocumentError = onDocumentError)
+        PluginBrowserPanel(page, closeLabel, close, if (useProfiles) PluginBrowserSession::create else null,
+            onFailure = ::fail, onCookies = onCookies, initialIssue = issue, onDocumentError = onDocumentError)
     }
 }
 

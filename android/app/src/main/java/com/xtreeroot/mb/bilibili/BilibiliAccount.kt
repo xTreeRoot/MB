@@ -3,6 +3,7 @@ package com.xtreeroot.mb.bilibili
 import com.xtreeroot.mb.music.SignInPrompt
 import com.xtreeroot.mb.music.SignInStatus
 import com.xtreeroot.mb.music.SourceAccount
+import com.xtreeroot.mb.music.SourceResponseFailure
 import java.io.IOException
 import java.net.HttpCookie
 import java.net.URI
@@ -61,6 +62,12 @@ internal class BilibiliAccount(
         ?: account() ?: throw IOException("请先登录哔哩哔哩")
 
     fun signOut() = synchronized(lock) { setSession(current().copy(active = false), null) }
+
+    fun deactivateForPlayback(expected: Snapshot): Snapshot? = synchronized(lock) {
+        if (expected.revision != revision || expected.cookie.isEmpty()) return null
+        setSession(current().copy(active = false), null)
+        Snapshot(revision, "")
+    }
 
     fun expire(expected: Long) = synchronized(lock) {
         if (expected == revision) setSession(SessionCookie(), null)
@@ -186,6 +193,8 @@ internal class BilibiliAccount(
 
 internal fun JSONObject.payload(): JSONObject {
     val code = getInt("code")
-    if (code != 0) throw IOException("哔哩哔哩接口返回错误（$code）")
+    if (code != 0) throw apiError(code)
     return optJSONObject("data") ?: throw IOException("哔哩哔哩响应格式不符合预期")
 }
+
+internal fun apiError(code: Int) = SourceResponseFailure(SourceResponseFailure.Kind.API, code, "哔哩哔哩接口返回错误（$code）")

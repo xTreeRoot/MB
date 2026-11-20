@@ -1,6 +1,6 @@
 package com.xtreeroot.mb.bilibili
 
-import java.io.IOException
+import com.xtreeroot.mb.music.SourceResponseFailure
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
@@ -45,7 +45,8 @@ internal class UrlConnectionTransport(private val open: (URL) -> java.net.URLCon
                     connection.outputStream.use { it.write(bytes) }
                 }
                 val status = connection.responseCode
-                if (status !in 200..299) throw IOException("哔哩哔哩请求失败（HTTP $status）")
+                if (status !in 200..299) throw SourceResponseFailure(SourceResponseFailure.Kind.HTTP, status,
+                    "哔哩哔哩请求失败（HTTP $status）")
                 val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader -> JSONObject(reader.readText()) }
                 val cookies = connection.headerFields.entries
                     .filter { entry -> entry.key.equals("Set-Cookie", ignoreCase = true) }.flatMap { it.value }

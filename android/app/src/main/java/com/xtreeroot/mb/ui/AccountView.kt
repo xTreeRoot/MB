@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -62,10 +63,12 @@ internal fun AccountView(model: AccountModel, open: (LibraryRoute) -> Unit) {
         }
         if (current != null) {
             item {
-                AccountDestinations(listOf(LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
+                AccountDestinations(listOf(LibraryRoute.Creator(current.id) to Icons.Default.AccountBox,
+                    LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
                     LibraryRoute.Liked to Icons.Default.Favorite, LibraryRoute.History to Icons.Default.PlayArrow,
                     LibraryRoute.Following to Icons.Default.Person).map { (route, icon) ->
-                    AccountDestination(route.title(), icon) { open(route) }
+                    val title = if (route is LibraryRoute.Creator) mb("我的投稿", "My Uploads") else route.title()
+                    AccountDestination(title, icon) { open(route) }
                 })
             }
             item {

@@ -33,6 +33,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -40,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class AccountPageDeviceTest {
@@ -47,9 +49,9 @@ class AccountPageDeviceTest {
     private val app = instrumentation.targetContext.applicationContext as MBApplication
 
     @Test fun builtInAccountActionsOpenTheRightPageAndRequireSignOutConfirmation() = runBlocking {
-        val listener = SourceAccount("listener", "Fixture Listener", null)
+        val listener = SourceAccount("123456", "Fixture Listener", null)
         val signOut = CompletableDeferred<Unit>()
-        val opened = CompletableDeferred<LibraryRoute>()
+        val opened = Channel<LibraryRoute>(Channel.UNLIMITED)
         val source = object : AccountSource {
             override val id = "account-page-fixture"
             override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
@@ -57,15 +59,18 @@ class AccountPageDeviceTest {
             override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit) = listener
             override suspend fun signOut() { signOut.complete(Unit) }
         }
-        withPage(source, dark = false, content = { model -> AccountView(model) { opened.complete(it) } }) {
+        withPage(source, dark = false, content = { model -> AccountView(model) { opened.trySend(it) } }) {
             awaitNode("QR Sign In")
+            assertNull(node("My Uploads"))
             capture("android-account-guest-light")
             tap("QR Sign In")
             awaitNode(listener.name)
             awaitNode("Watch History")
             capture("android-account-signed-in-light")
+            tap("My Uploads")
+            assertEquals(LibraryRoute.Creator(listener.id), withTimeout(5_000) { opened.receive() })
             tap("Watch History")
-            assertEquals(LibraryRoute.History, withTimeout(5_000) { opened.await() })
+            assertEquals(LibraryRoute.History, withTimeout(5_000) { opened.receive() })
             tap("Sign Out")
             tap("Cancel")
             awaitNode(listener.name)
@@ -75,6 +80,7 @@ class AccountPageDeviceTest {
             tap("Sign Out")
             withTimeout(5_000) { signOut.await() }
             awaitNode("QR Sign In")
+            assertNull(node("My Uploads"))
         }
     }
 

@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.xtreeroot.mb.MBApplication
 import com.xtreeroot.mb.MainActivity
 import java.io.File
 import java.net.InetAddress
@@ -21,6 +22,7 @@ import java.net.ServerSocket
 import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -34,6 +36,35 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class PluginBrowserSessionTest {
+    @Test fun signInFromMainActivityUsesDisposableProcessAndReturnsTheSession() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        assumeTrue(disposableBrowserSupport(context).getOrNull() == true)
+        assumeTrue(WebViewCompat.getCurrentWebViewPackage(context) != null)
+        val app = context.applicationContext as MBApplication
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val target = URI("https://${UUID.randomUUID()}.fixture.test/")
+        val request = PluginWebSignIn("Disposable sign-in fixture", target, target, setOf("session"), null,
+            html = """<script>setTimeout(() => document.cookie = 'session=fixture; Secure; Path=/', 3000)</script>""")
+        try {
+            withTimeout(15_000) {
+                val result = async { app.pluginWebSignIn.show(request) }
+                val isolated = withContext(Dispatchers.IO) {
+                    var process = ""
+                    while (process.isEmpty() && !result.isCompleted) {
+                        process = instrumentation.uiAutomation.executeShellCommand("pidof ${context.packageName}:plugin_browser")
+                            .let { ParcelFileDescriptor.AutoCloseInputStream(it).bufferedReader().use { stream -> stream.readText().trim() } }
+                        if (process.isEmpty()) delay(50)
+                    }
+                    process
+                }
+                assertTrue("The login page did not launch in a separate process", isolated.isNotEmpty())
+                assertEquals("session=fixture", result.await())
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
     @Test fun compatibilityBrowserStartsInADifferentProcessAndDiscardsPreviousAttemptData() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

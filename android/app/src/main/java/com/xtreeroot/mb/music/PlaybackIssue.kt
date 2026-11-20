@@ -16,3 +16,7 @@ enum class TrackUnavailableReason(val code: String, internal val issue: Playback
 }
 
 internal class PlaybackIssueException(val issue: PlaybackIssue, message: String) : IOException(message)
+
+internal class SourceResponseFailure(val kind: Kind, val code: Int, message: String) : IOException(message) {
+    enum class Kind { HTTP, API }
+}

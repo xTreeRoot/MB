@@ -132,6 +132,32 @@ class BilibiliSourceTest {
     }
 
     @Test
+    fun expiredAccountRetriesPublicPlaybackOnceWithoutSendingTheCookie() = runTest {
+        val expired = "SESSDATA=expired-fixture"
+        var saved = SessionCookie(expired, active = true)
+        val store = object : BilibiliSessionStore {
+            override fun load() = saved
+            override fun save(value: SessionCookie) { saved = value }
+        }
+        val requestedCookies = mutableListOf<String?>()
+        val source = BilibiliSource(FixtureTransport { path, _, headers ->
+            when (path) {
+                "/x/web-interface/view" -> """{"code":0,"data":{"aid":321,"cid":"456"}}"""
+                "/x/web-interface/nav" -> navigation
+                "/x/player/wbi/playurl" -> {
+                    requestedCookies.add(headers["Cookie"])
+                    if (headers["Cookie"] != null) """{"code":-101,"data":null}"""
+                    else """{"code":0,"data":{"dash":{"audio":[{"baseUrl":"https://media.example/public.m4s"}]}}}"""
+                }
+                else -> error(path)
+            }
+        }, sessionStore = store)
+        assertEquals("https://media.example/public.m4s", source.audio("BVtrack").url)
+        assertEquals(listOf(expired, null), requestedCookies)
+        assertEquals(SessionCookie(expired, active = false), saved)
+    }
+
+    @Test
     fun errorResponseKeepsPlatformCodeRatherThanParsingItsData() = runTest {
         val source = BilibiliSource(FixtureTransport { path, _, _ ->
             if (path == "/x/web-interface/nav") navigation else """{"code":-352,"data":[]} """

@@ -335,6 +335,48 @@ class LocalLibrarySearchDeviceTest {
         }
     }
 
+    @Test fun songActionsLikeAnOfflineSongAndRemoveItFromLikedSongs() = runBlocking {
+        val album = "Afterglow"
+        val track = addTrack("Afterglow Favourite", "Fixture Artist", album, "Fixture Artist", artwork = albumArt())
+        var activity: MainActivity? = null
+        try {
+            activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            tap("资料库", "Library")
+            tap("专辑", "Albums")
+            tap(album)
+            longPress(track.title)
+            tap("本地喜欢", "Like Locally")
+            withTimeout(5_000) {
+                while (app.local.catalog.activity().none { it.trackId == track.id && it.likedAt > 0 }) delay(50)
+            }
+            tap("返回资料库", "Back to Library")
+            if (find { it.matchesLabel(arrayOf("喜欢", "Liked Songs")) } == null) {
+                val categories = generateSequence(node("歌手", "Artists")) { it.parent }.first { candidate ->
+                    candidate.actionList.any { it == AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT }
+                }
+                assertTrue(categories.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id))
+            }
+            tap("喜欢", "Liked Songs")
+            node(track.title)
+            capture("trackFavoriteScreenshot", "android-liked-songs-from-track-menu.png")
+            longPress(track.title)
+            tap("取消本地喜欢", "Unlike Locally")
+            node("暂无本地曲目", "No Local Tracks")
+            assertEquals(0L, app.local.catalog.activity().single { it.trackId == track.id }.likedAt)
+            assertTrue(app.local.catalog.file(track.sourceTrackId).isFile)
+        } finally {
+            withContext(Dispatchers.Main) { activity?.finish() }
+            app.local.delete(track.sourceTrackId)
+        }
+    }
+
+    private suspend fun longPress(title: String) {
+        fun clickable(node: AccessibilityNodeInfo) = generateSequence(node) { it.parent }.firstOrNull { it.isLongClickable && it.isEnabled }
+        val row = await("Long press $title") { it.matchesLabel(arrayOf(title)) && clickable(it) != null }
+        assertEquals("Expected to long press $title", true, clickable(row)?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))
+    }
+
     private fun albumArt(): ByteArray {
         val bitmap = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
         try {

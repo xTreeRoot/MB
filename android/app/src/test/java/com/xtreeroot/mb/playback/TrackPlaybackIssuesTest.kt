@@ -3,6 +3,7 @@ package com.xtreeroot.mb.playback
 import androidx.media3.common.PlaybackException
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
+import com.xtreeroot.mb.music.SourceResponseFailure
 import com.xtreeroot.mb.music.Track
 import java.io.IOException
 import java.net.ConnectException
@@ -49,6 +50,10 @@ class TrackPlaybackIssuesTest {
         val failure = IOException("private header", MediaFetchFailure(status = 403))
         assertEquals("ERROR_CODE_IO_UNSPECIFIED / HTTP 403", failure.playbackDiagnostic(code))
         assertEquals("ERROR_CODE_IO_UNSPECIFIED", IOException("HTTP 403").playbackDiagnostic(code))
+        assertEquals("ERROR_CODE_IO_UNSPECIFIED / API -412",
+            IOException(SourceResponseFailure(SourceResponseFailure.Kind.API, -412, "private response")).playbackDiagnostic(code))
+        assertEquals("ERROR_CODE_IO_UNSPECIFIED / HTTP 429",
+            IOException(SourceResponseFailure(SourceResponseFailure.Kind.HTTP, 429, "private response")).playbackDiagnostic(code))
     }
 
     @Test fun playbackDiagnosticsDistinguishNetworkFailuresWithoutCopyingPrivateDetails() {

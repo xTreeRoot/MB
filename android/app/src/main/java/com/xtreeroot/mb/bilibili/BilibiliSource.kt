@@ -11,6 +11,7 @@ import com.xtreeroot.mb.music.LibrarySource
 import com.xtreeroot.mb.music.MediaResource
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
+import com.xtreeroot.mb.music.SourceResponseFailure
 import com.xtreeroot.mb.music.PlaybackSource
 import com.xtreeroot.mb.music.SignInPrompt
 import com.xtreeroot.mb.music.SourceAccount
@@ -145,12 +146,23 @@ internal class BilibiliSource(
     private data class VideoVariant(val url: String, val height: Int, val bandwidth: Long, val avc: Boolean)
 
     private suspend fun playbackInfo(trackId: String): JSONObject {
-        val detail = detail(trackId)
+        val snapshot = session.snapshot()
+        return try { playbackInfo(trackId, snapshot) }
+        catch (failure: SourceResponseFailure) {
+            if (failure.kind != SourceResponseFailure.Kind.API || failure.code != -101) throw failure
+            session.checkRevision(snapshot.revision)
+            val guest = session.deactivateForPlayback(snapshot) ?: throw failure
+            playbackInfo(trackId, guest)
+        }
+    }
+
+    private suspend fun playbackInfo(trackId: String, snapshot: BilibiliAccount.Snapshot): JSONObject {
+        val detail = detail(trackId, snapshot)
         return fetch("/x/player/wbi/playurl", mapOf(
             "bvid" to trackId, "cid" to detail.cid, "qn" to "80", "fnval" to "4048", "fnver" to "0",
             "fourk" to "1", "gaia_source" to "view-card", "from_client" to "BROWSER", "is_main_page" to "false",
             "need_fragment" to "false", "isGaiaAvoided" to "true", "voice_balance" to "1", "web_location" to "1315873",
-        ), signed = true)
+        ), signed = true, snapshot = snapshot)
     }
 
     override suspend fun captions(trackId: String): List<CaptionLine> {
@@ -179,9 +191,9 @@ internal class BilibiliSource(
 
     internal data class Detail(val aid: String, val cid: String)
 
-    internal suspend fun detail(trackId: String): Detail {
+    internal suspend fun detail(trackId: String, snapshot: BilibiliAccount.Snapshot = session.snapshot()): Detail {
         require(bilibiliId.matches(trackId))
-        val response = fetch("/x/web-interface/view", mapOf("bvid" to trackId))
+        val response = fetch("/x/web-interface/view", mapOf("bvid" to trackId), snapshot = snapshot)
         if (response.optLong("aid") <= 0 || response.optLong("cid") <= 0) throw invalidResponse()
         return Detail(response.optLong("aid").toString(), response.optLong("cid").toString())
     }
@@ -212,8 +224,9 @@ internal class BilibiliSource(
         parameters: Map<String, String> = emptyMap(),
         signed: Boolean = false,
         headers: Map<String, String> = emptyMap(),
+        snapshot: BilibiliAccount.Snapshot = session.snapshot(),
     ): JSONObject {
-        val snapshot = session.snapshot()
+        session.checkRevision(snapshot.revision)
         val query = if (signed) WbiSigner.sign(parameters, signingKey(snapshot), now()) else WbiSigner.query(parameters)
         val url = "$apiOrigin$path" + if (query.isEmpty()) "" else "?$query"
         session.checkRevision(snapshot.revision)
@@ -248,7 +261,6 @@ internal class BilibiliSource(
     }
 
     private fun invalidResponse() = IOException("哔哩哔哩响应格式不符合预期")
-    private fun apiError(code: Int) = IOException("哔哩哔哩接口返回错误（$code）")
 
     companion object {
         private const val apiOrigin = "https://api.bilibili.com"

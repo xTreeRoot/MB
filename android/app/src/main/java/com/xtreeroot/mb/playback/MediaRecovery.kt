@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
 import com.xtreeroot.mb.music.PlaybackIssue
 import com.xtreeroot.mb.music.PlaybackIssueException
+import com.xtreeroot.mb.music.SourceResponseFailure
 import java.io.EOFException
 import java.io.IOException
 import java.net.ConnectException
@@ -40,6 +41,7 @@ internal fun Throwable.playbackDiagnostic(code: Int): String {
         when (failure) {
             is MediaFetchFailure -> failure.status?.let { "HTTP $it" }
             is HttpDataSource.InvalidResponseCodeException -> "HTTP ${failure.responseCode}"
+            is SourceResponseFailure -> "${failure.kind.name} ${failure.code}"
             is UnknownHostException -> "DNS"
             is SSLException -> "TLS"
             is SocketTimeoutException -> "TIMEOUT"

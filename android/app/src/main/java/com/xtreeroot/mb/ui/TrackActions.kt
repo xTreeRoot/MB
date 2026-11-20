@@ -105,6 +105,12 @@ internal fun TrackActions(track: Track, saved: SavedLibraryModel, connected: Boo
                 TrackAction(mb("加入播放队列", "Add to Queue"), connected) { enqueue(false); close() }
                 TrackAction(mb("下一首播放", "Play Next"), connected) { enqueue(true); close() }
                 if (offlineAvailable) {
+                    val activity by saved.activity.collectAsStateWithLifecycle()
+                    val liked = (activity[track.id]?.likedAt ?: 0L) > 0
+                    TrackAction(if (liked) mb("取消本地喜欢", "Unlike Locally") else mb("本地喜欢", "Like Locally")) {
+                        saved.toggleFavorite(track)
+                        close()
+                    }
                     TrackAction(mb("添加到歌单", "Add to Playlist")) { choosePlaylist = true }
                     TrackAction(mb("导出音频", "Export Audio")) { export(); close() }
                 } else if (track.id in transfers) TrackAction(mb("取消下载", "Cancel Download")) { saved.cancel(track.id); close() }

@@ -13,7 +13,7 @@ class PluginBrowserRouteTest {
         assertEquals(PluginBrowserRoute.DisposableProcess, pluginBrowserRoute(present, failed, null))
         assertEquals(PluginBrowserRoute.DisposableProcess, pluginBrowserRoute(present, present, absent))
         assertEquals(PluginBrowserRoute.DisposableProcess, pluginBrowserRoute(present, present, failed))
-        assertEquals(PluginBrowserRoute.Profile, pluginBrowserRoute(present, present, present))
+        assertEquals(PluginBrowserRoute.DisposableProcess, pluginBrowserRoute(present, present, present))
     }
 
     @Test fun withoutAnIsolatedDataDirectoryNeverFallsBackToAnUnisolatedWebView() {
