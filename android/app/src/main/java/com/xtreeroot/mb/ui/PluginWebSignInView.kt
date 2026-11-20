@@ -98,6 +98,7 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         }
     }
     val compat = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        CompatPluginBrowserActivity.recordResult(result.data)
         when (result.resultCode) {
             Activity.RESULT_OK -> result.data?.getStringExtra(CompatPluginBrowserActivity.cookieKey)?.let(onCookies)
                 ?: fail(PluginBrowserIssue.Startup)
@@ -129,7 +130,10 @@ private fun PluginBrowserDialog(page: PluginBrowserPage, closeLabel: String, clo
         if (launched) return@LaunchedEffect
         val disposable = disposableBrowserSupport(context)
         disposable.exceptionOrNull()?.let { Log.w(pluginBrowserLogTag, "data directory capability: ${it.javaClass.simpleName}") }
-        if (disposable.getOrNull() == true) openCompat() else openProfile(disposable)
+        if (disposable.getOrNull() == true) {
+            if (CompatPluginBrowserActivity.awaitPreviousExit(context)) openCompat()
+            else compatFailed(PluginBrowserIssue.Startup)
+        } else openProfile(disposable)
     }
     if (!useProfiles && issue == null) return
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false,

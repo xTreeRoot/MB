@@ -99,6 +99,9 @@ class PluginBrowserSessionTest {
                 }
                 assertTrue("The login page did not launch in a separate process", isolated.isNotEmpty())
                 assertEquals("session=fixture", result.await())
+                val next = request.copy(id = UUID.randomUUID(),
+                    html = """<script>if (!document.cookie) document.cookie = 'session=fresh; Secure; Path=/';</script>""")
+                assertEquals("session=fresh", app.pluginWebSignIn.show(next))
             }
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
@@ -210,7 +213,10 @@ class PluginBrowserSessionTest {
                 withContext(Dispatchers.Main) {
                     val results = Channel<ActivityResult>(Channel.UNLIMITED)
                     val launcher = activity.activityResultRegistry.register("browser-cancel-fixture",
-                        ActivityResultContracts.StartActivityForResult()) { results.trySend(it) }
+                        ActivityResultContracts.StartActivityForResult()) {
+                        CompatPluginBrowserActivity.recordResult(it.data)
+                        results.trySend(it)
+                    }
                     try {
                         launcher.launch(Intent(context, CompatPluginBrowserActivity::class.java))
                         val invalid = results.receive()
@@ -230,6 +236,16 @@ class PluginBrowserSessionTest {
                         val cancelled = results.receive()
                         assertEquals(Activity.RESULT_CANCELED, cancelled.resultCode)
                         assertTrue(cancelled.data?.getBooleanExtra(CompatPluginBrowserActivity.userCancelledKey, false) == true)
+
+                        val nextRequest = request.copy(id = UUID.randomUUID(),
+                            html = """<script>document.cookie = 'session=new-attempt; Secure; Path=/';</script>""")
+                        val nextPage = page.copy(id = nextRequest.id, signIn = nextRequest)
+                        assertTrue(CompatPluginBrowserActivity.awaitPreviousExit(context))
+                        launcher.launch(CompatPluginBrowserActivity.intent(context, nextPage, english = true, dark = false))
+                        val next = results.receive()
+                        assertEquals("${next.data?.getStringExtra(CompatPluginBrowserActivity.issueKey)}",
+                            Activity.RESULT_OK, next.resultCode)
+                        assertEquals("session=new-attempt", next.data?.getStringExtra(CompatPluginBrowserActivity.cookieKey))
                     } finally { launcher.unregister() }
                 }
             }

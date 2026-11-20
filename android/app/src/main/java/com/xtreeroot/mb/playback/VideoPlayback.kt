@@ -166,7 +166,8 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             stage.resource = media
             val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
             val engine = ExoPlayer.Builder(context, renderers).setMediaSourceFactory(ProgressiveMediaSource.Factory {
-                guardedMediaHttp(http).apply { media.headers.forEach(::setRequestProperty) }
+                val upstream = guardedMediaHttp(http).apply { media.headers.forEach(::setRequestProperty) }
+                MediaAddressDataSource(upstream).apply { backupUrls = media.backupUrls }
             }.recoverOutsideLoader()).build()
             stage.engine = engine
             engine.trackSelectionParameters = engine.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()

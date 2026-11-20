@@ -113,17 +113,10 @@ internal class BilibiliSource(
     override suspend fun audio(trackId: String, quality: AudioQuality): MediaResource {
         val dash = playbackInfo(trackId).optJSONObject("dash")
         val available = dash?.optJSONArray("audio").objects().mapNotNull { audio ->
-            val backups = audio.optJSONArray("backup_url") ?: audio.optJSONArray("backupUrl")
-            val urls = buildList {
-                (audio.text("base_url") ?: audio.text("baseUrl"))?.takeIf(::isHttps)?.let(::add)
-                if (backups != null) for (index in 0 until backups.length()) {
-                    (backups.opt(index) as? String)?.takeIf(::isHttps)?.let(::add)
-                }
-            }.distinct()
-            val url = urls.firstOrNull() ?: return@mapNotNull null
             val mime = audio.text("mime_type") ?: audio.text("mimeType")
             val suffix = when (mime) { "audio/flac", "audio/x-flac" -> "flac"; "audio/aac" -> "aac"; else -> "m4a" }
-            AudioVariant(MediaResource(url, mediaHeaders, suffix, urls.drop(1)), audio.optLong("bandwidth"))
+            val resource = dashResource(audio, suffix) ?: return@mapNotNull null
+            AudioVariant(resource, audio.optLong("bandwidth"))
         }
         val selected = when (quality) {
             AudioQuality.Standard -> available.filter { it.bandwidth > 0 }.minByOrNull(AudioVariant::bandwidth)
@@ -138,19 +131,30 @@ internal class BilibiliSource(
     override suspend fun video(trackId: String): MediaResource {
         val available = playbackInfo(trackId).optJSONObject("dash")?.optJSONArray("video").objects()
             .mapNotNull { entry ->
-                val url = (entry.text("base_url") ?: entry.text("baseUrl"))?.takeIf(::isHttps)
-                    ?: return@mapNotNull null
-                VideoVariant(url, entry.optInt("height"), entry.optLong("bandwidth"),
+                val resource = dashResource(entry, "mp4") ?: return@mapNotNull null
+                VideoVariant(resource, entry.optInt("height"), entry.optLong("bandwidth"),
                     entry.optInt("codecid") == 7 || entry.optString("codecs").startsWith("avc1"))
             }
         val avc = available.filter(VideoVariant::avc)
         val selected = avc.ifEmpty { available }.minWithOrNull(
             compareBy<VideoVariant> { abs(it.height.toLong() - 720) }.thenBy(VideoVariant::bandwidth),
         ) ?: throw IOException("暂无可用视频")
-        return MediaResource(selected.url, mediaHeaders)
+        return selected.resource
     }
 
-    private data class VideoVariant(val url: String, val height: Int, val bandwidth: Long, val avc: Boolean)
+    private data class VideoVariant(val resource: MediaResource, val height: Int, val bandwidth: Long, val avc: Boolean)
+
+    private fun dashResource(entry: JSONObject, extension: String): MediaResource? {
+        val backups = entry.optJSONArray("backup_url") ?: entry.optJSONArray("backupUrl")
+        val urls = buildList {
+            (entry.text("base_url") ?: entry.text("baseUrl"))?.takeIf(::isHttps)?.let(::add)
+            if (backups != null) for (index in 0 until backups.length()) {
+                (backups.opt(index) as? String)?.takeIf(::isHttps)?.let(::add)
+            }
+        }.distinct()
+        val primary = urls.firstOrNull() ?: return null
+        return MediaResource(primary, mediaHeaders, extension, urls.drop(1))
+    }
 
     private suspend fun playbackInfo(trackId: String): JSONObject {
         val snapshot = session.snapshot()

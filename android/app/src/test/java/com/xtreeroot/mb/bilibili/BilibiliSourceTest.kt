@@ -190,7 +190,7 @@ class BilibiliSourceTest {
     }
 
     @Test
-    fun videoPrefers720AvcAndRejectsInsecureVariants() = runTest {
+    fun videoKeepsOnlySecureDistinctBackupsForTheSelected720AvcVariant() = runTest {
         val source = BilibiliSource(FixtureTransport { path, _, _ ->
             when (path) {
                 "/x/web-interface/view" -> """{"code":0,"data":{"aid":321,"cid":"456"}}"""
@@ -199,13 +199,18 @@ class BilibiliSourceTest {
                     {"height":720,"codecid":7,"base_url":"http://media.example/insecure"},
                     {"height":720,"codecid":12,"base_url":"https://media.example/hevc"},
                     {"height":1080,"codecid":7,"base_url":"https://media.example/1080"},
-                    {"height":720,"codecs":"avc1.4d","bandwidth":700,"baseUrl":"https://media.example/720-avc"},
-                    {"height":720,"codecid":7,"bandwidth":950,"base_url":"https://media.example/720-large"}
+                    {"height":720,"codecs":"avc1.4d","bandwidth":700,"baseUrl":"https://media.example/720-avc",
+                        "backup_url":["https://media.example/720-avc","http://backup.example/insecure",
+                            "https://user@backup.example/credentials","https://backup.example/720-avc"]},
+                    {"height":720,"codecid":7,"bandwidth":950,"base_url":"https://media.example/720-large",
+                        "backupUrl":["https://backup.example/720-large"]}
                 ]}}}"""
                 else -> error(path)
             }
         })
-        assertEquals("https://media.example/720-avc", source.video("BVtrack").url)
+        val video = source.video("BVtrack")
+        assertEquals("https://media.example/720-avc", video.url)
+        assertEquals(listOf("https://backup.example/720-avc"), video.backupUrls)
     }
 
     private class FixtureTransport(

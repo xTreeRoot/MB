@@ -32,6 +32,7 @@ import java.net.URI
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val processName = ":plugin_browser"
 private const val directorySuffixPrefix = "mb-plugin-browser-"
@@ -106,7 +107,7 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
 
     private fun complete(result: Int, data: Intent) {
         if (closing.value) return
-        setResult(result, data)
+        setResult(result, data.putExtra(retiringProcessKey, Process.myPid()))
         closing.value = true
         lifecycleScope.launch { delay(1_000); finish() }
     }
@@ -132,11 +133,33 @@ internal class CompatPluginBrowserActivity : ComponentActivity() {
         private var directorySuffix: String? = null
         private var directoryProblem = PluginBrowserIssue.Startup
         private var attempt: UUID? = null
+        private var retiringProcess: Int? = null
+        private const val retiringProcessKey = "browser-retiring-process"
         const val failed = Activity.RESULT_FIRST_USER
         const val cookieKey = "completed-cookies"
         const val issueKey = "browser-issue"
         const val documentErrorKey = "browser-document-error"
         const val userCancelledKey = "browser-user-cancelled"
+
+        fun recordResult(data: Intent?) {
+            data?.getIntExtra(retiringProcessKey, 0)?.takeIf { it > 0 }?.let { retiringProcess = it }
+        }
+
+        suspend fun awaitPreviousExit(context: Context): Boolean {
+            val previous = retiringProcess ?: return true
+            val manager = context.getSystemService(ActivityManager::class.java) ?: return false
+            val browserName = "${context.packageName}$processName"
+            val exited = withTimeoutOrNull(2_000) {
+                while (true) {
+                    val processes = runCatching { manager.runningAppProcesses }.getOrNull() ?: return@withTimeoutOrNull false
+                    if (processes.none { it.pid == previous && it.uid == Process.myUid() && it.processName == browserName }) break
+                    delay(40)
+                }
+                true
+            } == true
+            if (exited && retiringProcess == previous) retiringProcess = null
+            return exited
+        }
 
         @SuppressLint("RequiresFeature")
         fun prepareProcess(context: Context) {

@@ -254,12 +254,25 @@ class StreamingDeviceTest {
         }
     }
 
-    @Test fun videoWaitsForAudioAndFirstFrameAndHonorsPauseAfterTwoSeeks() = runBlocking {
+    @Test fun videoUsesBackupBeforeFirstFrameAndHonorsPauseAfterTwoSeeks() = runBlocking {
         val mp4 = instrumentation.context.assets.open("video.mp4").use { it.readBytes() }
         val wave = wave(12)
+        val primaryRequests = AtomicInteger()
+        val backupRequests = AtomicInteger()
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             val request = chain.request()
-            media(request, if (request.url.encodedPath == "/video") mp4 else wave)
+            when (request.url.encodedPath) {
+                "/video" -> {
+                    primaryRequests.incrementAndGet()
+                    response(request, 403, ByteArray(0)).build()
+                }
+                "/video-backup" -> {
+                    backupRequests.incrementAndGet()
+                    assertEquals("https://fixture.invalid/", request.header("Referer"))
+                    media(request, mp4)
+                }
+                else -> media(request, wave)
+            }
         }.build()
         val address = CompletableDeferred<MediaResource>()
         val track = Track("fixture", "track", "Streaming fixture", "", durationMs = 12_000)
@@ -292,7 +305,8 @@ class StreamingDeviceTest {
                 session.seekTo(310)
                 session.pause()
                 assertEquals(false, coordinator.heldIntent)
-                address.complete(MediaResource("https://fixture.invalid/video", emptyMap(), "mp4"))
+                address.complete(MediaResource("https://fixture.invalid/video", mapOf("Referer" to "https://fixture.invalid/"),
+                    "mp4", listOf("https://fixture.invalid/video-backup")))
                 show
             }
             eventually { coordinator.frames.value?.player != null }
@@ -310,6 +324,8 @@ class StreamingDeviceTest {
                 assertEquals(310L, audio.currentPosition)
                 assertFalse(audio.playWhenReady)
                 assertFalse(video.playWhenReady)
+                assertEquals(1, primaryRequests.get())
+                assertTrue(backupRequests.get() > 0)
                 ticket.close()
                 assertNull(coordinator.frames.value)
                 assertFalse(audio.isPlaying)
