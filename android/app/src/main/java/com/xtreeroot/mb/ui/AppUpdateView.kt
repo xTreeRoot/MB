@@ -103,7 +103,7 @@ internal fun AppUpdateContent(version: String, state: AppUpdateState, check: () 
             Text(mb("当前版本 $version", "Current version $version"))
             if (state.checking) Text(mb("正在检查远程版本…", "Checking releases…"))
             state.release?.let { release -> Text(mb("发现新版本 ${release.version}", "Version ${release.version} available")); Text(release.notes) }
-            if (state.checked && state.release == null) Text(mb("已是最新版本", "You're up to date"))
+            if (state.checked && state.release == null && !state.checking && state.error == null) Text(mb("已是最新版本", "You're up to date"))
             if (state.downloading) LinearProgressIndicator(progress = { state.progress }, modifier = Modifier.padding(vertical = 8.dp))
             state.error?.let { Text(it) }
         }

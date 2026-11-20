@@ -96,7 +96,7 @@ class ComponentsDeviceTest {
 
     @Test fun appUpdateActionsCheckDownloadCancelAndHandOffInstallation() = runBlocking {
         val activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
-        val state = mutableStateOf(AppUpdateState())
+        val state = mutableStateOf(AppUpdateState(checked = true, error = "Check service unavailable"))
         val uri = URI("https://github.com/xTreeRoot/MB/releases/tag/mb-android-v0.1.26")
         val release = AppRelease("mb-android-v0.1.26", "0.1.26", uri, "Update fixture", uri, 3, "a".repeat(64))
         var checks = 0; var downloads = 0; var cancelled = 0; var installs = 0
@@ -108,6 +108,8 @@ class ComponentsDeviceTest {
                         install = { installs++ }, dismiss = { cancelled++; state.value = state.value.copy(downloading = false) })
                 } } }
             }
+            await("Check service unavailable")
+            assertTrue(nodes("You're up to date").isEmpty())
             tap("Check Version"); await("Version 0.1.26 available"); assertEquals(1, checks)
             tap("Download Update"); await("Cancel Download"); assertEquals(1, downloads)
             tap("Cancel Download"); assertEquals(1, cancelled)
