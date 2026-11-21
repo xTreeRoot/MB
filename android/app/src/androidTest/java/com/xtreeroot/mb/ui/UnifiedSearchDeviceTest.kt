@@ -1,6 +1,7 @@
 package com.xtreeroot.mb.ui
 
 import android.content.Intent
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Bundle
@@ -26,6 +27,8 @@ class UnifiedSearchDeviceTest {
     private val ids = listOf("search-fixture-a", "search-fixture-b")
 
     private suspend fun fixture(test: suspend (MainActivity) -> Unit) {
+        val automation = instrumentation.uiAutomation
+        automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
         val preferences = app.settings.values.value
         var activity: MainActivity? = null
         try {
@@ -55,6 +58,10 @@ class UnifiedSearchDeviceTest {
             activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
             await("First")
             test(activity)
+        } catch (error: Throwable) {
+            screenshot("android-search-failure.png")
+            File(app.cacheDir, "android-search-failure-nodes.txt").writeText(allNodes().joinToString("\n") { "${it.className} | ${it.text} | ${it.contentDescription} | editable=${it.isEditable}" })
+            throw error
         } finally {
             activity?.let { withContext(Dispatchers.Main) { it.finish() } }
             app.resourceBookmarks.tracks.value.filter { it.sourceId in ids }.forEach { app.resourceBookmarks.remove(it.id) }
@@ -90,7 +97,7 @@ class UnifiedSearchDeviceTest {
             val field = allNodes().first { it.className?.toString() == "android.widget.EditText" }
             setText(field, "Local First"); tap("Save"); await("Local First")
             tap("Sort"); await("Up")
-            val up = nodes("Up").first { node -> generateSequence(node) { it.parent }.any { it.isClickable && it.isEnabled } }
+            val up = nodes("Up").first { node -> generateSequence(node) { it.parent }.firstOrNull { it.isClickable }?.isEnabled == true }
             click(up)
             withTimeout(5_000) { while (app.plugins.installed().first().id != ids.last()) delay(25) }
             tap("Done"); tap("Done"); await("Local First")
@@ -106,14 +113,21 @@ class UnifiedSearchDeviceTest {
 
     private fun allNodes(): List<AccessibilityNodeInfo> {
         fun visit(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> = listOf(node) + (0 until node.childCount).flatMap { node.getChild(it)?.let(::visit).orEmpty() }
-        return instrumentation.uiAutomation.rootInActiveWindow?.let(::visit).orEmpty()
+        // Android 9 在菜单关闭后可能没有 activeWindow，复用账号测试的应用窗口回退。
+        val automation = instrumentation.uiAutomation
+        val roots = listOfNotNull(automation.rootInActiveWindow) + automation.windows.mapNotNull { it.root }.filter { it.packageName == app.packageName }
+        return roots.flatMap(::visit)
     }
     private fun nodes(text: String) = allNodes().filter { it.isVisibleToUser && (it.text?.toString() == text || it.contentDescription?.toString() == text) }
     private suspend fun await(text: String) = withTimeout(8_000) { while (nodes(text).isEmpty()) delay(25) }
-    private fun click(node: AccessibilityNodeInfo) = generateSequence(node) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-    private suspend fun tap(text: String) = withTimeout(5_000) { while (nodes(text).none(::click)) delay(25) }
+    private fun click(node: AccessibilityNodeInfo) = generateSequence(node) { it.parent }.firstOrNull { it.isClickable }?.takeIf { it.isEnabled }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+    private suspend fun tap(text: String) {
+        try { withTimeout(5_000) { while (nodes(text).none(::click)) delay(25) } }
+        catch (error: TimeoutCancellationException) { throw AssertionError("Could not click: $text", error) }
+    }
     private fun setText(node: AccessibilityNodeInfo, value: String) {
-        assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }))
+        val editable = node.takeIf { it.isEditable } ?: allNodes().first { it.isEditable }
+        assertTrue(editable.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) }))
     }
     private fun swipeRight() {
         val metrics = app.resources.displayMetrics

@@ -168,7 +168,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
             if (preferences.builtInEnabled) put(app.bilibili.id, mb("哔哩哔哩", "Bilibili"))
             pluginState.installed.filter { it.enabled }.forEach { put(it.id, it.displayName) }
         }
-        CompositionLocalProvider(LocalSourceNames provides sourceNames) {
+        CompositionLocalProvider(LocalSourceNames provides (sourceNames + pluginState.installed.associate { it.id to it.displayName })) {
         val sourceId = selectedSourceId(preferences.selectedSourceId, sourceNames.keys)
         val activeSource = sourceId?.let(app::musicSource)
         val pluginSource = activeSource as? PluginSource
@@ -183,7 +183,7 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         var searchTarget by rememberSaveable { mutableStateOf<String?>(null) }
         val target = searchTarget ?: sourceId.orEmpty()
         val searchIdentity = if (target == "torrent") "knaben" else "search:$target"
-        LaunchedEffect(target, pluginState.installed.map { it.id to it.revision }, preferences.builtInEnabled) {
+        LaunchedEffect(target, sourceNames, pluginState.installed.map { it.id to it.revision }, preferences.builtInEnabled) {
             val query = browser.searchPages(SearchScope.Music).state.value.value.query
             try {
                 val provider = searchSource(app, target, sourceNames)
