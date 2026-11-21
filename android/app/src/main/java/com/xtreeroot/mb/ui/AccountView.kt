@@ -51,32 +51,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AccountView(model: AccountModel, open: (LibraryRoute) -> Unit) {
+internal fun AccountView(model: AccountModel, openSettings: () -> Unit = {}, openPlugins: () -> Unit = {}, open: (LibraryRoute) -> Unit) {
     val state by model.account.collectAsStateWithLifecycle()
     var signOut by rememberSaveable { mutableStateOf(false) }
     val current = state.account
     val refreshing = state.loading && !state.signingIn && current != null
-    RefreshableList(refreshing = refreshing, refresh = { if (!state.loading) model.refresh() }) {
+    RefreshableList(refreshing = refreshing, refresh = { if (!state.loading) model.refresh() },
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
         item {
             AccountHeader(mb("哔哩哔哩", "Bilibili"), current, state.loading,
-                mb("扫码登录", "QR Sign In").takeIf { state.canSignIn }, model::signIn)
+                mb("扫码登录", "QR Sign In").takeIf { state.canSignIn }, model::signIn,
+                upload = current?.let { user -> AccountDestination(mb("我的投稿", "My Uploads"), Icons.Default.AccountBox) { open(LibraryRoute.Creator(user.id)) } })
         }
-        if (current != null) {
-            item {
-                AccountDestinations(listOf(LibraryRoute.Creator(current.id) to Icons.Default.AccountBox,
-                    LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
-                    LibraryRoute.Liked to Icons.Default.Favorite, LibraryRoute.History to Icons.Default.PlayArrow,
-                    LibraryRoute.Following to Icons.Default.Person).map { (route, icon) ->
-                    val title = if (route is LibraryRoute.Creator) mb("我的投稿", "My Uploads") else route.title()
-                    AccountDestination(title, icon) { open(route) }
-                })
-            }
-            item {
-                TextButton(onClick = { signOut = true }, enabled = !state.loading, modifier = Modifier.padding(horizontal = 20.dp)) {
-                    Text(mb("退出登录", "Sign Out"), color = if (state.loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-                }
-            }
+        item {
+            AccountDestinations(listOf(LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
+                LibraryRoute.Liked to Icons.Default.Favorite, LibraryRoute.History to Icons.Default.PlayArrow,
+                LibraryRoute.Following to Icons.Default.Person).map { (route, icon) -> AccountDestination(route.title(), icon) { open(route) } })
         }
+        item { AccountTools(openSettings, openPlugins) }
+        if (current != null) item { AccountSignOutRow(state.loading) { signOut = true } }
         if (!state.signingIn) {
             if (state.loading && !refreshing) item { Loading() }
             state.error?.let { message -> item { Retry(message, model::refresh) } }

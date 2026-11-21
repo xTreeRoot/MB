@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import com.xtreeroot.mb.ui.components.MBTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,11 +45,7 @@ internal fun MusicCoverCard(track: Track, play: () -> Unit) {
 internal fun PluginDiscoverySection(section: PluginCatalogSection, open: (PluginCatalogRequest) -> Unit,
                                     play: (List<Track>, Track) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(section.title, style = MaterialTheme.typography.titleMedium)
-            section.more?.let { more -> TextButton(onClick = { open(more.destination) }) { Text(mb("更多", "More")) } }
-        }
+        DiscoverySectionHeading(section.title, open = section.more?.let { more -> { open(more.destination) } })
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(section.tracks, key = { "track-${it.id}" }) { track ->
                 if (section.videos) Box(Modifier.width(220.dp)) { VideoCoverCard(track) { play(section.tracks, track) } }

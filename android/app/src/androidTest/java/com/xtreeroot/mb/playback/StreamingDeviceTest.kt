@@ -254,6 +254,142 @@ class StreamingDeviceTest {
         }
     }
 
+    @Test fun musicPreloadsVideoWithoutPausingAndSwitchesUsingTheSameBufferedPlayer() = runBlocking {
+        val mp4 = instrumentation.context.assets.open("video-preload.mp4").use { it.readBytes() }
+        val wav = wave(30)
+        val calls = AtomicInteger()
+        val offMain = java.util.concurrent.atomic.AtomicBoolean()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            media(chain.request(), if (chain.request().url.encodedPath == "/video") mp4 else wav)
+        }.build()
+        val track = Track("fixture", "preload", "Preload fixture", "", durationMs = 30_000)
+        val source = object : VideoSource {
+            override val id = track.sourceId
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+            override suspend fun video(trackId: String): MediaResource {
+                calls.incrementAndGet()
+                offMain.set(android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
+                return MediaResource("https://fixture.invalid/video", emptyMap())
+            }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) { player(client).apply {
+            setMediaItem(track.mediaItem().buildUpon().setUri("https://fixture.invalid/audio").build()); prepare(); play()
+        } }
+        val coordinator = withContext(Dispatchers.Main) {
+            VideoPlayback(instrumentation.targetContext, client, audio, scope, { source }, { AudioQuality.Standard })
+        }
+        val texture = SurfaceTexture(false)
+        val output = Surface(texture)
+        try {
+            eventually { audio.isPlaying }
+            withContext(Dispatchers.Main) { coordinator.preload(track) }
+            eventually { coordinator.preloaded.value?.loading == false }
+            val ticket = withContext(Dispatchers.Main) {
+                assertNull(coordinator.frames.value)
+                assertNull(coordinator.heldIntent)
+                assertTrue(audio.isPlaying)
+                assertTrue(offMain.get())
+                val prepared = checkNotNull(coordinator.preloaded.value?.player)
+                val ticket = checkNotNull(coordinator.show(track))
+                assertTrue(prepared === coordinator.frames.value?.player)
+                assertNull(coordinator.heldIntent)
+                assertTrue(audio.isPlaying)
+                prepared.setVideoSurface(output)
+                assertEquals(1, calls.get())
+                ticket
+            }
+            eventually { coordinator.frames.value?.loading == false && audio.currentPosition > 300 }
+            withContext(Dispatchers.Main) {
+                val video = checkNotNull(coordinator.frames.value?.player)
+                assertTrue(kotlin.math.abs(audio.currentPosition - video.currentPosition) < 300)
+                ticket.close()
+                assertNull(coordinator.frames.value)
+                assertTrue(audio.isPlaying)
+                assertTrue(video === coordinator.preloaded.value?.player)
+                audio.pause()
+                coordinator.preload(null)
+                assertNull(coordinator.preloaded.value)
+                assertNull(coordinator.heldIntent)
+                assertFalse(audio.playWhenReady)
+            }
+        } finally {
+            withContext(Dispatchers.Main) { coordinator.close(); scope.cancel(); audio.release() }
+            output.release(); texture.release()
+        }
+    }
+
+    @Test fun replacedOrFailedBackgroundVideoNeverStopsAudioOrPublishesAnOldTrack() = runBlocking {
+        val mp4 = instrumentation.context.assets.open("video-preload.mp4").use { it.readBytes() }
+        val wav = wave(30)
+        val oldStarted = CompletableDeferred<Unit>()
+        val late = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            media(chain.request(), if (chain.request().url.encodedPath == "/video") mp4 else wav)
+        }.build()
+        val first = Track("fixture", "old-preload", "Old fixture", "", durationMs = 30_000)
+        val next = first.copy(sourceTrackId = "new-preload", title = "Next fixture")
+        val source = object : VideoSource {
+            override val id = first.sourceId
+            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+            override suspend fun video(trackId: String): MediaResource {
+                calls.incrementAndGet()
+                if (trackId == first.sourceTrackId) {
+                    oldStarted.complete(Unit)
+                    withContext(NonCancellable) { late.await() }
+                }
+                return MediaResource("https://fixture.invalid/video", emptyMap())
+            }
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val audio = withContext(Dispatchers.Main) { player(client).apply {
+            setMediaItem(first.mediaItem().buildUpon().setUri("https://fixture.invalid/audio").build()); prepare(); play()
+        } }
+        var currentSource: VideoSource = source
+        val coordinator = withContext(Dispatchers.Main) {
+            VideoPlayback(instrumentation.targetContext, client, audio, scope, { currentSource }, { AudioQuality.Standard })
+        }
+        try {
+            eventually { audio.isPlaying }
+            withContext(Dispatchers.Main) { coordinator.preload(first) }
+            withTimeout(5_000) { oldStarted.await() }
+            withContext(Dispatchers.Main) {
+                assertTrue(audio.isPlaying)
+                audio.setMediaItem(next.mediaItem().buildUpon().setUri("https://fixture.invalid/audio").build()); audio.prepare()
+                coordinator.preload(next)
+            }
+            eventually { audio.isPlaying && coordinator.preloaded.value?.loading == false }
+            late.complete(Unit)
+            delay(200)
+            withContext(Dispatchers.Main) {
+                assertEquals(next.id, coordinator.preloaded.value?.trackId)
+                assertNull(coordinator.frames.value)
+                assertNull(coordinator.heldIntent)
+                assertTrue(audio.isPlaying)
+                assertEquals(2, calls.get())
+                coordinator.preload(null)
+                currentSource = object : VideoSource {
+                    override val id = first.sourceId
+                    override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
+                    override suspend fun video(trackId: String): MediaResource { calls.incrementAndGet(); error("Fixture unavailable") }
+                }
+                coordinator.preload(next)
+            }
+            eventually { coordinator.preloaded.value?.error != null }
+            withContext(Dispatchers.Main) {
+                repeat(3) { coordinator.preload(next) }
+                assertEquals(3, calls.get())
+                assertNull(coordinator.frames.value)
+                assertNull(coordinator.heldIntent)
+                assertTrue(audio.isPlaying)
+            }
+        } finally {
+            late.complete(Unit)
+            withContext(Dispatchers.Main) { coordinator.close(); scope.cancel(); audio.release() }
+        }
+    }
+
     @Test fun videoUsesBackupBeforeFirstFrameAndHonorsPauseAfterTwoSeeks() = runBlocking {
         val mp4 = instrumentation.context.assets.open("video.mp4").use { it.readBytes() }
         val wave = wave(12)

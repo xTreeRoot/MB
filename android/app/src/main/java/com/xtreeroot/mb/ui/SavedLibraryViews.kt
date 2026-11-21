@@ -367,7 +367,7 @@ private fun TrackPicker(tracks: List<Track>, close: () -> Unit, add: (List<Strin
 }
 
 @Composable
-private fun LibraryConfirmation(title: String, detail: String, button: String, close: () -> Unit, confirm: () -> Unit) {
+internal fun LibraryConfirmation(title: String, detail: String, button: String, close: () -> Unit, confirm: () -> Unit) {
     AlertDialog(onDismissRequest = close, title = { Text(title) }, text = { Text(detail) },
         confirmButton = { TextButton(onClick = confirm) { Text(button) } },
         dismissButton = { TextButton(onClick = close) { Text(mb("取消", "Cancel")) } })

@@ -9,6 +9,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.video.PlaceholderSurface
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.xtreeroot.mb.music.AudioQuality
@@ -17,6 +19,8 @@ import com.xtreeroot.mb.music.Track
 import com.xtreeroot.mb.music.VideoSource
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -37,6 +41,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     private class Stage(val track: Track, val source: VideoSource, val quality: AudioQuality) {
         var resource: MediaResource? = null
         var engine: ExoPlayer? = null
+        var surface: PlaceholderSurface? = null
         var firstFrame = false
         var recovery = MediaRecoveryBudget()
         var job: Job? = null
@@ -44,23 +49,57 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     }
 
     private var active: Stage? = null
+    private var warm: Stage? = null
+    private var closed = false
     private val mutable = MutableStateFlow<VideoFrameState?>(null)
     val frames = mutable.asStateFlow()
+    // 与可见画面分开发布，后台预载不会把音频会话切成“视频缓冲中”。
+    private val preloadState = MutableStateFlow<VideoFrameState?>(null)
+    val preloaded = preloadState.asStateFlow()
     var onGateChanged: () -> Unit = {}
     var heldIntent: Boolean? = null
         private set
 
     init { audio.addListener(this) }
 
+    /** 仅预载当前正在播放的资源，ExoPlayer 的独立加载/解码线程负责流式缓冲。 */
+    fun preload(track: Track?) {
+        if (closed) return
+        val target = track?.takeIf { audio.currentMediaItem?.mediaId == it.id }
+        val source = target?.let(sourceFor)
+        if (target == null || source == null) { clearWarm(); return }
+        if (active?.track?.id == target.id) return
+        if (warm?.let { it.track.id == target.id && it.source === source && it.quality == quality() } == true) return
+        clearWarm()
+        val stage = Stage(target, source, quality())
+        warm = stage
+        load(stage, audio.currentPosition)
+    }
+
     fun show(track: Track): AutoCloseable? {
-        if (audio.currentMediaItem?.mediaId != track.id) return null
+        if (closed || audio.currentMediaItem?.mediaId != track.id) return null
         val source = sourceFor(track) ?: return null
-        val stage = Stage(track, source, quality())
+        val stage = warm?.takeIf { it.track.id == track.id && it.source === source && it.quality == quality() }
+            ?: Stage(track, source, quality())
+        if (warm === stage) { warm = null; preloadState.value = null } else clearWarm()
         active?.let(::retire)
         active = stage
-        hold()
-        if (audio.playbackState == Player.STATE_IDLE && audio.playerError == null) audio.prepare()
-        load(stage, audio.currentPosition)
+        val engine = stage.engine
+        if (engine != null) {
+            // 已就绪且追上音频时不暂停音频；PlayerView 接管同一个播放器和已有缓冲。
+            if (abs(engine.currentPosition - audio.currentPosition) > 250) {
+                stage.firstFrame = false
+                engine.seekTo(audio.currentPosition)
+            }
+            if (!stage.firstFrame || engine.playbackState != Player.STATE_READY) hold()
+            mutable.value = VideoFrameState(track.id, engine, loading = heldIntent != null || !stage.firstFrame)
+            synchronize(stage, engine)
+        } else {
+            stage.recovery = MediaRecoveryBudget()
+            hold()
+            if (audio.playbackState == Player.STATE_IDLE && audio.playerError == null) audio.prepare()
+            load(stage, audio.currentPosition)
+        }
         return AutoCloseable { if (active === stage) hide() }
     }
 
@@ -81,6 +120,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         if (mediaItem?.mediaId != active?.track?.id) hide()
+        if (mediaItem?.mediaId != warm?.track?.id) clearWarm()
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -88,7 +128,11 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     }
 
     override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-        val stage = active ?: return
+        val stage = active ?: warm ?: return
+        if (stage === warm) {
+            if (newPosition.mediaItem?.mediaId == stage.track.id) stage.engine?.seekTo(newPosition.positionMs.coerceAtLeast(0))
+            return
+        }
         if (mutable.value?.error != null) return
         if ((reason != Player.DISCONTINUITY_REASON_SEEK && reason != Player.DISCONTINUITY_REASON_AUTO_TRANSITION) ||
             newPosition.mediaItem?.mediaId != stage.track.id) return
@@ -97,8 +141,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     }
 
     override fun onEvents(player: Player, events: Player.Events) {
-        val stage = active ?: return
-        stage.engine?.let { synchronize(stage, it) }
+        (active ?: warm)?.let { stage -> stage.engine?.let { synchronize(stage, it) } }
     }
 
     private fun hold() {
@@ -118,9 +161,26 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     private fun hide() {
         val stage = active ?: return
         active = null
-        retire(stage)
         mutable.value = null
+        if (!closed && (audio.playWhenReady || heldIntent == true) && audio.currentMediaItem?.mediaId == stage.track.id && stage.engine != null && audio.playerError == null) {
+            clearWarm()
+            warm = stage
+            try { attachPlaceholder(stage) } catch (_: RuntimeException) { clearWarm() }
+        } else retire(stage)
         releaseHold()
+        if (warm === stage) stage.engine?.let { synchronize(stage, it) }
+    }
+
+    private fun clearWarm() {
+        val previous = warm
+        warm = null
+        preloadState.value = null
+        previous?.let(::retire)
+    }
+
+    private fun attachPlaceholder(stage: Stage) {
+        val surface = stage.surface ?: PlaceholderSurface.newInstance(context, false).also { stage.surface = it }
+        stage.engine?.setVideoSurface(surface)
     }
 
     private fun retire(stage: Stage) {
@@ -128,32 +188,41 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
         val engine = stage.engine
         stage.engine = null
         engine?.release()
+        stage.surface?.release()
+        stage.surface = null
     }
 
     private fun fail(stage: Stage, message: String) {
         retire(stage)
-        mutable.value = VideoFrameState(stage.track.id, loading = false, error = message)
-        releaseHold()
+        if (active === stage) {
+            mutable.value = VideoFrameState(stage.track.id, loading = false, error = message)
+            releaseHold()
+        } else if (warm === stage) preloadState.value = VideoFrameState(stage.track.id, loading = false, error = message)
     }
 
     fun close() {
+        closed = true
         audio.removeListener(this)
         onGateChanged = {}
         heldIntent = null
         hide()
+        clearWarm()
     }
 
     private fun load(stage: Stage, position: Long, wait: Long = 0) {
         retire(stage)
         stage.firstFrame = false
         stage.stalledSince = null
-        mutable.value = VideoFrameState(stage.track.id)
+        publish(stage, VideoFrameState(stage.track.id))
         stage.job = scope.launch {
             yield()
             delay(wait)
             if (!valid(stage)) { hideIfActive(stage); return@launch }
             val media = try {
-                stage.resource ?: stage.source.video(stage.track.sourceTrackId, stage.quality)
+                stage.resource ?: withContext(Dispatchers.IO) {
+                    if (!stage.source.supportsVideo()) throw IllegalStateException("Video unavailable")
+                    stage.source.video(stage.track.sourceTrackId, stage.quality)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -165,13 +234,17 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             if (!valid(stage)) { hideIfActive(stage); return@launch }
             stage.resource = media
             val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
-            val engine = ExoPlayer.Builder(context, renderers).setMediaSourceFactory(ProgressiveMediaSource.Factory {
+            val engine = try { ExoPlayer.Builder(context, renderers).setMediaSourceFactory(ProgressiveMediaSource.Factory {
                 val upstream = guardedMediaHttp(http).apply { media.headers.forEach(::setRequestProperty) }
                 MediaAddressDataSource(upstream).apply { backupUrls = media.backupUrls }
-            }.recoverOutsideLoader()).build()
+            }.recoverOutsideLoader()).setLoadControl(DefaultLoadControl.Builder()
+                .setBufferDurationsMs(1_500, 8_000, 250, 500).setTargetBufferBytes(12 * 1024 * 1024).build()).build()
+            } catch (_: RuntimeException) { fail(stage, "视频播放器初始化失败"); return@launch }
             stage.engine = engine
             engine.trackSelectionParameters = engine.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
             engine.volume = 0f
+            if (stage === warm) try { attachPlaceholder(stage) }
+            catch (_: RuntimeException) { fail(stage, "视频预载初始化失败"); return@launch }
             engine.addListener(object : Player.Listener {
                 override fun onRenderedFirstFrame() {
                     if (stage.engine !== engine) return
@@ -184,7 +257,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
                     val action = mediaRecovery(error)
                     val retry = action?.let(stage.recovery::delayFor)
                     if (retry != null) {
-                        hold()
+                        if (stage === active) hold()
                         if (action == MediaRecovery.RefreshAddress) stage.resource = null
                         load(stage, audio.currentPosition, retry)
                     } else {
@@ -192,7 +265,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
                     }
                 }
             })
-            mutable.value = VideoFrameState(stage.track.id, engine)
+            publish(stage, VideoFrameState(stage.track.id, engine))
             engine.setMediaItem(MediaItem.fromUri(media.url), position.coerceAtLeast(0))
             engine.prepare()
             while (valid(stage) && stage.engine === engine) {
@@ -203,13 +276,33 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
         }
     }
 
-    private fun valid(stage: Stage): Boolean = active === stage && audio.currentMediaItem?.mediaId == stage.track.id &&
+    private fun valid(stage: Stage): Boolean = !closed && (active === stage || warm === stage) && audio.currentMediaItem?.mediaId == stage.track.id &&
         sourceFor(stage.track) === stage.source
 
-    private fun hideIfActive(stage: Stage) { if (active === stage) hide() }
+    private fun hideIfActive(stage: Stage) {
+        if (active === stage) hide()
+        if (warm === stage) clearWarm()
+    }
+
+    private fun publish(stage: Stage, frame: VideoFrameState) {
+        if (stage === active) mutable.value = frame
+        else if (stage === warm) preloadState.value = frame
+    }
 
     private fun synchronize(stage: Stage, video: ExoPlayer) {
         if (!valid(stage) || stage.engine !== video) return
+        if (stage === warm) {
+            // 后台视频只追随音频，不持有播放闸门，也不改变音频的暂停/恢复意图。
+            if (audio.playbackState == Player.STATE_IDLE || audio.playbackState == Player.STATE_ENDED || audio.playerError != null) {
+                clearWarm()
+                return
+            }
+            if (video.playbackState == Player.STATE_READY && abs(video.currentPosition - audio.currentPosition) > 250) video.seekTo(audio.currentPosition)
+            if (video.playWhenReady != audio.isPlaying) video.playWhenReady = audio.isPlaying
+            val loading = video.playbackState != Player.STATE_READY || !stage.firstFrame
+            if (preloadState.value?.loading != loading) publish(stage, VideoFrameState(stage.track.id, video, loading))
+            return
+        }
         val pictureReady = (video.playbackState == Player.STATE_READY || video.playbackState == Player.STATE_ENDED) && stage.firstFrame
         val ready = pictureReady && audio.playbackState == Player.STATE_READY
         if (heldIntent != null && ready) releaseHold()

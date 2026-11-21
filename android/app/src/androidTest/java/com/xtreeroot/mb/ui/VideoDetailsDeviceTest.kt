@@ -95,7 +95,7 @@ class VideoDetailsDeviceTest {
             }
             verifyCards()
             captureVideoControl("android-discovery-video-grid.png")
-            tap("More")
+            tap("See More Music Charts")
             await("Play All")
             verifyCards()
             tap(tracks[1].title)
@@ -372,7 +372,7 @@ class VideoDetailsDeviceTest {
             tap("Back to Browse")
             await("Discover")
             tap("Music Mode")
-            tap("Video Mode")
+            await("Video Mode")
             withTimeout(5_000) { while (app.settings.values.value.playbackMode != PlaybackMode.Video) delay(25) }
             withContext(Dispatchers.Main) { player.watchCurrentVideo() }
             await("Video Mode", ::isSelectedPlaybackMode)

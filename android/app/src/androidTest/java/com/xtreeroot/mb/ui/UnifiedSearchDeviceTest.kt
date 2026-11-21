@@ -40,7 +40,7 @@ class UnifiedSearchDeviceTest {
                     val code = """
                         const song = {id:"song",name:"$name song",artists:[{id:"artist",name:"Artist"}],duration:180000};
                         export function home(){return {sections:[{title:"Daily",tracks:[song],morePage:"daily"}]};}
-                        export function browse(){return {sections:[{title:"Daily",tracks:[song]}]};}
+                        export function browse(){return {sections:[{title:"Daily",tracks:[{...song,name:"$name detail"}]}]};}
                         export function search(){return {tracks:[{...song,name:"$name music"}],more:false};}
                         export function searchVideos(){return {tracks:[{...song,id:"video",name:"$name video"}],more:false};}
                     """.trimIndent()
@@ -108,6 +108,26 @@ class UnifiedSearchDeviceTest {
             await("Video Mode"); screenshot("android-discovery-platforms.png")
             tap("Search"); await("Second ▾")
             tap("Second ▾"); await("Local First")
+        }
+    }
+
+    @Test fun discoveryMoreOpensThePluginSectionAndAccountToolsOpenTheirPages() = runBlocking {
+        fixture {
+            await("First song")
+            screenshot("android-discovery-more-aligned.png")
+            tap("See More Daily")
+            await("First detail")
+            tap("Back")
+            tap("Me")
+            await("My Music")
+            screenshot("android-account-root-no-hero.png")
+            tap("Settings")
+            await("Appearance")
+            tap("Done")
+            tap("Plugins")
+            await("Sort")
+            tap("Done")
+            await("My Music")
         }
     }
 

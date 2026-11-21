@@ -54,6 +54,7 @@ class AccountPageDeviceTest {
         val signOut = CompletableDeferred<Unit>()
         val confirmSignIn = CompletableDeferred<Unit>()
         val opened = Channel<LibraryRoute>(Channel.UNLIMITED)
+        val tools = Channel<String>(Channel.UNLIMITED)
         val source = object : AccountSource {
             override val id = "account-page-fixture"
             override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
@@ -65,7 +66,9 @@ class AccountPageDeviceTest {
             }
             override suspend fun signOut() { signOut.complete(Unit) }
         }
-        withPage(source, dark = false, content = { model -> AccountView(model) { opened.trySend(it) } }) {
+        withPage(source, dark = false, content = { model ->
+            AccountView(model, openSettings = { tools.trySend("settings") }, openPlugins = { tools.trySend("plugins") }) { opened.trySend(it) }
+        }) {
             awaitNode("QR Sign In")
             assertNull(node("My Uploads"))
             capture("android-account-guest-light")
@@ -79,14 +82,19 @@ class AccountPageDeviceTest {
             assertEquals(LibraryRoute.Creator(listener.id), withTimeout(5_000) { opened.receive() })
             tap("Watch History")
             assertEquals(LibraryRoute.History, withTimeout(5_000) { opened.receive() })
+            tap("Settings")
+            assertEquals("settings", withTimeout(5_000) { tools.receive() })
+            tap("Plugins")
+            assertEquals("plugins", withTimeout(5_000) { tools.receive() })
             tap("Sign Out")
             tap("Cancel")
-            awaitNode(listener.name)
+            withTimeout(5_000) { while (node("Sign out?") != null) delay(25) }
             assertFalse(signOut.isCompleted)
             tap("Sign Out")
             awaitNode("Sign out?")
             tap("Sign Out")
             withTimeout(5_000) { signOut.await() }
+            scrollTo("QR Sign In")
             awaitNode("QR Sign In")
             assertNull(node("My Uploads"))
         }
@@ -100,9 +108,11 @@ class AccountPageDeviceTest {
             app.refreshPlugins()
             val source = app.playbackSource(id) as PluginSource
             val navigator = PluginCatalogNavigator()
+            val tools = Channel<String>(Channel.UNLIMITED)
             withPage(source, dark = true, content = { model ->
                 val state by model.account.collectAsStateWithLifecycle()
-                PluginPersonalContent(source, navigator, model, state)
+                PluginPersonalContent(source, navigator, model, state,
+                    openSettings = { tools.trySend("settings") }, openPlugins = { tools.trySend("plugins") })
             }) {
                 awaitNode("Fixture Listener")
                 awaitNode("Source Playlists")
@@ -111,6 +121,10 @@ class AccountPageDeviceTest {
                 assertRequest(PluginCatalogRequest.Browse("personal", "My Profile"), navigator)
                 tap("Source Playlists")
                 assertRequest(PluginCatalogRequest.Collection(PluginCollection.Playlists, "Source Playlists"), navigator)
+                tap("Settings")
+                assertEquals("settings", withTimeout(5_000) { tools.receive() })
+                tap("Plugins")
+                assertEquals("plugins", withTimeout(5_000) { tools.receive() })
             }
         } finally {
             app.plugins.remove(plugin)
@@ -181,9 +195,24 @@ class AccountPageDeviceTest {
     }
 
     private suspend fun tap(text: String) {
+        scrollTo(text)
         awaitNode(text)
         val button = generateSequence(node(text)) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }
         assertEquals("Expected to tap $text", true, button?.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+    }
+
+    private suspend fun scrollTo(text: String) {
+        fun scrollable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? = node.takeIf { it.isScrollable } ?:
+            (0 until node.childCount).firstNotNullOfOrNull { node.getChild(it)?.let(::scrollable) }
+        for (direction in listOf(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) {
+            repeat(8) {
+                if (node(text)?.isVisibleToUser == true) return
+                val roots = listOfNotNull(instrumentation.uiAutomation.rootInActiveWindow) +
+                    instrumentation.uiAutomation.windows.mapNotNull { it.root }.filter { it.packageName == app.packageName }
+                roots.firstNotNullOfOrNull(::scrollable)?.performAction(direction)
+                delay(100)
+            }
+        }
     }
 
     private fun capture(name: String) {

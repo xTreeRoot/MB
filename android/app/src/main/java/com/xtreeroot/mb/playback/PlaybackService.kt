@@ -207,6 +207,7 @@ internal class PlaybackService : MediaLibraryService() {
             return AudioTarget(uri, source, app.settings.values.value.quality)
         }
         fun refreshPrefetch() {
+            video.preload(player.currentMediaItem?.track()?.takeIf { player.isPlaying && !it.isUnavailable })
             preloader.expire()
             if (!player.playWhenReady || video.frames.value != null) { preloader.cancel(); return }
             val eligible = canPrefetchAudio(player.currentPosition, player.duration, player.isPlaying, videoActive = false)

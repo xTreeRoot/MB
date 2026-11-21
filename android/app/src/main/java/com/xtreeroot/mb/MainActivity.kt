@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.xtreeroot.mb.playback.PlaybackModel
 import com.xtreeroot.mb.plugin.PluginRepository
@@ -20,7 +19,7 @@ internal class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableMBEdgeToEdge()
         if (savedInstanceState == null) readIncomingIntent(intent)
         setContent { MBRoot(player = playback, plugins = plugins) }
     }

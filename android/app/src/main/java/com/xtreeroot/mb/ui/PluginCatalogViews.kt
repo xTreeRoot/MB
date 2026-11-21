@@ -267,7 +267,8 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
 }
 
 @Composable
-internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalogNavigator, model: AccountModel, state: AccountState) {
+internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalogNavigator, model: AccountModel, state: AccountState,
+                                   openSettings: () -> Unit = {}, openPlugins: () -> Unit = {}) {
     val account = state.account
     var signOut by remember(source) { mutableStateOf(false) }
     var collections by remember(source) { mutableStateOf(emptyList<PluginCollection>()) }
@@ -291,8 +292,8 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
             model.refresh()
             scope.launch { source.catalog.invalidate(); refresh() }
         }
-    }) {
-        if (account != null || state.canSignIn) item {
+    }, contentPadding = PaddingValues(bottom = 24.dp)) {
+        item {
             AccountHeader(LocalSourceNames.current[source.id] ?: source.manifest.name, account, state.loading,
                 mb("登录音源", "Sign In to Source").takeIf { state.canSignIn }, model::signIn)
         }
@@ -315,17 +316,12 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
             }
             AccountDestinations(destinations)
         }
-        if (account != null && state.canSignOut) item {
-            TextButton(onClick = { signOut = true }, enabled = !state.loading, modifier = Modifier.padding(horizontal = 20.dp)) {
-                Text(mb("退出登录", "Sign Out"), color = if (state.loading) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-            }
-        }
+        item { AccountTools(openSettings, openPlugins) }
+        if (account != null && state.canSignOut) item { AccountSignOutRow(state.loading) { signOut = true } }
         if (!refreshing && (loading || state.loading && !state.signingIn)) item { Loading() }
         state.error?.takeUnless { state.signingIn }?.let { message -> item { Retry(message, model::refresh) } }
         error?.let { message -> item { Retry(message) { scope.launch { refresh() } } } }
-        if (!loading && !state.loading && !state.canSignIn && account == null && collections.isEmpty() && error == null) {
-            item { EmptyMessage(mb("暂无个人内容", "No personal content")) }
-        }
+
     }
     if (signOut) AccountSignOutDialog({ signOut = false }, model::signOut)
 }

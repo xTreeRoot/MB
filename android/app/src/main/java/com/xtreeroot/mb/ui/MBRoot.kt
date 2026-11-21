@@ -389,9 +389,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         else category?.title() ?: accountRoute?.let { libraryPage.value.title ?: it.title() } ?: mb(tab.chinese, tab.english)
                     TopAppBar(title = {
                         if (!atRoot) Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        else if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource) else Text(title)
+                        else if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource)
                     },
-                        largeTitle = atRoot && !discoverRoot, expandedHeight = if (atRoot) 48.dp else 64.dp,
+                        largeTitle = false, expandedHeight = if (atRoot) 48.dp else 64.dp,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = surface),
                         navigationIcon = {
                         if (!atRoot) IconButton(onClick = back) {
@@ -460,8 +460,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                                                         select(tracks, track)
                                                     }, sourceNames, target, { searchTarget = it }, saved)
                                                 Tab.Library -> LocalLibraryView(select, selectGroup, saved)
-                                                Tab.Account -> if (pluginSource != null) PluginPersonalContent(pluginSource, catalog, pluginAccount, pluginUser)
-                                                else if (accountRoute == null) AccountView(account) { route ->
+                                                Tab.Account -> if (pluginSource != null) PluginPersonalContent(pluginSource, catalog, pluginAccount, pluginUser,
+                                                    openSettings = { showSettings = true }, openPlugins = { showPlugins = true })
+                                                else if (accountRoute == null) AccountView(account, openSettings = { showSettings = true }, openPlugins = { showPlugins = true }) { route ->
                                                     routes = ArrayList(routes + route)
                                                 } else AccountLibraryView(library.pages, { routes = ArrayList(routes + it) }, select)
                                             }

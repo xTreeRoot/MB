@@ -114,17 +114,9 @@ internal fun Discover(
         home.error?.let { message -> item(span = { GridItemSpan(maxLineSpan) }) { Retry(message, model::refresh) } }
         home.value.forEach { section ->
             item(key = "header-${section.category}", span = { GridItemSpan(maxLineSpan) }) {
-                Row(Modifier.padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 3.dp).fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text(section.category.title(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        section.week?.let { Text(mb("第 $it 周", "Week $it"), style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                    TextButton(onClick = { open(section.category) }) {
-                        Text(mb("更多", "More"))
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp))
-                    }
+                Box(Modifier.padding(top = 14.dp, bottom = 3.dp)) {
+                    DiscoverySectionHeading(section.category.title(), section.week?.let { mb("第 $it 周", "Week $it") },
+                        horizontalPadding = if (wideCovers) 10.dp else 20.dp, open = { open(section.category) })
                 }
             }
             section.error?.let { item(span = { GridItemSpan(maxLineSpan) }) { Retry(it, model::refresh) } }
