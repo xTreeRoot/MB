@@ -20,7 +20,7 @@ internal data class PluginManifest(
     companion object {
         private val idPattern = Regex("[A-Za-z0-9][A-Za-z0-9_.-]*")
         private val versionPattern = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
-        private val hostVersion = listOf(0, 1, 27)
+        private val hostVersion = listOf(0, 1, 28)
 
         fun parse(json: JSONObject): PluginManifest {
             val id = json.requiredText("id")

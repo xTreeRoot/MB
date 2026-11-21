@@ -80,7 +80,7 @@ internal class PluginCatalog(
             val home = if (supports("home")) cachedInvoke("home", JSONObject()).objectValue() else JSONObject()
             page(home, manifest.name)
         }
-        is PluginCatalogRequest.Browse -> page(cachedInvoke("browse", JSONObject().put("page", request.page)).objectValue(), request.title)
+        is PluginCatalogRequest.Browse -> page(cachedInvoke("browse", arguments(offset).put("page", request.page)).objectValue(), request.title, offset)
         is PluginCatalogRequest.Collection -> collection(request, offset)
         is PluginCatalogRequest.Entity -> entity(request.entity, offset)
         is PluginCatalogRequest.Search -> {
@@ -150,9 +150,10 @@ internal class PluginCatalog(
             nextOffset(offset, section.list("tracks").length(), entity.kind == PluginEntityKind.Station || detailsPage.optBoolean("more")))
     }
 
-    private suspend fun page(value: JSONObject, fallbackTitle: String): PluginCatalogPage = PluginCatalogPage(
+    private suspend fun page(value: JSONObject, fallbackTitle: String, offset: Int = 0): PluginCatalogPage = PluginCatalogPage(
         value.text("title") ?: fallbackTitle, value.text("subtitle").orEmpty(), value.text("description").orEmpty(),
         value.list("sections").objects().map { section(it) },
+        nextOffset(offset, value.list("sections").objects().sumOf { row -> row.list("tracks").length() + PluginEntityKind.entries.sumOf { row.list(it.key).length() } }, value.optBoolean("more")),
     )
 
     private suspend fun single(title: String, value: JSONObject, subtitle: String = "", description: String = "",

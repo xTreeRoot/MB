@@ -11,10 +11,17 @@ import org.json.JSONObject
 internal class TorrentSearchSource(private val transport: PluginHttpTransport) : MusicSource {
     override val id = "knaben"
     override suspend fun search(query: String, page: Int): TrackPage {
+        if (query.trim().startsWith("magnet:", true)) {
+            val track = directMagnet(query) ?: run {
+                val hash = Regex("urn:btih:([^&]*)", RegexOption.IGNORE_CASE).find(query)?.groupValues?.get(1)
+                error(if (hash != null && hash.length !in listOf(32, 40)) "磁力链接不完整（哈希 ${hash.length} 位），请重新复制完整链接" else "磁力链接格式无效，请检查完整链接")
+            }
+            return TrackPage(if (page <= 1) listOf(track) else emptyList(), false)
+        }
         val url = URI("https://api.knaben.org/v2/search?q=${URLEncoder.encode(query, "UTF-8")}&o=seeders&s=30&f=${(page - 1).coerceAtLeast(0) * 30}")
         return transport.receive(PluginFetchRequest(url, "GET", mapOf("User-Agent" to "MB/1"), null),
             { it.scheme == "https" && it.host == "api.knaben.org" }) { response, _ ->
-            check(response.code == 200) { "种子搜索服务返回 HTTP ${response.code}" }
+            check(response.code == 200) { "磁力链搜索服务返回 HTTP ${response.code}" }
             val output = ByteArrayOutputStream()
             checkNotNull(response.body).byteStream().use { input ->
                 val buffer = ByteArray(8192)
@@ -29,6 +36,22 @@ internal class TorrentSearchSource(private val transport: PluginHttpTransport) :
         }
     }
     companion object {
+        /** 直接导入标准磁力链接；索引站未收录也能保存、分享或交给下载工具。 */
+        fun directMagnet(input: String): Track? = runCatching {
+            val value = input.trim()
+            if (value.length > 16_384 || value.any { it.code < 32 } || !value.startsWith("magnet:?", true)) return null
+            val parameters = value.substringAfter('?').split('&').map { part ->
+                java.net.URLDecoder.decode(part.substringBefore('='), "UTF-8") to java.net.URLDecoder.decode(part.substringAfter('=', ""), "UTF-8")
+            }
+            val xt = parameters.filter { it.first.equals("xt", true) }.map { it.second }.firstOrNull {
+                Regex("urn:btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})", RegexOption.IGNORE_CASE).matches(it) || Regex("urn:btmh:1220[A-Fa-f0-9]{64}", RegexOption.IGNORE_CASE).matches(it)
+            } ?: return null
+            val hash = xt.substringAfterLast(':')
+            val name = parameters.firstOrNull { it.first == "dn" }?.second?.takeIf { it.isNotBlank() }?.take(500)
+                ?: "磁力资源 · ${hash.take(12)}…"
+            Track("knaben", "magnet:${hash.lowercase()}", name, "磁力链接", resourceType = "other", resourceUrl = value)
+        }.getOrNull()
+
         fun decode(text: String, page: Int): TrackPage {
             val response = JSONObject(text)
             val hits = response.getJSONArray("hits")

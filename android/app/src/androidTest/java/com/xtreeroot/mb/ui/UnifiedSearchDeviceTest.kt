@@ -70,6 +70,25 @@ class UnifiedSearchDeviceTest {
         }
     }
 
+    @Test fun recentSearchCanRemoveOneEntryAndClearAllAndMagnetImportsDirectly() = runBlocking {
+        fixture {
+            val prefs = app.getSharedPreferences("browse", 0)
+            val previous = prefs.getString("search_history", "[]")
+            try {
+                prefs.edit().putString("search_history", "[\"First query\",\"Keep query\"]").commit()
+                tap("Search"); await("First query"); await("Keep query")
+                tap("Remove search First query")
+                withTimeout(5_000) { while (prefs.getString("search_history", "")?.contains("First query") == true) delay(25) }
+                await("Keep query"); tap("Clear All")
+                withTimeout(5_000) { while (prefs.getString("search_history", "") != "[]") delay(25) }
+                tap("First ▾"); tap("Magnet Search")
+                setText(nodes("Search songs or videos").first(), "magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567&dn=Direct%20resource")
+                tap("Search"); await("Direct resource")
+                screenshot("android-magnet-direct-result.png")
+            } finally { prefs.edit().putString("search_history", previous).commit() }
+        }
+    }
+
     @Test fun searchDropdownStaysBelowInputAndSavesCrossPlatformResults() = runBlocking {
         fixture {
             tap("Search"); await("First ▾")

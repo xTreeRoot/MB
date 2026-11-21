@@ -40,6 +40,25 @@ class PluginRuntimeTest {
     private val app = InstrumentationRegistry.getInstrumentation().targetContext
     private val manifest = PluginManifest.parse(JSONObject("""{"id":"fixture","permissions":{"network":["api.example.test"]}}"""))
 
+    @Test fun browsePagesForwardOffsetsAndPreservePortraitMetadata() = fixture(
+        """
+        export function browse({offset = 0}) { return {sections:[{tracks:[{id:String(offset),name:'Portrait',video:{width:1080,height:1920,short:true}}]}],more:offset===0}; }
+        """.trimIndent(),
+    ) { runtime, _, _ ->
+        val source = PluginSource(manifest, runtime)
+        val request = PluginCatalogRequest.Browse("shorts", "Shorts")
+        val first = source.catalog.load(request)
+        assertEquals(1, first.nextOffset)
+        val track = first.sections.single().tracks.single()
+        assertEquals(1080, track.videoWidth)
+        assertEquals(1920, track.videoHeight)
+        assertTrue(track.shortVideo)
+        assertEquals(track, track.toMetadataJson().toTrackMetadata())
+        val second = source.catalog.load(request, checkNotNull(first.nextOffset))
+        assertEquals("1", second.sections.single().tracks.single().sourceTrackId)
+        assertNull(second.nextOffset)
+    }
+
     @Test fun openUrlResolvesWithoutNetworkFetchAndRejectsInvalidAddresses() {
         val requests = mutableListOf<PluginWebLink>()
         fixture("export function open({url}) { return host.openURL(url); }", openURL = { requests.add(it) }) { runtime, _, _ ->
@@ -268,6 +287,16 @@ class PluginRuntimeTest {
             assertEquals(42, next.await())
         }
     }
+
+    @Test fun largePublicResponseCanBeParsedWithinABoundedBudget() = fixture(
+        """
+        export async function parse() { const value = await (await fetch('https://api.example.test/large')).json(); return value.rows.filter(row => row.title.includes('fixture')).length; }
+        """.trimIndent(), transport = PluginTransport { request, _ ->
+            val row = JSONObject().put("title", "fixture".repeat(20))
+            val rows = org.json.JSONArray((1..7000).map { row })
+            PluginFetchResponse(200, request.url, emptyMap(), emptyList(), JSONObject().put("rows", rows).toString().encodeToByteArray())
+        },
+    ) { runtime, _, _ -> assertEquals(7000, runtime.invoke("parse")) }
 
     @Test fun infiniteLoopAndSymlinkImportAreRejectedWithoutPoisoningNextInvocation() = fixture(
         """

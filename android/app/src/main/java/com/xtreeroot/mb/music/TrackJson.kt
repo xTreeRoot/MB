@@ -13,6 +13,9 @@ internal fun Track.toMetadataJson(): JSONObject = JSONObject().apply {
     put("author", artistId)
     put("resourceType", resourceType)
     put("resourceUrl", resourceUrl)
+    put("videoWidth", videoWidth)
+    put("videoHeight", videoHeight)
+    put("shortVideo", shortVideo)
     if (unavailable) put("unavailable", true)
     unavailableReason?.let { put("unavailableReason", it.code) }
     val publicHeaders = artworkHeaders.filterKeys(::publicArtworkHeader)
@@ -25,6 +28,7 @@ internal fun JSONObject.toTrackMetadata(): Track {
         optional("artwork"), optLong("duration").coerceAtLeast(0), optional("page"), optional("author"),
         headers?.keys()?.asSequence()?.filter(::publicArtworkHeader)?.associateWith { headers.getString(it) }.orEmpty(),
         resourceType = optional("resourceType"), resourceUrl = optional("resourceUrl"),
+        videoWidth = optInt("videoWidth").coerceAtLeast(0), videoHeight = optInt("videoHeight").coerceAtLeast(0), shortVideo = optBoolean("shortVideo"),
         unavailable = optBoolean("unavailable"), unavailableReason = TrackUnavailableReason.fromCode(optString("unavailableReason")))
 }
 

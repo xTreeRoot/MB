@@ -21,8 +21,9 @@ internal class QuickJsContext(host: QuickJsHost) {
         nativeStart(handle, name.encodeToByteArray(), json.encodeToByteArray(), callBudgetMs)
     }
 
+    // 大型网页/JSON 响应需要有限的解析时间；普通导出和小响应仍保持 100ms。
     fun settle(id: Int, success: Boolean, json: String) =
-        nativeSettle(handle, id, success, json.encodeToByteArray(), callBudgetMs)
+        nativeSettle(handle, id, success, json.encodeToByteArray(), if (json.length > 64 * 1024) 2_000 else callBudgetMs)
 
     fun supports(name: String) = nativeHasExport(handle, name.encodeToByteArray())
     fun event() = nativeRead(handle, event = true)?.decodeToString()

@@ -36,6 +36,9 @@ internal fun Track.mediaItem(): MediaItem = MediaItem.Builder()
             putLong("mb.duration", durationMs)
             putString("mb.page", pageUrl)
             putString("mb.author", artistId)
+            putInt("mb.videoWidth", videoWidth)
+            putInt("mb.videoHeight", videoHeight)
+            putBoolean("mb.shortVideo", shortVideo)
             if (sourceId == "bilibili") putBundle("mb.artworkHeaders", Bundle().apply {
                 artworkHeaders.filterKeys(::publicArtworkHeader).forEach { (key, value) -> putString(key, value) }
             })
@@ -52,5 +55,6 @@ internal fun MediaMetadata.track(): Track? {
     val headers = extras.getBundle("mb.artworkHeaders")
     return Track(source, identifier, title?.toString().orEmpty(), artist?.toString().orEmpty(),
         artworkUri?.toString(), extras.getLong("mb.duration"), extras.getString("mb.page"),
-        extras.getString("mb.author"), headers?.keySet()?.associateWith { headers.getString(it).orEmpty() }.orEmpty())
+        extras.getString("mb.author"), headers?.keySet()?.associateWith { headers.getString(it).orEmpty() }.orEmpty(),
+        videoWidth = extras.getInt("mb.videoWidth"), videoHeight = extras.getInt("mb.videoHeight"), shortVideo = extras.getBoolean("mb.shortVideo"))
 }

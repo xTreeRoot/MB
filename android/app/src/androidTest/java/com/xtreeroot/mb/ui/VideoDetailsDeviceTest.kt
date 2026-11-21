@@ -50,6 +50,40 @@ class VideoDetailsDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as MBApplication
 
+    @Test fun portraitResourcesUseTallPictureAndOpenCommentsCaptionsAndSave() = runBlocking {
+        val id = "portrait-ui-${UUID.randomUUID()}"
+        val plugin = app.plugins.install(app.plugins.prepareZip { fixtureZip(id).inputStream() })
+        var activity: MainActivity? = null
+        val track = Track(id, "first", "Portrait fixture", "Creator", videoWidth = 1080, videoHeight = 1920, shortVideo = true)
+        try {
+            app.plugins.setEnabled(plugin, true); app.refreshPlugins()
+            val screen = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+            activity = screen
+            withContext(Dispatchers.Main) {
+                val player = ViewModelProvider(screen)[PlaybackModel::class.java]
+                screen.setContent { com.xtreeroot.mb.ui.components.MBTheme(true) {
+                    CompositionLocalProvider(LocalMBEnglish provides true) {
+                        VideoDetailsScreen(player, PlaybackState(tracks = listOf(track), index = 0), app.settings.values.value,
+                            accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, chooseMode = {})
+                    }
+                } }
+            }
+            await("Portrait fixture"); await("Next"); await("Previous")
+            captureVideoControl("android-portrait-controls.png")
+            tap("Comments"); await("First page request 1")
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            tap("Save")
+            withTimeout(5_000) { while (app.resourceBookmarks.tracks.value.none { it.id == track.id }) delay(25) }
+            await("Saved")
+            tap("Captions"); await("No Captions")
+            captureVideoControl("android-portrait-video.png")
+        } finally {
+            app.resourceBookmarks.remove(track.id)
+            withContext(Dispatchers.Main) { activity?.finish() }
+            app.plugins.remove(app.plugins.installed().single { it.id == id }); app.refreshPlugins()
+        }
+    }
+
     @Test fun discoveryAndCategoryUseVideoCardsWithDurationsAndKeepTheSectionQueue() = runBlocking {
         val tracks = listOf(
             Track("video-grid", "first", "Morning Lights", "Fixture Artist", durationMs = 61_000),

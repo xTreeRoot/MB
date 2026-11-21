@@ -14,6 +14,9 @@ data class Track(
     val unavailableReason: TrackUnavailableReason? = null,
     val resourceType: String? = null,
     val resourceUrl: String? = null,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
+    val shortVideo: Boolean = false,
 ) {
     val id: String get() = "$sourceId:$sourceTrackId"
     val isUnavailable: Boolean get() = unavailable || unavailableReason != null

@@ -31,11 +31,11 @@ class PluginTransportTest {
     }
 
     @Test fun manifestAcceptsTheImplementedLoginContractsButNotFutureRequirements() {
-        for (version in listOf("0.1.26", "0.1.27")) {
+        for (version in listOf("0.1.26", "0.1.27", "0.1.28")) {
             val info = PluginManifest.parse(JSONObject().put("id", "fixture").put("minAppVersion", version))
             assertEquals(version, info.minAppVersion)
         }
-        val future = JSONObject().put("id", "fixture").put("minAppVersion", "0.1.28")
+        val future = JSONObject().put("id", "fixture").put("minAppVersion", "0.1.29")
         assertThrows(PluginException::class.java) { PluginManifest.parse(future) }
     }
 

@@ -262,6 +262,9 @@ internal class PluginSource(
         return Track(sourceId = manifest.id, sourceTrackId = id, title = title, artist = artist,
             artworkUrl = image?.url, durationMs = value.optLong("duration").coerceAtLeast(0), pageUrl = page,
             artistId = artistId, artworkHeaders = image?.headers.orEmpty(),
+            videoWidth = value.optJSONObject("video")?.optInt("width")?.coerceAtLeast(0) ?: 0,
+            videoHeight = value.optJSONObject("video")?.optInt("height")?.coerceAtLeast(0) ?: 0,
+            shortVideo = value.optJSONObject("video")?.optBoolean("short") == true,
             unavailable = value.optBoolean("unavailable"),
             unavailableReason = TrackUnavailableReason.fromCode(value.optString("unavailableReason")))
     }

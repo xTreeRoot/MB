@@ -103,20 +103,21 @@ internal fun SearchScopePicker(mode: SearchScope, change: (SearchScope) -> Unit)
 }
 
 @Composable
-internal fun RecentSearches(history: List<String>, clear: () -> Unit, select: (String) -> Unit) {
+internal fun RecentSearches(history: List<String>, clear: () -> Unit, remove: (String) -> Unit, select: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(mb("最近搜索", "Recent Searches"), Modifier.weight(1f).semantics { heading() },
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            TextButton(onClick = clear) { Text(mb("清空", "Clear")) }
+            TextButton(onClick = clear) { Text(mb("全部清除", "Clear All")) }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             history.forEach { term ->
-                Box(Modifier.widthIn(min = 48.dp, max = 300.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
-                    .background(colors.surfaceContainer).clickable(role = Role.Button) { select(term) }
-                    .padding(horizontal = 14.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
-                    Text(term, color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.widthIn(min = 48.dp, max = 300.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                    .background(colors.surfaceContainer), verticalAlignment = Alignment.CenterVertically) {
+                    Text(term, Modifier.weight(1f, fill = false).clickable(role = Role.Button) { select(term) }.padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                        color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { remove(term) }) { Icon(Icons.Default.Close, mb("删除搜索记录 $term", "Remove search $term"), Modifier.size(16.dp)) }
                 }
             }
         }

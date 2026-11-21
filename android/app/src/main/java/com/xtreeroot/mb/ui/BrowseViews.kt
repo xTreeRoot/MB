@@ -180,10 +180,10 @@ internal fun Search(model: BrowseModel, activeSource: String, plugin: PluginSour
     val focus = LocalFocusManager.current
     val submit = { term: String -> query = term; expanded = false; model.submitSearch(SearchScope.Music, term); focus.clearFocus() }
     val allLabel = mb("全平台搜索", "All Platforms")
-    val torrentLabel = mb("种子资源搜索", "Torrent Resources")
+    val torrentLabel = mb("磁力链搜索", "Magnet Search")
     val targetName = when (target) {
         "all" -> mb("全平台搜索", "All Platforms")
-        "torrent" -> mb("种子资源搜索", "Torrent Resources")
+        "torrent" -> mb("磁力链搜索", "Magnet Search")
         else -> platforms[target] ?: target
     }
     Column(Modifier.fillMaxSize()) {
@@ -199,7 +199,7 @@ internal fun Search(model: BrowseModel, activeSource: String, plugin: PluginSour
                     awaitEachGesture { awaitFirstDown(requireUnconsumed = false); waitForUpOrCancellation(PointerEventPass.Final); focus.clearFocus() }
                 }) {
                     if (result.value.query.isEmpty()) {
-                        if (history.isNotEmpty()) item("recent-searches") { RecentSearches(history, model::clearHistory, submit) }
+                        if (history.isNotEmpty()) item("recent-searches") { RecentSearches(history, model::clearHistory, model::removeHistory, submit) }
                         if (openCategory != null) item("browse-music") { BrowseMusicCategories(openCategory) }
                     }
                     items(result.value.warnings) { Text(it, Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall) }

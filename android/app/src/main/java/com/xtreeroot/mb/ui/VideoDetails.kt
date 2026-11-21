@@ -76,9 +76,14 @@ internal fun VideoDetailsScreen(model: PlaybackModel, state: PlaybackState, pref
     val app = LocalContext.current.applicationContext as MBApplication
     val source = app.playbackSource(track.sourceId) as? InteractionSource
     val commentPages = remember(source, track.id, accountId) { source?.let { CommentPages(it, track.sourceTrackId) } }
-    LaunchedEffect(commentPages) { commentPages?.refresh() }
     var selected by rememberSaveable(track.id) { mutableStateOf(VideoDetailTab.Info) }
     val frame = rememberVideoFrame(track)
+    val ratio = frame?.aspectRatio ?: if (track.videoWidth > 0 && track.videoHeight > 0) track.videoWidth.toFloat() / track.videoHeight else 16f / 9f
+    if (ratio < 1f) {
+        PortraitVideoPage(track, frame, state, model, accountId != null, browse, fullScreen, setFullScreen, chooseMode)
+        return
+    }
+    LaunchedEffect(commentPages) { commentPages?.refresh() }
     if (fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
         fullScreen = true, setFullScreen)
     val picture: @Composable (Modifier) -> Unit = { modifier ->
@@ -136,7 +141,7 @@ private fun VideoPlaybackModePicker(mode: PlaybackMode, choose: (PlaybackMode) -
 private fun WatchPicture(track: Track, state: PlaybackState, model: PlaybackModel, browse: () -> Unit,
                          frame: VideoFrameState?, fullScreen: Boolean, setFullScreen: (Boolean) -> Unit,
                          modifier: Modifier) {
-    Box(modifier.aspectRatio(16f / 9f).background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(modifier.aspectRatio(frame?.aspectRatio ?: 16f / 9f).background(Color.Black), contentAlignment = Alignment.Center) {
         if (!fullScreen) VideoStage(frame, state, model::toggle, { model.seekCurrent(state, it) }, model::retryVideo,
             fullScreen = false, setFullScreen) {
             Row(Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -242,10 +247,10 @@ private fun LazyListScope.videoQueue(state: PlaybackState, select: (Int) -> Unit
 }
 
 @Composable
-private fun VideoCaptions(track: Track, state: PlaybackState, model: PlaybackModel, preferences: AppPreferences) {
+internal fun VideoCaptions(track: Track, state: PlaybackState, model: PlaybackModel, preferences: AppPreferences, modifier: Modifier = Modifier.fillMaxSize()) {
     val captions by model.captions.collectAsStateWithLifecycle()
     LaunchedEffect(track.id) { model.loadCaptions(track) }
-    Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
         when {
             captions.loading -> Loading()
             captions.error != null -> Retry(checkNotNull(captions.error)) { model.loadCaptions(track) }

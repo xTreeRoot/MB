@@ -101,6 +101,8 @@ internal class BrowseModel(application: Application, private val source: Discove
         searchPages(mode).submit(source.id, term)
     }
 
+    fun removeHistory(term: String) = writeHistory(historyState.value.filterNot { it == term })
+
     fun clearHistory() = writeHistory(emptyList())
 
     private suspend fun <Value> load(state: MutableStateFlow<LoadState<Value>>, work: suspend () -> Value) {

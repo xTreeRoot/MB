@@ -32,7 +32,7 @@ import kotlinx.coroutines.yield
 import okhttp3.OkHttpClient
 
 internal data class VideoFrameState(val trackId: String, val player: Player? = null, val loading: Boolean = true,
-                                    val error: String? = null)
+                                    val error: String? = null, val aspectRatio: Float? = null)
 
 @OptIn(UnstableApi::class)
 internal class VideoPlayback(private val context: Context, private val http: OkHttpClient, private val audio: ExoPlayer,
@@ -246,6 +246,10 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             if (stage === warm) try { attachPlaceholder(stage) }
             catch (_: RuntimeException) { fail(stage, "视频预载初始化失败"); return@launch }
             engine.addListener(object : Player.Listener {
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    if (stage.engine === engine && valid(stage)) synchronize(stage, engine)
+                }
+
                 override fun onRenderedFirstFrame() {
                     if (stage.engine !== engine) return
                     stage.firstFrame = true
@@ -285,8 +289,11 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
     }
 
     private fun publish(stage: Stage, frame: VideoFrameState) {
-        if (stage === active) mutable.value = frame
-        else if (stage === warm) preloadState.value = frame
+        val size = frame.player?.videoSize
+        val ratio = size?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width * it.pixelWidthHeightRatio / it.height }
+        val measured = frame.copy(aspectRatio = ratio?.takeIf { it.isFinite() && it > 0f })
+        if (stage === active) mutable.value = measured
+        else if (stage === warm) preloadState.value = measured
     }
 
     private fun synchronize(stage: Stage, video: ExoPlayer) {
@@ -300,7 +307,7 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
             if (video.playbackState == Player.STATE_READY && abs(video.currentPosition - audio.currentPosition) > 250) video.seekTo(audio.currentPosition)
             if (video.playWhenReady != audio.isPlaying) video.playWhenReady = audio.isPlaying
             val loading = video.playbackState != Player.STATE_READY || !stage.firstFrame
-            if (preloadState.value?.loading != loading) publish(stage, VideoFrameState(stage.track.id, video, loading))
+            publish(stage, VideoFrameState(stage.track.id, video, loading))
             return
         }
         val pictureReady = (video.playbackState == Player.STATE_READY || video.playbackState == Player.STATE_ENDED) && stage.firstFrame
@@ -321,6 +328,6 @@ internal class VideoPlayback(private val context: Context, private val http: OkH
         val playVideo = heldIntent == null && audio.isPlaying
         if (video.playWhenReady != playVideo) video.playWhenReady = playVideo
         val loading = !pictureReady || heldIntent != null
-        if (mutable.value?.loading != loading) mutable.value = VideoFrameState(stage.track.id, video, loading)
+        publish(stage, VideoFrameState(stage.track.id, video, loading))
     }
 }
