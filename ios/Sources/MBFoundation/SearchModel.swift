@@ -9,6 +9,7 @@ public final class SearchModel {
     public private(set) var isLoading = false
     public private(set) var hasMore = false
     public private(set) var errorMessage: String?
+    public private(set) var warnings: [String] = []
 
     @ObservationIgnored private let loadPage: @Sendable (String, Int) async throws -> (TrackPage, Int)
     @ObservationIgnored private let initialCursor: Int
@@ -34,6 +35,7 @@ public final class SearchModel {
         cursor = initialCursor
         hasMore = false
         errorMessage = nil
+        warnings = []
         isLoading = !query.isEmpty
         guard !query.isEmpty else { return }
         await load(generation: current)
@@ -58,6 +60,7 @@ public final class SearchModel {
             guard !Task.isCancelled else { isLoading = false; return }
             var seen = Set(tracks.map(\.id))
             tracks += result.tracks.filter { seen.insert($0.id).inserted }
+            warnings = result.warnings
             hasMore = result.hasMore
             cursor = nextCursor
             isLoading = false

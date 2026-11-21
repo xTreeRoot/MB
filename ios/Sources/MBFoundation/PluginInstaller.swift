@@ -33,6 +33,14 @@ public actor PluginInstaller {
     init(directory: URL, fetch: @escaping @Sendable (URLRequest, Int) async throws -> (Data, URLResponse)) {
         root = directory; self.fetch = fetch
     }
+    public func presentation() throws -> PluginPresentation {
+        let file = root.appendingPathComponent("presentation.json")
+        return FileManager.default.fileExists(atPath: file.path) ? try JSONDecoder().decode(PluginPresentation.self, from: Data(contentsOf: file)) : PluginPresentation()
+    }
+    public func savePresentation(_ value: PluginPresentation) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(value).write(to: root.appendingPathComponent("presentation.json"), options: .atomic)
+    }
     public func installed() throws -> [InstalledPlugin] {
         let folder = root.appendingPathComponent("installed")
         guard FileManager.default.fileExists(atPath: folder.path) else { return [] }

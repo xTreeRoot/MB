@@ -3,6 +3,8 @@ import MBFoundation
 import SwiftUI
 
 struct AccountLibraryView: View {
+    @Environment(\.sourceNames) private var sourceNames
+    private var platformName: String { plugin.flatMap { sourceNames[$0.manifest.id] } ?? account.displayName }
     let account: AccountModel
     var plugin: PluginSource?
     let source: (any LibrarySource)?
@@ -22,12 +24,12 @@ struct AccountLibraryView: View {
                         PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL, headers: account.account?.avatarHeaders ?? [:], sourceID: account.displayName).frame(width: 64, height: 64)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(account.account?.name ?? AppLocalization.text("我的音乐")).font(.title2.bold())
-                            Text(account.displayName).font(.subheadline).foregroundStyle(.secondary)
+                            Text(platformName).font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 0)
                     }.padding(.vertical, 18)
                     if account.account == nil, account.available {
-                        Button("登录\(account.displayName)", systemImage: "qrcode.viewfinder") { showingSignIn = true; account.signIn() }
+                        Button("登录\(platformName)", systemImage: "qrcode.viewfinder") { showingSignIn = true; account.signIn() }
                             .buttonStyle(.borderedProminent).frame(minHeight: 44)
                     }
                     if let user = account.account, source != nil { NavigationLink("我的投稿", value: LibraryRoute.creator(user.id)) }

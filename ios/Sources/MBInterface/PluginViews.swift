@@ -50,6 +50,8 @@ struct PluginsView: View {
     @State private var repo = ""
     @State private var removing: InstalledPlugin?
     @State private var confirmingRemoval = false
+    @State private var renaming: InstalledPlugin?
+    @State private var localName = ""
     var body: some View {
         List {
             Section {
@@ -66,14 +68,15 @@ struct PluginsView: View {
                     if let status = model.updateStatus { Text(status).font(.caption).foregroundStyle(.secondary) }
                 }
             }
-            ForEach(model.installed) { plugin in
+            Section {
+              ForEach(model.installed) { plugin in
                 NavigationLink {
                     PluginSettingsView(model: model, plugin: plugin)
                 } label: {
                     HStack(spacing: 14) {
                         Image(systemName: "puzzlepiece.extension.fill").font(.title2).foregroundStyle(MBTheme.accent).frame(width: 48, height: 48).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                         VStack(alignment: .leading, spacing: 5) {
-                        Text(plugin.manifest.displayName).font(.headline)
+                        Text(model.displayName(plugin)).font(.headline)
                         Text(plugin.manifest.version ?? "").font(.caption).foregroundStyle(.secondary)
                         if let version = model.updates[plugin.id] { Text("可更新至 \(version)").font(.caption).foregroundStyle(.tint) }
                         if let issue = model.updateIssues[plugin.id] { Text(issue).font(.caption).foregroundStyle(.secondary) }
@@ -82,6 +85,10 @@ struct PluginsView: View {
                     }.padding(.vertical, 5)
                 }
                 .swipeActions(allowsFullSwipe: false) { Button("删除", role: .destructive) { removing = plugin; confirmingRemoval = true }.disabled(model.busy) }
+                .contextMenu {
+                    Button("本地名称", systemImage: "pencil") { localName = model.presentation.names[plugin.id] ?? ""; renaming = plugin }
+                }
+              }.onMove { offsets, destination in Task { await model.move(from: offsets, to: destination) } }
             }
             Section {
                 Button("从 ZIP 安装", systemImage: "doc.zipper") { importing = true }
@@ -93,6 +100,14 @@ struct PluginsView: View {
         }
         .modifier(MusicGroupedList())
         .navigationTitle("插件")
+        #if os(iOS)
+        .toolbar { ToolbarItem(placement: .primaryAction) { EditButton().disabled(model.busy) } }
+        #endif
+        .alert("本地名称", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("留空恢复默认名称", text: $localName)
+            Button("取消", role: .cancel) { renaming = nil }
+            Button("保存") { if let plugin = renaming { Task { await model.rename(plugin, to: localName) } }; renaming = nil }
+        }
         .sheet(isPresented: $stars, onDismiss: { Task { await model.discardStars() } }) {
             PluginStarsView(model: model, address: $starsAddress)
         }
@@ -197,8 +212,15 @@ private struct PluginSettingsView: View {
     @State private var error: String?
     @State private var saving = false
     @State private var saved = false
+    @State private var editingName = false
+    @State private var localName = ""
     var body: some View {
         Form {
+            Section {
+                Button { localName = model.presentation.names[plugin.id] ?? ""; editingName = true } label: {
+                    LabeledContent("本地名称", value: model.displayName(plugin))
+                }.accessibilityIdentifier("plugin-local-name")
+            }
             Section("来源") {
                 if let repository = plugin.repository?.trimmingCharacters(in: .whitespacesAndNewlines),
                    let url = URL(string: "https://github.com/" + repository) {
@@ -247,7 +269,12 @@ private struct PluginSettingsView: View {
                     .disabled(model.busy)
             }
         }
-        .navigationTitle(plugin.manifest.displayName)
+        .navigationTitle(model.displayName(plugin))
+        .alert("本地名称", isPresented: $editingName) {
+            TextField("留空恢复默认名称", text: $localName)
+            Button("取消", role: .cancel) {}
+            Button("保存") { Task { await model.rename(plugin, to: localName) } }
+        }
         .confirmationDialog("删除插件？", isPresented: $confirmingRemoval, titleVisibility: .visible) {
             Button("删除插件", role: .destructive) { Task { if await model.remove(plugin) { dismiss() } } }
         } message: { Text("只移除插件，设置和登录数据会保留。") }

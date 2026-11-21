@@ -15,6 +15,8 @@ public struct Track: Identifiable, Equatable, Codable, Sendable {
     public var unavailableReason: TrackProblem?
     public var localFileID: String?
     public var localMetadata: LocalAudioMetadata?
+    public var resourceType: String?
+    public var resourceURL: URL?
 
     public var id: String { "\(sourceID):\(sourceTrackID)" }
 
@@ -74,6 +76,7 @@ public enum TrackProblem: String, Codable, LocalizedError, Sendable {
 public struct TrackPage: Sendable {
     public let tracks: [Track]
     public let hasMore: Bool
+    public var warnings: [String] = []
 
     public init(tracks: [Track], hasMore: Bool) {
         self.tracks = tracks

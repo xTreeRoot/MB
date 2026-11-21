@@ -29,7 +29,7 @@ struct DownloadsView: View {
                         }
                     }
                 }
-                if query.isEmpty { navigation; recentAdditions; playlists }
+                if query.isEmpty { navigation; ResourceLibrarySection(library: library, playback: playback); recentAdditions; playlists }
                 else { results }
                 Section {
                     HStack { Text("播放缓存"); Spacer(); Text(ByteCountFormatter.string(fromByteCount: model.cacheBytes, countStyle: .file)).foregroundStyle(.secondary) }

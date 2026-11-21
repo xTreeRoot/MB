@@ -50,6 +50,7 @@ struct PluginCatalogPage: View {
     @State private var adding = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.stationPlayback) private var playback
+    @Environment(\.sourceNames) private var sourceNames
     var body: some View {
         Group {
             if request.isHome {
@@ -155,6 +156,7 @@ struct PluginCatalogPage: View {
         }
     }
     private var title: String {
+        if request.isHome { return sourceNames[source.manifest.id] ?? source.displayName }
         if case .collection(_, let title) = request { return AppLocalization.text(title) }
         if let content, !content.title.isEmpty { return content.title }
         switch request { case .home: return source.displayName; case .browse(let page): return page; case .collection(_, let title): return title; case .entity(let item): return item.title; case .search(let query, _): return query }

@@ -16,10 +16,8 @@ struct PluginDiscoveryHome: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
-                navigation
                 if let error { MusicErrorRow(message: error, retry: retry).padding(.horizontal, 20) }
                 if let content {
-                    if !content.subtitle.isEmpty { Text(content.subtitle).font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 20) }
                     ForEach(content.sections) { section in
                         VStack(alignment: .leading, spacing: 14) {
                             HStack {
@@ -64,32 +62,18 @@ struct PluginDiscoveryHome: View {
                         }
                     }
                 }
+                ForEach(Array((source.manifest.navigation ?? []).enumerated()), id: \.offset) { _, item in
+                    if item.builtin != "home", item.builtin != "search", item.page != "home", item.page != "search",
+                       let destination = item.page ?? item.builtin,
+                       !(content?.sections.contains { $0.morePage == destination } ?? false) {
+                        PluginNavigationShelf(source: source, item: item, select: select, menu: menu)
+                    }
+                }
                 if loading && content == nil { ProgressView().frame(maxWidth: .infinity).padding(.vertical, 80) }
                 if !loading && content?.sections.isEmpty != false && error == nil {
                     ContentUnavailableView("暂无内容", systemImage: "music.note")
                 }
             }.padding(.top, 12).padding(.bottom, 24)
-        }
-    }
-
-    private var navigation: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(Array((source.manifest.navigation ?? []).enumerated()), id: \.offset) { _, item in
-                    if let page = item.page {
-                        NavigationLink(item.title ?? page) {
-                            PluginBrowseView(source: source, page: page, select: select, menu: menu)
-                        }.buttonStyle(.bordered)
-                    } else if let method = item.builtin, method == "home" || capabilities.contains(method) {
-                        NavigationLink(item.title ?? method) {
-                            PluginCatalogPage(source: source, request: method == "home" ? .home : .collection(method, item.title ?? method), select: select, menu: menu)
-                        }.buttonStyle(.bordered)
-                    }
-                }
-                if capabilities.contains("search") {
-                    NavigationLink("搜索音源") { PluginCatalogSearch(source: source, select: select, menu: menu) }.buttonStyle(.bordered)
-                }
-            }.padding(.horizontal, 20)
         }
     }
 
@@ -99,7 +83,7 @@ struct PluginDiscoveryHome: View {
     }
 }
 
-private struct PluginDiscoveryTile: View {
+struct PluginDiscoveryTile: View {
     let track: Track
     let subtitle: String
 

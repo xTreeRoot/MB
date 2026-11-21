@@ -399,11 +399,11 @@ final class MBiOSUITests: XCTestCase {
         let sources = app.scrollViews["source-tabs"]
         let mode = app.buttons["切换播放模式"]
         XCTAssertTrue(builtInTab.isHittable && pluginTab.isHittable, "空间足够时两个音源都可直接点击")
-        XCTAssertGreaterThanOrEqual(sources.frame.width, app.navigationBars.firstMatch.frame.width - 32, "音源切换占满内容区域的一整行")
-        XCTAssertGreaterThanOrEqual(pluginTab.frame.minY, mode.frame.maxY, "音源与模式操作分行显示")
+        XCTAssertTrue(sources.isHittable)
+        XCTAssertLessThan(abs(pluginTab.frame.midY - mode.frame.midY), 30, "平台标签移动到顶部操作行")
         capture("插件-音源独占整行-演示数据", app: app)
         pluginTab.tap()
-        XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["播放 插件示例歌曲"].waitForExistence(timeout: 5))
         XCTAssertTrue(oldPlayer.waitForNonExistence(timeout: 5), "切换平台应清除上一平台暂停中的曲目")
         XCTAssertTrue(pluginTab.isSelected)
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].exists)
@@ -686,44 +686,70 @@ final class MBiOSUITests: XCTestCase {
         XCTAssertTrue(field.waitForNonExistence(timeout: 5))
     }
 
-    @MainActor func testPluginVideoSearchKeepsMusicAndVideoResultsSeparate() {
+    @MainActor func testDiscoverySwipeAndPluginLocalNamePropagate() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--demo", "--plugin-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        selectTab("设置", app: app); app.buttons["settings-plugins"].tap()
+        XCTAssertTrue(app.buttons["安装"].waitForExistence(timeout: 5)); app.buttons["安装"].press(forDuration: 0.15)
+        let plugin = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch
+        XCTAssertTrue(plugin.waitForExistence(timeout: 5)); plugin.press(forDuration: 0.15)
+        app.buttons["plugin-local-name"].press(forDuration: 0.15)
+        let name = app.alerts.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 3)); name.tap(); name.typeText("My Platform")
+        app.alerts.buttons["保存"].press(forDuration: 0.15)
+        selectTab("发现", app: app)
+        let target = app.buttons["source-tab-fixture"]
+        XCTAssertTrue(target.waitForExistence(timeout: 5)); XCTAssertEqual(target.label, "My Platform")
+        XCTAssertFalse(app.buttons["搜索音源"].exists)
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.18))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.18))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(app.buttons["播放 插件示例歌曲"].waitForExistence(timeout: 5))
+        XCTAssertTrue(target.isSelected)
+        capture("发现-顶部平台与滑动切换", app: app)
+        selectTab("搜索", app: app)
+        XCTAssertTrue(app.buttons["search-platform-picker"].label.contains("My Platform"))
+    }
+
+    @MainActor func testUnifiedSearchPlatformMenuAndResourceBookmark() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "--plugin-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait
         app.launch()
         selectTab("设置", app: app)
         app.buttons["settings-plugins"].tap()
-        XCTAssertTrue(app.buttons["安装"].waitForExistence(timeout: 5)); app.buttons["安装"].tap()
+        XCTAssertTrue(app.buttons["安装"].waitForExistence(timeout: 5)); app.buttons["安装"].press(forDuration: 0.15)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "示例插件")).firstMatch.waitForExistence(timeout: 5))
         selectTab("发现", app: app)
-        chooseMode("视频模式", app: app)
+        app.buttons["source-tab-fixture"].press(forDuration: 0.15)
         selectTab("搜索", app: app)
-        let videos = app.segmentedControls["search-scope"].buttons["视频"]
-        XCTAssertFalse(videos.exists)
-        selectTab("发现", app: app)
-        app.buttons["source-tab-fixture"].tap()
-        selectTab("搜索", app: app)
-        XCTAssertTrue(videos.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["切换播放模式"].exists)
+        XCTAssertFalse(app.segmentedControls["search-scope"].exists)
+        let picker = app.buttons["search-platform-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.label.contains("示例插件"))
         let field = app.textFields["搜索视频、音乐、UP 主"]
         field.tap(); field.typeText("music\n")
-        let musicResult = app.buttons["选择 music · 插件结果"]
-        XCTAssertTrue(musicResult.waitForExistence(timeout: 5))
-        videos.tap()
-        XCTAssertFalse(musicResult.exists)
-        field.tap(); field.typeText("clip\n")
-        XCTAssertTrue(app.buttons["选择 clip · 视频结果"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["返回浏览"].exists)
-        app.swipeUp()
-        let next = app.buttons["选择 clip · 更多视频"]
-        XCTAssertTrue(next.waitForExistence(timeout: 5))
-        capture("插件-独立视频搜索", app: app)
-        app.segmentedControls["search-scope"].buttons["音乐"].tap()
-        XCTAssertTrue(musicResult.waitForExistence(timeout: 5))
-        videos.tap()
-        XCTAssertTrue(next.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["返回浏览"].exists)
-        next.tap()
-        XCTAssertTrue(app.buttons["返回浏览"].waitForExistence(timeout: 5))
+        let music = app.buttons["选择 music · 插件结果"]
+        let video = app.buttons["选择 music · 视频结果"]
+        XCTAssertTrue(music.waitForExistence(timeout: 8)); XCTAssertTrue(video.exists)
+        capture("统一搜索-平台类型与封面", app: app)
+        app.buttons["曲目操作 music · 插件结果"].press(forDuration: 0.15)
+        app.buttons["保存到资料库"].press(forDuration: 0.15)
+        selectTab("资料库", app: app)
+        XCTAssertTrue(app.staticTexts["已保存资源"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["music · 插件结果"].exists)
+        selectTab("搜索", app: app)
+        picker.press(forDuration: 0.15)
+        XCTAssertTrue(app.buttons["全平台搜索"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["种子资源搜索"].exists)
+        capture("统一搜索-平台下拉", app: app)
+        app.buttons["全平台搜索"].press(forDuration: 0.15)
+        XCTAssertTrue(music.waitForExistence(timeout: 5))
     }
 
     @MainActor func testPluginEntitiesPlaylistSelectionAndManagementCapture() throws {
@@ -742,7 +768,7 @@ final class MBiOSUITests: XCTestCase {
         app.switches["启用音源"].tap()
         selectTab("发现", app: app)
         app.buttons["source-tab-fixture"].tap()
-        XCTAssertTrue(app.navigationBars["示例插件首页"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["播放 插件示例歌曲"].waitForExistence(timeout: 5))
         for (title, detail) in [("示例专辑", "专辑"), ("示例作者", "作者"), ("示例播客", "播客"), ("示例电台", "电台")] {
             let link = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
             for _ in 0..<3 { if !link.isHittable { app.swipeUp() } }
@@ -918,7 +944,7 @@ final class MBiOSUITests: XCTestCase {
             if app.buttons["dismiss-settings"].exists { return }
             selectTab(title == "设置" ? "我的" : "Account", app: app)
             let button = app.buttons["open-settings"]
-            XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
+            XCTAssertTrue(button.waitForExistence(timeout: 5)); button.press(forDuration: 0.15)
             XCTAssertTrue(app.buttons["dismiss-settings"].waitForExistence(timeout: 5))
             return
         }
@@ -926,13 +952,13 @@ final class MBiOSUITests: XCTestCase {
             for _ in 0..<5 {
                 if app.buttons["dismiss-settings"].isHittable { break }
                 let back = app.navigationBars.buttons["BackButton"].firstMatch
-                if back.exists { back.tap() }
+                if back.exists { back.press(forDuration: 0.15) }
             }
         }
-        if app.buttons["dismiss-settings"].exists { app.buttons["dismiss-settings"].tap() }
-        if app.buttons["dismiss-plugins"].exists { app.buttons["dismiss-plugins"].tap() }
+        if app.buttons["dismiss-settings"].exists { app.buttons["dismiss-settings"].press(forDuration: 0.15) }
+        if app.buttons["dismiss-plugins"].exists { app.buttons["dismiss-plugins"].press(forDuration: 0.15) }
         let tab = UIDevice.current.userInterfaceIdiom == .pad ? app.buttons[title].firstMatch : app.tabBars.buttons[title].firstMatch
-        XCTAssertTrue(tab.waitForExistence(timeout: 10)); tab.tap()
+        XCTAssertTrue(tab.waitForExistence(timeout: 10)); tab.press(forDuration: 0.15)
     }
 
     @MainActor private func dismissDocumentPicker(_ app: XCUIApplication) throws {

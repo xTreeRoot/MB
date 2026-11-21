@@ -9,6 +9,7 @@ public enum PluginPreparation: Equatable {
 @MainActor @Observable public final class PluginModel {
     public let ui = PluginUIService()
     public private(set) var installed: [InstalledPlugin] = []
+    public private(set) var presentation = PluginPresentation()
     public private(set) var sources: [String: PluginSource] = [:]
     public private(set) var pending: PendingPlugin?
     public private(set) var preparation: PluginPreparation?
@@ -41,7 +42,8 @@ public enum PluginPreparation: Equatable {
     public func reportError(_ error: any Error) { errorMessage = error.localizedDescription }
     public func restore() async {
         do {
-            installed = try await installer.installed()
+            presentation = try await installer.presentation()
+            installed = presentation.sorted(try await installer.installed())
             disabled = try await installer.disabled()
             sources = sources.filter { !disabled.contains($0.key) }
             for plugin in installed where sources[plugin.id] == nil && !disabled.contains(plugin.id) { sources[plugin.id] = try await source(plugin) }
@@ -54,6 +56,27 @@ public enum PluginPreparation: Equatable {
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             return try await installer.prepare(url)
         }
+    }
+    public func displayName(_ plugin: InstalledPlugin) -> String {
+        presentation.name(id: plugin.id, fallback: plugin.manifest.displayName)
+    }
+    public func rename(_ plugin: InstalledPlugin, to name: String) async {
+        guard !busy else { return }
+        do {
+            var next = presentation; try next.rename(plugin.id, to: name)
+            try await installer.savePresentation(next); presentation = next
+        } catch { reportError(error) }
+    }
+    public func move(from offsets: IndexSet, to destination: Int) async {
+        guard !busy, (0...installed.count).contains(destination), offsets.allSatisfy({ installed.indices.contains($0) }) else { return }
+        var ids = installed.map(\.id)
+        let moved = offsets.sorted().map { ids[$0] }
+        for index in offsets.sorted(by: >) { ids.remove(at: index) }
+        ids.insert(contentsOf: moved, at: destination - offsets.filter { $0 < destination }.count)
+        do {
+            var next = presentation; next.order = ids
+            try await installer.savePresentation(next); presentation = next; installed = next.sorted(installed)
+        } catch { reportError(error) }
     }
     public func prepareGitHub(_ repo: String) async {
         await prepare { try await githubPreparation(installer, repo) }

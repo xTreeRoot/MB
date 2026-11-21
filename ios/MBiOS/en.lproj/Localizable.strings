@@ -369,3 +369,35 @@
 "远程尚无可用的 iOS 更新包" = "No compatible iOS release is available.";
 
 "更新包校验失败，请重新下载" = "The update package could not be verified. Download it again.";
+
+"本地名称" = "Local Name";
+
+"留空恢复默认名称" = "Leave empty to restore the default name";
+
+"全平台搜索" = "All Platforms";
+
+"种子资源搜索" = "Torrent Search";
+
+"已保存资源" = "Saved Resources";
+
+"保存到资料库" = "Save to Library";
+
+"已保存到资料库" = "Saved to Library";
+
+"资源类型" = "Resource Type";
+
+"平台" = "Platform";
+
+"种子" = "Torrent";
+
+"图书" = "Books";
+
+"软件" = "Software";
+
+"其他" = "Other";
+
+"用下载工具打开" = "Open in Download App";
+
+"分享资源链接" = "Share Resource Link";
+
+"查看来源" = "View Source";
