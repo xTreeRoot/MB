@@ -709,7 +709,15 @@ final class MBiOSUITests: XCTestCase {
         start.press(forDuration: 0.05, thenDragTo: end)
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].waitForExistence(timeout: 5))
         XCTAssertTrue(target.isSelected)
-        capture("发现-顶部平台与滑动切换", app: app)
+        chooseMode("视频模式", app: app)
+        XCTAssertTrue(app.staticTexts["playback-mode-toast"].waitForExistence(timeout: 3))
+        capture("发现-顶部平台与模式轻提示", app: app)
+        chooseMode("听歌模式", app: app)
+        let more = app.buttons["查看更多示例曲目"]
+        XCTAssertEqual(app.buttons.matching(identifier: "查看更多示例曲目").count, 1)
+        more.press(forDuration: 0.15)
+        XCTAssertTrue(app.navigationBars["相同导航完整内容"].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.element(boundBy: 0).press(forDuration: 0.15)
         selectTab("搜索", app: app)
         XCTAssertTrue(app.buttons["search-platform-picker"].label.contains("My Platform"))
     }
@@ -747,6 +755,9 @@ final class MBiOSUITests: XCTestCase {
         picker.press(forDuration: 0.15)
         XCTAssertTrue(app.buttons["全平台搜索"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["种子资源搜索"].exists)
+        let choices = app.descendants(matching: .any)["search-platform-options"].firstMatch
+        XCTAssertTrue(choices.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(choices.frame.minY, field.frame.maxY, "下拉选项不能遮挡搜索框")
         capture("统一搜索-平台下拉", app: app)
         app.buttons["全平台搜索"].press(forDuration: 0.15)
         XCTAssertTrue(music.waitForExistence(timeout: 5))
@@ -1059,11 +1070,11 @@ final class MBiOSUITests: XCTestCase {
     }
 
     @MainActor private func chooseMode(_ label: String, app: XCUIApplication) {
-        if app.buttons[label].firstMatch.isHittable { app.buttons[label].firstMatch.tap() }
-        else {
-            app.buttons["切换播放模式"].tap()
-            app.buttons[label].tap()
-        }
+        let toggle = app.buttons["切换播放模式"]
+        if toggle.exists {
+            if toggle.value as? String != label { toggle.press(forDuration: 0.15) }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", label), object: toggle)], timeout: 3), .completed)
+        } else if app.buttons[label].firstMatch.isHittable { app.buttons[label].firstMatch.press(forDuration: 0.15) }
     }
 
     @MainActor func testTabletRotationKeepsBrowserAndPlayer() throws {

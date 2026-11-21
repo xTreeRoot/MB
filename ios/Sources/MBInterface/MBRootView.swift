@@ -10,10 +10,12 @@ public struct MBRootView: View {
     @State private var selectedTab = MBTab.discover
     @Namespace private var playerTransition
     @State private var trackSearch: SearchModel
+    @State private var showingSearchPlatforms = false
+    @State private var modeNotice: String?
+    @State private var modeNoticeID = UUID()
     @State private var searchTarget: String?
     @State private var playback: PlaybackModel
     @State private var video: VideoModel
-    @State private var home: DiscoveryModel?
     @State private var networkSettings = NetworkSettingsModel()
     @State private var suggestions: [String] = []
     @State private var recordedSelection = -1
@@ -69,7 +71,6 @@ public struct MBRootView: View {
         _trackSearch = State(initialValue: SearchModel(source: source))
         _playback = State(initialValue: PlaybackModel(source: demo && !demoTrackProblems ? source as? any PlaybackSource : router,
                                                      engine: NativeAudioEngine(), store: demo ? nil : AppPersistence.shared, mediaLibrary: demo ? nil : MediaLibrary.shared))
-        _home = State(initialValue: (source as? any DiscoverySource).map { DiscoveryModel(source: $0) })
         _video = State(initialValue: VideoModel(source: demo ? source as? any VideoSource : router, store: demo ? nil : AppPersistence.shared))
         _source = State(initialValue: source)
         self.demo = demo
@@ -203,7 +204,6 @@ public struct MBRootView: View {
                 await playback.restore()
                 for item in downloads.items { playback.updateLocalTrack(item.track) }
                 video.updateTrack(playback.queue.current)
-                if let home, home.sections.isEmpty { await home.refresh() }
             }
             .task(id: selectedSourceID + ":" + String(plugins.revision)) { await activateSource() }
             .task(id: (playback.queue.current?.id ?? "") + ":" + String(plugins.revision)) {
@@ -292,13 +292,22 @@ public struct MBRootView: View {
 
     public var body: some View {
         AnyView(playbackObservedTabs)
+            .overlay {
+                if let modeNotice {
+                    Text(LocalizedStringKey(modeNotice)).font(.subheadline.weight(.medium)).padding(.horizontal, 22).padding(.vertical, 14)
+                        .foregroundStyle(Color.primary).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: .black.opacity(0.1), radius: 6).allowsHitTesting(false)
+                        .accessibilityIdentifier("playback-mode-toast").accessibilityAddTraits(.updatesFrequently)
+                }
+            }
+            .task(id: modeNoticeID) { if modeNotice != nil { try? await Task.sleep(for: .milliseconds(1400)); if !Task.isCancelled { modeNotice = nil } } }
             .task(id: input + ":" + (searchTarget ?? selectedSourceID)) { await updateSuggestions() }
             .task(id: request?.id) { [request] in
                 guard let request, !Task.isCancelled else { return }
                 if request.more { await request.model.loadMore() }
                 else { await request.model.search(request.query) }
             }
-            .environment(\.sourceNames, Dictionary(sourceTabs.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a }))
+            .environment(\.sourceNames, sourceDisplayNames)
             .environment(\.pluginUI, plugins.ui)
             .modifier(PluginLinkPresentation(service: plugins.ui))
             .environment(\.offlineLibrary, localLibrary)
@@ -372,6 +381,8 @@ public struct MBRootView: View {
         NavigationStack(path: $searchPath) {
             VStack(spacing: 0) {
                 searchBar
+                ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
                 if inputFocused && !suggestions.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack { ForEach(suggestions, id: \.self) { text in Button(text) { input = text; submit() }.buttonStyle(.bordered).frame(minHeight: 44) } }.padding(.horizontal, 20)
@@ -386,10 +397,18 @@ public struct MBRootView: View {
                 .scrollDismissesKeyboard(.immediately)
                 .simultaneousGesture(TapGesture().onEnded { inputFocused = false })
                 .simultaneousGesture(DragGesture(minimumDistance: 10).onChanged { _ in inputFocused = false })
+                }
+                if showingSearchPlatforms {
+                    Color.clear.contentShape(Rectangle()).onTapGesture { showingSearchPlatforms = false }
+                    SearchPlatformOptions(sources: sourceTabs, selected: searchTarget ?? selectedSourceID, choose: chooseSearchTarget)
+                        .padding(.leading, 16).padding(.top, 4)
+                }
+                }
             }
             .defaultFocus($inputFocused, false)
+            .onChange(of: inputFocused) { _, focused in if focused { showingSearchPlatforms = false } }
             .onAppear { inputFocused = false }
-            .onDisappear { inputFocused = false }
+            .onDisappear { inputFocused = false; showingSearchPlatforms = false }
             .navigationTitle("")
             .modifier(CompactRootNavigation())
             .navigationDestination(for: MBPage.self) { destination($0) }
@@ -458,28 +477,15 @@ public struct MBRootView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         if selectedTab != .search {
         ToolbarItem(placement: .primaryAction) {
-            Menu {
-                Button("听歌模式", systemImage: video.mode == .music ? "checkmark" : "music.note") { chooseMode(.music) }
-                Button("视频模式", systemImage: video.mode == .video ? "checkmark" : "play.rectangle") { chooseMode(.video) }
+            Button {
+                let next: PlaybackMode = video.mode == .music ? .video : .music
+                chooseMode(next)
+                modeNotice = next == .music ? "听歌模式" : "视频模式"; modeNoticeID = UUID()
             } label: {
                 Label(LocalizedStringKey(video.mode == .music ? "听歌模式" : "视频模式"), systemImage: video.mode == .music ? "music.note" : "play.rectangle")
-            }.accessibilityLabel("切换播放模式")
+            }.accessibilityLabel("切换播放模式").accessibilityValue(LocalizedStringKey(video.mode == .music ? "听歌模式" : "视频模式"))
         }
         }
-        if let track = playback.queue.current, track.localFileID == nil, currentInteractions != nil {
-            ToolbarItem(placement: .secondaryAction) {
-                Button("评论与点赞", systemImage: "bubble.left.and.bubble.right") { commentTrack = track }
-            }
-        }
-    }
-
-    @ViewBuilder private var browsingHome: some View {
-            if let home, let discovery = source as? any DiscoverySource {
-                DiscoveryHomeView(model: home, source: discovery, videoMode: video.mode == .video, select: select, menu: trackMenu)
-            } else if let plugin = source as? PluginSource {
-                PluginHomeView(source: plugin, select: select, menu: trackMenu)
-                    .id(ObjectIdentifier(plugin))
-            } else { ContentUnavailableView("从喜欢的声音开始", systemImage: "waveform", description: Text("搜索视频与音乐")) }
     }
 
     @ViewBuilder private var searchResults: some View {
@@ -529,12 +535,7 @@ public struct MBRootView: View {
 
     private var searchBar: some View {
         HStack(spacing: 10) {
-            Menu {
-                Button("全平台搜索") { chooseSearchTarget("all") }
-                ForEach(sourceTabs) { tab in Button(tab.name) { chooseSearchTarget(tab.id) } }
-                Divider()
-                Button("种子资源搜索") { chooseSearchTarget("torrent") }
-            } label: {
+            Button { inputFocused = false; showingSearchPlatforms.toggle() } label: {
                 HStack(spacing: 3) { Text(searchTargetName).lineLimit(1); Image(systemName: "chevron.down").font(.caption2) }
                     .font(.subheadline).frame(maxWidth: 115)
             }.accessibilityIdentifier("search-platform-picker")
@@ -565,6 +566,11 @@ public struct MBRootView: View {
         var result: [String: any MusicSource] = plugins.sources
         if preferences.values.builtInEnabled, result[initialSourceID] == nil { result[initialSourceID] = initialSource }
         return result
+    }
+    private var sourceDisplayNames: [String: String] {
+        var names = Dictionary(plugins.installed.map { ($0.id, plugins.displayName($0)) }, uniquingKeysWith: { a, _ in a })
+        if names[initialSourceID] == nil { names[initialSourceID] = initialSource.displayName }
+        return names
     }
     private var sourceTabs: [SourceTab] {
         var tabs = plugins.installed.compactMap { plugin in
@@ -605,11 +611,9 @@ public struct MBRootView: View {
         trackSearch.cancel()
         source = chosen; path = []; searchPath = []; request = nil
         await rebuildSearch()
-        home = (chosen as? any DiscoverySource).map { DiscoveryModel(source: $0) }
         account = AccountModel(source: accountSource)
         accountPlatformID = id
         await account.restore()
-        if let home { await home.refresh() }
     }
 
     private var verifiedProfileAccount: SourceAccount? {
@@ -638,6 +642,7 @@ public struct MBRootView: View {
         return sourceTabs.first { $0.id == (searchTarget ?? selectedSourceID) }?.name ?? source.displayName
     }
     private func chooseSearchTarget(_ id: String) {
+        showingSearchPlatforms = false
         search.cancel(); request = nil; searchTarget = id
         Task { await rebuildSearch(); if !input.isEmpty { submit() } }
     }

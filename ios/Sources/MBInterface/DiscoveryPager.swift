@@ -38,7 +38,7 @@ private struct DiscoveryPlatformPage: View {
     }
     var body: some View {
         Group {
-            if let plugin = source as? PluginSource { PluginHomeView(source: plugin, select: select, menu: menu) }
+            if let plugin = source as? PluginSource { PluginHomeView(source: plugin, select: select, menu: menu).id(ObjectIdentifier(plugin)) }
             else if let discovery, let provider = source as? any DiscoverySource {
                 DiscoveryHomeView(model: discovery, source: provider, videoMode: videoMode, select: select, menu: menu)
             } else { ContentUnavailableView("暂无内容", systemImage: "music.note") }

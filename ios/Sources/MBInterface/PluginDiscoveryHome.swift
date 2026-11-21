@@ -27,6 +27,11 @@ struct PluginDiscoveryHome: View {
                                         PluginBrowseView(source: source, page: page, select: select, menu: menu)
                                     } label: { Label("更多", systemImage: "chevron.right").font(.subheadline) }
                                     .accessibilityLabel("查看更多\(section.title)")
+                                } else if let item = (source.manifest.navigation ?? []).first(where: { $0.title == section.title && $0.builtin != "home" && $0.builtin != "search" }) {
+                                    NavigationLink {
+                                        PluginCatalogPage(source: source, request: item.page.map(PluginPageRequest.browse) ?? .collection(item.builtin ?? "", section.title), select: select, menu: menu)
+                                    } label: { Label("更多", systemImage: "chevron.right").font(.subheadline) }
+                                    .accessibilityLabel("查看更多\(section.title)")
                                 }
                             }.padding(.horizontal, 20)
                             let count = section.tracks.count + section.entities.count + section.links.count
@@ -65,7 +70,7 @@ struct PluginDiscoveryHome: View {
                 ForEach(Array((source.manifest.navigation ?? []).enumerated()), id: \.offset) { _, item in
                     if item.builtin != "home", item.builtin != "search", item.page != "home", item.page != "search",
                        let destination = item.page ?? item.builtin,
-                       !(content?.sections.contains { $0.morePage == destination } ?? false) {
+                       !(content?.sections.contains { $0.morePage == destination || (item.title?.isEmpty == false && $0.title == item.title) } ?? false) {
                         PluginNavigationShelf(source: source, item: item, select: select, menu: menu)
                     }
                 }
