@@ -704,14 +704,17 @@ final class MBiOSUITests: XCTestCase {
         let target = app.buttons["source-tab-fixture"]
         XCTAssertTrue(target.waitForExistence(timeout: 5)); XCTAssertEqual(target.label, "My Platform")
         XCTAssertFalse(app.buttons["搜索音源"].exists)
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.18))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.18))
+        // iPad 有侧栏，分页手势限定在内容顶部，避免落入卡片横滚区域或侧栏。
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        let surface: XCUIElement = isPad ? app.descendants(matching: .any)["discovery-platform-pager"].firstMatch : app
+        XCTAssertTrue(surface.waitForExistence(timeout: 5))
+        let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: isPad ? 0.02 : 0.18))
+        let end = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: isPad ? 0.02 : 0.18))
         start.press(forDuration: 0.05, thenDragTo: end)
         XCTAssertTrue(app.buttons["播放 插件示例歌曲"].waitForExistence(timeout: 5))
         XCTAssertTrue(target.isSelected)
         chooseMode("视频模式", app: app)
-        XCTAssertTrue(app.staticTexts["playback-mode-toast"].waitForExistence(timeout: 3))
-        capture("发现-顶部平台与模式轻提示", app: app)
+        capture("发现-顶部平台与点击切换模式", app: app)
         chooseMode("听歌模式", app: app)
         let more = app.buttons["查看更多示例曲目"]
         XCTAssertEqual(app.buttons.matching(identifier: "查看更多示例曲目").count, 1)
