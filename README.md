@@ -4,7 +4,7 @@
 
 提供桌面、iOS / iPadOS 和 Android 原生客户端。桌面使用 Go + [MyGo](https://github.com/egoist/mygo)，iOS 使用 SwiftUI，Android 使用 Kotlin + Jetpack Compose。
 
-[下载发布版本](https://github.com/xTreeRoot/ShanhaiMusic/releases) · [插件开发](plugins/README.md) · [桌面打包](RELEASING.md)
+[山海官网](https://shanhai.treeroot.top/) · [下载发布版本](https://github.com/xTreeRoot/ShanhaiMusic/releases) · [山海插件库](https://shanhai.treeroot.top/zh/plugins/) · [插件开发](plugins/README.md) · [桌面打包](RELEASING.md)
 
 ## 三端源码
 
