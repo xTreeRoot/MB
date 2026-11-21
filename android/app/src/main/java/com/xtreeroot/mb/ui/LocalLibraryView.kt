@@ -380,7 +380,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
     }
     deleting?.let { id ->
         AlertDialog(onDismissRequest = { deleting = null }, title = { Text(mb("删除本地音频？", "Delete Local Audio?")) },
-            text = { Text(mb("只删除 MB 保存的副本，不影响导入前的文件。", "Only the copy stored by MB will be deleted. The original will be kept.")) },
+            text = { Text(mb("只删除山海保存的副本，不影响导入前的文件。", "Only the copy stored by Shanhai will be deleted. The original will be kept.")) },
             confirmButton = { TextButton(onClick = { deleting = null; model.delete(id) }) { Text(mb("删除", "Delete")) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text(mb("取消", "Cancel")) } })
     }

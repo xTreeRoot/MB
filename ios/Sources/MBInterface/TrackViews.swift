@@ -113,7 +113,7 @@ private struct PreviewCover: View {
                     }
                 }
                 VStack(alignment: .leading) {
-                    Text("MB / DEMO").font(.system(size: max(5, side * 0.045), weight: .medium, design: .monospaced)).tracking(side * 0.005)
+                    Text("山海 / DEMO").font(.system(size: max(5, side * 0.045), weight: .medium, design: .monospaced)).tracking(side * 0.005)
                     Spacer()
                     Text(track.title).font(.system(size: max(7, side * 0.09), weight: .bold)).lineLimit(2)
                 }.foregroundStyle(.white).padding(side * 0.09)

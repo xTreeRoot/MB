@@ -1,3 +1,4 @@
+/** 配置山海静态网站构建及本仓库发布版本与社区插件数据。 */
 import { defineConfig } from 'vite'
 import { tanstackStart } from '@tanstack/solid-start/plugin/vite'
 import solid from 'vite-plugin-solid'
@@ -12,7 +13,7 @@ const github = (path: string) =>
   fetch(`https://api.github.com${path}`, { headers: token ? { authorization: `Bearer ${token}` } : {} })
 
 async function latestRelease() {
-  const res = await github('/repos/egoist/mygo-music/releases/latest')
+  const res = await github('/repos/xTreeRoot/MB/releases/latest')
   if (!res.ok) throw new Error(`fetching the latest release: GitHub answered ${res.status}`)
   const r = await res.json()
   return {

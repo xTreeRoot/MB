@@ -120,7 +120,7 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
                     SettingSwitch(mb("启用内置音源", "Enable Built-in Source"), values.builtInEnabled) { value -> update { it.copy(builtInEnabled = value) } }
                 }
             }
-            item { MBGroupedSection("MB Server") { MBFormRow(mb("接入节点", "Connect to Node"), disclosure = true, onClick = { node = true }) } }
+            item { MBGroupedSection(mb("山海服务", "Shanhai Server")) { MBFormRow(mb("接入节点", "Connect to Node"), disclosure = true, onClick = { node = true }) } }
             item {
                 MBGroupedSection(mb("播放", "Playback")) {
                     Choice(mb("音质", "Audio Quality"), values.quality, listOf(AudioQuality.Standard to mb("标准", "Standard"),

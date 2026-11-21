@@ -27,7 +27,7 @@ internal fun copyUpdateArchive(input: InputStream, output: OutputStream, expecte
 internal data class UpdateIdentity(val packageName: String, val versionCode: Long, val version: String, val signers: Set<String>)
 
 internal fun verifyUpdateIdentity(installed: UpdateIdentity, archive: UpdateIdentity, expectedVersion: String) {
-    check(archive.packageName == installed.packageName) { "更新包不属于 MB" }
+    check(archive.packageName == installed.packageName) { "更新包不属于山海" }
     check(archive.version == expectedVersion && archive.versionCode > installed.versionCode) { "更新包版本不正确或不高于当前版本" }
     check(installed.signers.isNotEmpty() && installed.signers == archive.signers) { "更新包签名不同，不能保留数据覆盖安装" }
 }

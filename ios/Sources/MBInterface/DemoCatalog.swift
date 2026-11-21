@@ -58,12 +58,12 @@ private actor DemoAccountState {
 enum DemoCatalog {
     static let comments = [
         TrackComment(id: "one", author: "示例听众", text: "慢下来，听见晚风里的片刻。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 128),
-        TrackComment(id: "two", author: "MB 界面示例", text: "这是供界面验收使用的演示评论。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 36),
+        TrackComment(id: "two", author: "山海界面示例", text: "这是供界面验收使用的演示评论。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 36),
     ]
     static let tracks = [
-        Track(sourceID: "demo", sourceTrackID: "night", title: "晚风里的片刻", artist: "MB 界面示例", durationMilliseconds: 180_000),
-        Track(sourceID: "demo", sourceTrackID: "city", title: "城市慢下来", artist: "MB 界面示例", durationMilliseconds: 210_000),
-        Track(sourceID: "demo", sourceTrackID: "rain", title: "雨落在窗沿", artist: "MB 界面示例", durationMilliseconds: 160_000),
+        Track(sourceID: "demo", sourceTrackID: "night", title: "晚风里的片刻", artist: "山海界面示例", durationMilliseconds: 180_000),
+        Track(sourceID: "demo", sourceTrackID: "city", title: "城市慢下来", artist: "山海界面示例", durationMilliseconds: 210_000),
+        Track(sourceID: "demo", sourceTrackID: "rain", title: "雨落在窗沿", artist: "山海界面示例", durationMilliseconds: 160_000),
     ].map { original in var track = original; track.artistID = "preview"; return track }
     static let timeline = CaptionTimeline(lines: [
         CaptionLine(startMilliseconds: 0, endMilliseconds: 4_000, text: "让晚风经过耳边"),
@@ -137,9 +137,9 @@ enum DemoCatalog {
             try bytes.write(to: file)
             var tracks: [Track] = []
             for (index, original) in DemoCatalog.tracks.enumerated() {
-                var track = Track(sourceID: "local", sourceTrackID: original.sourceTrackID, title: original.title, artist: "MB 界面示例", durationMilliseconds: 1_000)
+                var track = Track(sourceID: "local", sourceTrackID: original.sourceTrackID, title: original.title, artist: "山海界面示例", durationMilliseconds: 1_000)
                 track.localFileID = original.sourceTrackID
-                track.localMetadata = LocalAudioMetadata(album: "城市的声音 · 示例", albumArtist: "MB 界面示例", trackNumber: index + 1, folderID: "preview")
+                track.localMetadata = LocalAudioMetadata(album: "城市的声音 · 示例", albumArtist: "山海界面示例", trackNumber: index + 1, folderID: "preview")
                 try await media.saveDownload(file: file, track: track)
                 tracks.append(track)
             }
@@ -154,7 +154,7 @@ enum DemoCatalog {
 
 #if DEBUG
 import SwiftUI
-#Preview("MB 本地示例") { MBRootView(source: DemoSource(), demo: true) }
+#Preview("山海本地示例") { MBRootView(source: DemoSource(), demo: true) }
 #endif
 
 

@@ -346,6 +346,9 @@ func Run() error {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return nil
 	}
+	if err := preserveDesktopStorage(mygo.App); err != nil {
+		return err
+	}
 	initialSettings := loadSettings()
 	if err := network.Default.SetHosts(initialSettings.SystemProxyHosts); err != nil {
 		log.Printf("system proxy allowlist: %v", err)

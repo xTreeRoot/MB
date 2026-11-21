@@ -1,3 +1,4 @@
+/** 展示社区插件目录及山海插件安装入口。 */
 import { For, Show, createSignal, onMount } from 'solid-js'
 import { Layout } from '../components/Layout'
 import { GitHubMark, Icon } from '../components/Icon'
@@ -79,7 +80,7 @@ export function Plugins() {
 
         <p class="fine download-more">
           <Icon name="download" size={14} />
-          <LangLink to="/download">{t('Install MyGo Music first', '先安装 MyGo Music')}</LangLink>
+          <LangLink to="/download">{t('Install Shanhai first', '先安装山海')}</LangLink>
         </p>
       </section>
     </Layout>

@@ -1,6 +1,8 @@
-# MB iPhone / iPad
+# 山海 iPhone / iPad · 万端归一
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。此目录属于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `main` 分支；桌面功能对照基准为 main `27d4337`，当前产品版本 `0.1.0`、build `14`。源码与桌面共仓，工程入口为 `ios/MBiOS.xcodeproj`。
+山海（原 MB）是跨平台内容入口，标语为「万端归一」。本次更名保留原应用标识、已有数据目录和登录回调，兼容覆盖更新。
+
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。三端源码统一在 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `main` 分支维护，工程入口为 `ios/MBiOS.xcodeproj`，版本与 build 以工程配置为准。功能与验收状态见 [PARITY.md](PARITY.md)。
 
 ## 在另一台 Mac 编译
 
@@ -38,7 +40,7 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 ## CarPlay 系统正在播放与逐句歌词
 
-继续使用 AltStore 个人签名。先在手机打开 MB 开始播放，连接 CarPlay 后打开车机自带的“正在播放”，可使用系统播放/暂停、上下曲与进度控制；实际显示和可用按钮由车机决定。无需为这条路径增加 CarPlay 专属 entitlement，App 没有独立的车机图标或歌单页面。
+继续使用 AltStore 个人签名。先在手机打开山海开始播放，连接 CarPlay 后打开车机自带的“正在播放”，可使用系统播放/暂停、上下曲与进度控制；实际显示和可用按钮由车机决定。无需为这条路径增加 CarPlay 专属 entitlement，App 没有独立的车机图标或歌单页面。
 
 默认开启「设置 → CarPlay 与锁屏 → 在歌手栏显示当前歌词」：歌名保留，歌手字段按音频播放时间替换为当前句；前奏、间奏、无歌词或空白歌词行恢复原歌手。暂停时保留对应句，拖动、切曲、歌词迟到及开关变更立即刷新；普通进度按秒更新，句子变化不受整秒节流限制。关闭开关立即恢复正常歌手信息，选择会保存。
 

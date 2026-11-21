@@ -1,6 +1,7 @@
 {
   "name": "mb",
   "private": true,
+  "description": "山海 · 万端归一。通过插件连接音乐、视频与资讯的跨平台原生应用。",
   "workspaces": [
     "website"
   ],

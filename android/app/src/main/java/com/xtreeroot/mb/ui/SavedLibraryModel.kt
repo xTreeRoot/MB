@@ -109,7 +109,7 @@ internal class SavedLibraryModel(application: Application, private val downloads
             else MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "audio"
         } else file.extension
         val title = track.title.replace(Regex("[\\\\/\\p{Cntrl}]"), "_").trim().take(80)
-            .trimEnd(Char::isHighSurrogate).ifEmpty { "MB 音频" }
+            .trimEnd(Char::isHighSurrogate).ifEmpty { "山海音频" }
         return "$title.$extension"
     }
 

@@ -99,7 +99,7 @@ internal fun DataLocationPage(library: PortableLibrary, back: () -> Unit) {
                         Text(mb("最近备份：$date", "Last backup: $date"), style = MaterialTheme.typography.labelLarge)
                     }
                     Text(if (status.linked) mb("卸载后备份仍在。重装后选回同一个文件夹。", "The backup survives uninstall. Select this same folder after reinstalling.")
-                        else mb("在‘文档’下选择文件夹。MB 会把备份放进其中的 MB Data。", "Choose a folder in Documents. MB keeps the backup in its MB Data subfolder."),
+                        else mb("在‘文档’下选择文件夹。山海会把备份放进其中的 MB Data。", "Choose a folder in Documents. Shanhai keeps the backup in its MB Data subfolder."),
                         style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                 }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

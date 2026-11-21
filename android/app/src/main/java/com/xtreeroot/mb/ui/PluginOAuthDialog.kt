@@ -26,7 +26,7 @@ internal fun PluginOAuthDialog(page: PluginOAuthPage, broker: PluginOAuthBroker,
     AlertDialog(onDismissRequest = cancel, title = { Text(page.title) }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(page.host, style = MaterialTheme.typography.titleSmall)
-            Text(if (opened) mb("在浏览器完成授权后会返回 MB。", "Finish in the browser to return to MB.")
+            Text(if (opened) mb("在浏览器完成授权后会返回山海。", "Finish in the browser to return to Shanhai.")
                 else mb("使用系统浏览器授权。", "Authorize with your system browser."))
         }
     }, confirmButton = {
