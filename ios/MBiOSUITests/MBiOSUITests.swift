@@ -2,6 +2,65 @@ import XCTest
 import UIKit
 
 final class MBiOSUITests: XCTestCase {
+    @MainActor func testSelectingMusicAutomaticallyOpensPlayer() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        selectTab("搜索", app: app)
+        let field = app.textFields["搜索视频、音乐、UP 主"]
+        field.tap(); field.typeText("player fixture\n")
+        let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "选择 ")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 5)); song.tap()
+        XCTAssertTrue(app.buttons["收起"].waitForExistence(timeout: 5))
+        capture("点击资源-自动展开播放器", app: app)
+    }
+
+    @MainActor func testMagnetDirectImportAndRecentSearchRemoval() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait; app.launch()
+        selectTab("搜索", app: app)
+        app.buttons["search-platform-picker"].tap(); app.buttons["磁力链搜索"].tap()
+        let field = app.textFields["搜索视频、音乐、UP 主"]
+        field.tap(); field.typeText("magnet:?xt=urn:btih:30D1F776C01C1F67FA425D4FA683D0AFA21AA1E4&dn=Direct%20resource\n")
+        XCTAssertTrue(app.buttons["选择 Direct resource"].waitForExistence(timeout: 5))
+        capture("磁力链-直接识别", app: app)
+        app.buttons["清空搜索"].tap()
+        field.tap(); field.typeText("history one\n")
+        app.buttons["清空搜索"].tap()
+        field.tap(); field.typeText("history two\n")
+        app.buttons["清空搜索"].tap()
+        XCTAssertTrue(app.buttons["删除搜索记录 history one"].waitForExistence(timeout: 5))
+        app.buttons["删除搜索记录 history one"].tap()
+        XCTAssertFalse(app.buttons["删除搜索记录 history one"].exists)
+        XCTAssertTrue(app.buttons["删除搜索记录 history two"].exists)
+        capture("最近搜索-单条删除", app: app)
+        app.buttons["全部清除"].tap()
+        XCTAssertFalse(app.buttons["删除搜索记录 history two"].exists)
+    }
+
+    @MainActor func testPortraitVideoQueueSwipeAndCommentsCaptions() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--portrait-demo", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        XCUIDevice.shared.orientation = .portrait; app.launch()
+        XCTAssertTrue(app.staticTexts["竖屏示例一"].waitForExistence(timeout: 5))
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts["竖屏示例二"].waitForExistence(timeout: 5))
+        app.buttons["上一个"].tap()
+        XCTAssertTrue(app.staticTexts["竖屏示例一"].waitForExistence(timeout: 5))
+        app.buttons["收藏"].tap(); XCTAssertTrue(app.buttons["已收藏"].exists)
+        capture("竖屏-通用操作", app: app)
+        app.buttons["评论"].tap()
+        XCTAssertTrue(app.navigationBars["评论与点赞"].waitForExistence(timeout: 5))
+        app.buttons["完成"].tap()
+        app.buttons["字幕"].tap()
+        XCTAssertTrue(app.navigationBars["字幕"].waitForExistence(timeout: 5))
+        capture("竖屏-字幕", app: app)
+    }
+
     @MainActor func testAppUpdateSettingsCanOpenAndReturnWithoutLosingSettings() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -757,7 +816,7 @@ final class MBiOSUITests: XCTestCase {
         selectTab("搜索", app: app)
         picker.press(forDuration: 0.15)
         XCTAssertTrue(app.buttons["全平台搜索"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["种子资源搜索"].exists)
+        XCTAssertTrue(app.buttons["磁力链搜索"].exists)
         let choices = app.descendants(matching: .any)["search-platform-options"].firstMatch
         XCTAssertTrue(choices.waitForExistence(timeout: 3))
         XCTAssertGreaterThanOrEqual(choices.frame.minY, field.frame.maxY, "下拉选项不能遮挡搜索框")

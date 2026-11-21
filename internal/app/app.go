@@ -20,7 +20,6 @@ import (
 	"mygo-music/internal/network"
 	"mygo-music/internal/player"
 	"mygo-music/internal/plugin"
-	"mygo-music/plugins/builtin"
 )
 
 type pageKind int
@@ -255,12 +254,6 @@ func (a *app) makeSources() {
 	plugin.SetAppVersion(pluginCompatibilityVersion)
 	plugin.SetWebSignIn(a.webSignIn)
 	a.plugins = plugin.Discover(pluginsDir(), userDataDir("plugin-data"))
-	bundled, err := plugin.LoadBundled(builtin.Assets, a.plugins, userDataDir("builtin-plugins"), userDataDir("plugin-data"))
-	if err != nil {
-		log.Printf("loading bundled platform sources: %v", err)
-	} else {
-		a.plugins = append(a.plugins, bundled...)
-	}
 	a.headers = &headerPlugins{}
 	music.ImageHeaders = a.headers.image
 	for _, p := range a.plugins {

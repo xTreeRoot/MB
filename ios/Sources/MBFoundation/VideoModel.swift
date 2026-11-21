@@ -10,11 +10,13 @@ import Observation
     var errorMessage: String? { get }
     var isBuffering: Bool { get }
     var recoverable: Bool { get }
+    var aspectRatio: Double? { get }
 }
 
 public extension VideoEngine {
     var isBuffering: Bool { false }
     var recoverable: Bool { false }
+    var aspectRatio: Double? { nil }
     func load(resource: MediaResource, at milliseconds: Int64) async throws { try await load(url: resource.url, at: milliseconds) }
 }
 
@@ -33,6 +35,11 @@ public extension VideoEngine {
     public private(set) var errorMessage: String?
     public private(set) var persistenceMessage: String?
     public private(set) var track: Track?
+    private var measuredAspectRatio: Double?
+    public var aspectRatio: Double { measuredAspectRatio ?? track.flatMap { track in
+        guard let width = track.videoWidth, let height = track.videoHeight, width > 0, height > 0 else { return track.shortVideo == true ? 9.0 / 16 : nil }
+        return Double(width) / Double(height)
+    } ?? 16.0 / 9 }
     public private(set) var isSupported: Bool
     public var player: AVPlayer? { (engine as? NativeVideoEngine)?.player }
     @ObservationIgnored private let source: (any VideoSource)?
@@ -45,6 +52,7 @@ public extension VideoEngine {
     @ObservationIgnored private var position: Int64 = 0
     @ObservationIgnored private var playing = false
     @ObservationIgnored private var refreshUsed = false
+    @ObservationIgnored private var warmAttempted = false
 
     public init(source: (any VideoSource)?, engine: any VideoEngine = NativeVideoEngine(), store: (any PlaybackModeStore)? = nil) {
         self.source = source
@@ -91,6 +99,7 @@ public extension VideoEngine {
     public func updateTrack(_ track: Track?) {
         guard self.track?.id != track?.id else { return }
         refreshUsed = false
+        warmAttempted = false
         release()
         self.track = track
         position = 0
@@ -101,6 +110,7 @@ public extension VideoEngine {
     public func handleSelection(_ track: Track?, intent: PlaybackSelectionIntent, positionMilliseconds: Int64, playing: Bool) {
         if intent == .content {
             refreshUsed = false
+            warmAttempted = false
             release()
             self.track = track
             position = positionMilliseconds
@@ -120,6 +130,14 @@ public extension VideoEngine {
         if !isReady && task == nil { load() }
     }
 
+    /// 音频已播放后后台准备同一条静音视频，打开时复用已加载的播放器。
+    public func preloadCurrent() {
+        guard !isVisible, playing, !isReady, task == nil, !warmAttempted,
+              let track, track.localFileID == nil else { return }
+        warmAttempted = true
+        load(warming: true)
+    }
+
     public func watchCurrent() {
         guard let track, track.localFileID == nil else { return }
         presentationMode = .video
@@ -137,6 +155,7 @@ public extension VideoEngine {
         guard isReady else { return }
         engine.sync(positionMilliseconds: position, playing: playing)
         isBuffering = engine.isBuffering
+        measuredAspectRatio = engine.aspectRatio
     }
 
     private func refreshEngineStatus() {
@@ -149,12 +168,13 @@ public extension VideoEngine {
             return
         }
         isBuffering = engine.isBuffering
+        measuredAspectRatio = engine.aspectRatio
     }
 
     public func waitUntilLoaded() async { await task?.value }
 
-    private func load() {
-        guard isVisible, let track, let source else { return }
+    private func load(warming: Bool = false) {
+        guard isVisible || warming, let track, let source else { return }
         generation += 1
         let current = generation
         isLoading = true
@@ -170,6 +190,7 @@ public extension VideoEngine {
                 try await engine.load(resource: resource, at: position)
                 guard current == generation, !Task.isCancelled else { return }
                 engine.sync(positionMilliseconds: position, playing: playing)
+                measuredAspectRatio = engine.aspectRatio
                 isReady = true
                 isBuffering = engine.isBuffering
                 isLoading = false
@@ -177,8 +198,8 @@ public extension VideoEngine {
             } catch {
                 guard current == generation, !Task.isCancelled else { return }
                 release()
-                if MediaStreamingFailure.allowsRefresh(error), !refreshUsed { refreshUsed = true; load(); return }
-                errorMessage = "视频加载失败，点击重试"
+                if !warming, MediaStreamingFailure.allowsRefresh(error), !refreshUsed { refreshUsed = true; load(); return }
+                if !warming { errorMessage = "视频加载失败，点击重试" }
             }
         }
     }
@@ -188,6 +209,7 @@ public extension VideoEngine {
         task?.cancel()
         task = nil
         engine.stop()
+        measuredAspectRatio = nil
         isReady = false
         isLoading = false
         isBuffering = false
@@ -198,6 +220,7 @@ public extension VideoEngine {
 /// 一个静音 AVPlayer 供主画面和展开播放器轮流使用，不启动第二条音轨。
 @MainActor public final class NativeVideoEngine: VideoEngine, VideoEngineEvents {
     public let player = AVPlayer()
+    public private(set) var aspectRatio: Double?
     public var onUpdate: (() -> Void)?
     private var playerObservation: NSKeyValueObservation?
     private var itemObservation: NSKeyValueObservation?
@@ -246,13 +269,16 @@ public extension VideoEngine {
         guard !tracks.isEmpty else { throw MediaStreamingFailure.unplayable }
         for track in tracks {
             // 首帧需要的远程轨道信息先异步就绪，渲染时不再同步询问服务器。
-            _ = try await track.load(.formatDescriptions, .naturalSize, .preferredTransform)
+            let (_, size, transform) = try await track.load(.formatDescriptions, .naturalSize, .preferredTransform)
+            let display = size.applying(transform)
+            if abs(display.width) > 0, abs(display.height) > 0 { aspectRatio = abs(display.width / display.height) }
         }
         _ = try await asset.load(.duration)
         try Task.checkCancellation()
         seekGeneration += 1
         seeking = false
         let item = AVPlayerItem(asset: asset)
+        item.preferredForwardBufferDuration = 3
         itemObservation = item.observe(\.status) { @Sendable [weak self] _, _ in
             Task { @MainActor in self?.onUpdate?() }
         }
@@ -292,6 +318,7 @@ public extension VideoEngine {
         remote = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
+        aspectRatio = nil
         seeking = false
         seekTarget = nil
         if let temporaryFile { try? FileManager.default.removeItem(at: temporaryFile); self.temporaryFile = nil }

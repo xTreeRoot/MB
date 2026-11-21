@@ -7,8 +7,7 @@ import kotlinx.coroutines.withContext
 
 internal class GitHubPluginImport(private val installer: PluginInstaller,
                                  private val latest: suspend (String) -> GitHubPluginRevision,
-                                 private val download: suspend (GitHubPluginRevision, File) -> Unit,
-                                 private val builtInId: String) {
+                                 private val download: suspend (GitHubPluginRevision, File) -> Unit) {
     suspend fun run(repositories: List<String>, review: suspend (List<PendingPlugin>) -> Boolean): PluginUpdateReport {
         val candidates = linkedMapOf<String, PendingPlugin>()
         val installed = mutableListOf<String>()
@@ -33,7 +32,7 @@ internal class GitHubPluginImport(private val installer: PluginInstaller,
                         installer.discard(candidate)
                         throw PluginException("Plugin ID belongs to a different repository")
                     }
-                    if (candidate.manifest.id.equals(builtInId, true) || candidates.containsKey(candidate.manifest.id)) {
+                    if (candidate.manifest.id == com.xtreeroot.mb.local.localSourceId || candidates.containsKey(candidate.manifest.id)) {
                         installer.discard(candidate)
                         throw PluginException("Reserved or duplicate plugin ID: ${candidate.manifest.id}")
                     }

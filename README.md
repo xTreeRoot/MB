@@ -20,7 +20,7 @@
 
 ## 当前能力
 
-- 内置哔哩哔哩：首页推荐、搜索、扫码登录、个人内容、收藏、历史、评论与点赞。
+- 独立哔哩哔哩插件：首页推荐、搜索、扫码登录、个人内容、收藏、历史、评论与点赞；与其他信息源一样从插件管理安装。
 - 音乐与视频播放、歌词和字幕、队列、进度跳转、随机与循环播放。
 - 本地音乐、资料库、歌单、封面、下载与播放缓存。
 - 通过独立插件接入其他内容平台；插件管理支持仓库、ZIP 等安装方式，具体入口依客户端而定。
@@ -42,7 +42,7 @@
 
 ## 插件与平台策略
 
-通用桌面播放器依赖 `internal/music.Source`。平台私有接口、签名、分页、媒体地址及字幕转换集中在独立插件中，宿主负责通用播放、存储、网络权限和交互。内置插件位于 `plugins/builtin/<platform>`，外部插件通过清单声明已实现的能力。
+通用桌面播放器依赖 `internal/music.Source`。平台私有接口、签名、分页、媒体地址及字幕转换集中在独立插件中，宿主负责通用播放、存储、网络权限和交互。三端不编译或嵌入任何远程信息源；信息源在独立仓库维护，通过外部插件清单声明能力和权限，并由用户安装。哔哩哔哩插件为 [xTreeRoot/mygo-music-bilibili](https://github.com/xTreeRoot/mygo-music-bilibili)。
 
 各端兼容的 MyGo Music 插件宿主版本独立于山海产品版本维护。契约见 [插件开发约定](plugins/README.md)，更新上游的规则见 [UPSTREAM.md](UPSTREAM.md)。
 
@@ -54,7 +54,7 @@
 
 ```sh
 go tool mygo dev
-npm run test:bilibili
+npm run test:plugins
 CGO_ENABLED=0 go test ./...
 go tool mygo vet .
 ```

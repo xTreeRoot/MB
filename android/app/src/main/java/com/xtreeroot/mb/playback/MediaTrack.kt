@@ -39,7 +39,7 @@ internal fun Track.mediaItem(): MediaItem = MediaItem.Builder()
             putInt("mb.videoWidth", videoWidth)
             putInt("mb.videoHeight", videoHeight)
             putBoolean("mb.shortVideo", shortVideo)
-            if (sourceId == "bilibili") putBundle("mb.artworkHeaders", Bundle().apply {
+            putBundle("mb.artworkHeaders", Bundle().apply {
                 artworkHeaders.filterKeys(::publicArtworkHeader).forEach { (key, value) -> putString(key, value) }
             })
         })

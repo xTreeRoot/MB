@@ -8,6 +8,7 @@ import Testing
     let store = AppPersistence(directory: directory)
     let media = MediaLibrary(directory: directory.appendingPathComponent("media"))
     let model = PreferencesModel(store: store, media: media)
+    await model.restore()
     for index in 0..<30 { model.recordSearch("\(index)") }
     model.recordSearch("  20 \n")
     model.recordSearch(" \n ")
@@ -41,6 +42,25 @@ import Testing
     #expect(restored.values.growFromCover && restored.values.stageSparks && restored.values.lyricsStage)
     #expect(restored.values.selectedSourceID == "fixture")
     #expect(!restored.values.nowPlayingLyrics)
+}
+
+@Test @MainActor func preferencesDoNotOverwriteSavedValuesWhileStartupIsStillRestoring() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppPersistence(directory: directory)
+    var saved = AppPreferences()
+    saved.selectedSourceID = "source-fixture"; saved.searchHistory = ["saved term"]
+    saved.quality = .lossless; saved.fog = true
+    try await store.savePreferences(saved)
+    let model = PreferencesModel(store: store, media: MediaLibrary(directory: directory.appendingPathComponent("media")))
+    model.values.selectedSourceID = "temporary-startup-source"
+    await model.flush()
+    #expect(try await store.loadPreferences() == saved)
+    await model.restore()
+    #expect(model.isRestored)
+    #expect(model.values == saved)
+    model.values.volume = 0.42; await model.flush()
+    #expect(try await store.loadPreferences()?.volume == 0.42)
 }
 
 @Test func olderPreferencesEnableNowPlayingLyricsAndPreserveExplicitOptOut() throws {

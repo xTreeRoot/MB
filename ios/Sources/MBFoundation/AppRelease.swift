@@ -42,8 +42,8 @@ public struct AppRelease: Sendable, Equatable {
             guard assets.count == 1, let asset = assets.first,
                   let archive = URL(string: asset.browser_download_url), let page = URL(string: entry.html_url),
                   Self.official(archive), Self.official(page),
-                  archive.path == "/xTreeRoot/MB/releases/download/\(entry.tag_name)/\(name)",
-                  page.path == "/xTreeRoot/MB/releases/tag/\(entry.tag_name)",
+                  ["MB", "ShanhaiMusic"].contains(where: { archive.path == "/xTreeRoot/\($0)/releases/download/\(entry.tag_name)/\(name)" }),
+                  ["MB", "ShanhaiMusic"].contains(where: { page.path == "/xTreeRoot/\($0)/releases/tag/\(entry.tag_name)" }),
                   let digest = asset.digest, digest.wholeMatch(of: /sha256:[0-9a-f]{64}/) != nil,
                   (1...VerifiedDownload.maximumBytes).contains(asset.size) else { return nil }
             return Self(tag: entry.tag_name, version: version, build: build, notes: entry.body ?? "", page: page,

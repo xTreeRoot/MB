@@ -30,7 +30,6 @@ struct SettingsView: View {
                 }
                 Section {
                     NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
-                    Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
                 } header: { Text("音源") }
                 Section("MB Server") {
                     TextField("HTTPS 节点地址", text: $platformData.address).autocorrectionDisabled()

@@ -3,7 +3,7 @@ import Observation
 
 public enum AppUpdates {
     public static func latest() async throws -> AppRelease {
-        var request = URLRequest(url: URL(string: "https://api.github.com/repos/xTreeRoot/MB/releases?per_page=100")!)
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/xTreeRoot/ShanhaiMusic/releases?per_page=100")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("MB-iOS", forHTTPHeaderField: "User-Agent")
         request.cachePolicy = .reloadIgnoringLocalCacheData

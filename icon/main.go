@@ -1,148 +1,94 @@
-// Command icon draws the app icons: the layers of AppIcon.icon, the Icon
-// Composer document that macOS 26 and later render in Liquid Glass, and
-// resources/icon.png, the same icon as macOS draws it, on the grid of older
-// macOS icons, for older macOS and Windows; and from AppIcon-dev.icon, cream
-// where the app's is red, resources/icon-dev.png, the icon of mygo dev
-// builds.
-//
-// Run it from the repository root on a Mac with Xcode 26 or later:
+// Command icon exports the selected Shanhai artwork to the app and website icons.
+// Run from the repository root on a Mac with Xcode 26 or later:
 //
 //	go run ./icon
 //
-// The icon.json of each document, its background, glass and dark-mode
-// colors, is edited by hand or in Icon Composer.
+// icon/shanhai.png is the full-bleed, opaque 1024-pixel master. Keep the
+// Icon Composer documents pointed at shanhai.png when replacing the artwork.
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
 	"log"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 const ictool = "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
 
-// icons are the documents drawn, with the PNG rendered from each and the
-// colors of its tonearm: the gradient and the cap on its pivot.
-var icons = []struct {
-	document, output   string
-	top, bottom, pivot string
-}{
-	// Red, with a white tonearm.
-	{"icon/AppIcon.icon", "resources/icon.png", "#FFFFFF", "#E6E3E5", "#D9D5D8"},
-	// Cream, with a red one to match the label.
-	{"icon/AppIcon-dev.icon", "resources/icon-dev.png", "#FF5B5B", "#E3122C", "#FFE1DE"},
-}
-
-// A record on Icon Composer's 1024-point full-bleed canvas, seen close up:
-// larger than the canvas, it runs off the left and bottom edges. And the
-// tonearm over it, from its pivot to the headshell resting on the grooves.
-var (
-	rec   = struct{ cx, cy, r float64 }{330, 712, 560}
-	pivot = image.Pt(820, 214)
-	head  = image.Pt(585, 520)
-)
-
 func main() {
-	for _, ic := range icons {
-		layers := map[string]string{
-			"arm.svg":    armSVG(ic.top, ic.bottom, ic.pivot),
-			"record.svg": recordSVG(),
-			"label.svg":  labelSVG(),
-		}
-		for name, s := range layers {
-			if err := os.WriteFile(filepath.Join(ic.document, "Assets", name), []byte(s), 0o644); err != nil {
-				log.Fatal(err)
-			}
-		}
-		if err := render(ic.document, ic.output); err != nil {
+	file, err := os.Open("icon/shanhai.png")
+	if err != nil {
+		log.Fatal(err)
+	}
+	source, err := png.Decode(file)
+	file.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if source.Bounds().Dx() != 1024 || source.Bounds().Dy() != 1024 {
+		log.Fatal("icon/shanhai.png must be 1024 x 1024")
+	}
+	for _, target := range []struct {
+		path string
+		size int
+	}{
+		{"icon/AppIcon.icon/Assets/shanhai.png", 1024},
+		{"icon/AppIcon-dev.icon/Assets/shanhai.png", 1024},
+		{"ios/MBiOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png", 1024},
+		{"android/app/src/main/res/drawable-nodpi/mb_icon.png", 192},
+		{"website/public/icon.png", 1024},
+	} {
+		if err := writeIcon(source, target.path, target.size); err != nil {
 			log.Fatal(err)
 		}
 	}
-}
-
-func svg(body string) string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">` + "\n" + body + "\n</svg>\n"
-}
-
-func n(v float64) string {
-	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.2f", v), "0"), ".")
-}
-
-func armSVG(top, bottom, cap string) string {
-	p := pivot
-	length := math.Hypot(float64(head.X-p.X), float64(head.Y-p.Y))
-	angle := math.Atan2(float64(head.Y-p.Y), float64(head.X-p.X)) * 180 / math.Pi
-	end := float64(p.X) + length - 30
-	return svg(fmt.Sprintf(`<defs>
-<linearGradient id="m" x1="0" y1="0" x2="1" y2="1">
-<stop offset="0" stop-color="%[11]s"/><stop offset="1" stop-color="%[12]s"/></linearGradient>
-</defs>
-<g transform="rotate(%[3]s %[1]d %[2]d)">
-<rect x="%[4]d" y="%[5]d" width="64" height="52" rx="15" fill="url(#m)"/>
-<rect x="%[1]d" y="%[6]d" width="%[7]s" height="34" rx="17" fill="url(#m)"/>
-<rect x="%[8]s" y="%[9]d" width="92" height="56" rx="14" fill="url(#m)" transform="rotate(28 %[10]s %[2]d)"/>
-</g>
-<circle cx="%[1]d" cy="%[2]d" r="72" fill="url(#m)"/>
-<circle cx="%[1]d" cy="%[2]d" r="27" fill="%[13]s"/>`,
-		p.X, p.Y, n(angle), p.X-104, p.Y-26, p.Y-17, n(length-30), n(end-22), p.Y-28, n(end), top, bottom, cap))
-}
-
-func recordSVG() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, `<defs>
-<radialGradient id="d" cx="%[1]s" cy="%[2]s" r="%[3]s" gradientUnits="userSpaceOnUse">
-<stop offset="0.35" stop-color="#2A2A30"/><stop offset="0.95" stop-color="#17171B"/><stop offset="1" stop-color="#0E0E11"/></radialGradient>
-</defs>
-<circle cx="%[1]s" cy="%[2]s" r="%[3]s" fill="url(#d)"/>
-<circle cx="%[1]s" cy="%[2]s" r="%[4]s" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="3"/>
-`, n(rec.cx), n(rec.cy), n(rec.r), n(rec.r-8))
-	// Grooves, unevenly bright like the bands of tracks.
-	for i, r := 0, rec.r*0.42; r < rec.r-12; i, r = i+1, r+7 {
-		fmt.Fprintf(&b, `<circle cx="%s" cy="%s" r="%s" fill="none" stroke="#FFFFFF" stroke-opacity="%s" stroke-width="1.4"/>`+"\n",
-			n(rec.cx), n(rec.cy), n(r), n([]float64{0.05, 0.08, 0.04, 0.07}[i%4]))
+	for _, target := range []struct{ document, output string }{
+		{"icon/AppIcon.icon", "resources/icon.png"},
+		{"icon/AppIcon-dev.icon", "resources/icon-dev.png"},
+	} {
+		if err := render(target.document, target.output); err != nil {
+			log.Fatal(err)
+		}
 	}
-	b.WriteString(sheen(-62, 54, 0.2, rec.r*0.39, rec.r-10))
-	b.WriteString(sheen(118, 54, 0.14, rec.r*0.39, rec.r-10))
-	return svg(strings.TrimSuffix(b.String(), "\n"))
+	var favicon bytes.Buffer
+	if err := png.Encode(&favicon, resize(source, 128)); err != nil {
+		log.Fatal(err)
+	}
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs><clipPath id="shape"><rect width="1024" height="1024" rx="230"/></clipPath></defs><image width="1024" height="1024" clip-path="url(#shape)" href="data:image/png;base64,%s"/></svg>`+"\n", base64.StdEncoding.EncodeToString(favicon.Bytes()))
+	if err := os.WriteFile("website/public/favicon.svg", []byte(svg), 0o644); err != nil {
+		log.Fatal(err)
+	}
 }
 
-// sheen is a soft band of reflected light across the grooves, centered on
-// the angle mid, in degrees: slices whose opacity falls off smoothly from
-// the band's middle, as SVG has no conic gradient.
-func sheen(mid, width, peak, r0, r1 float64) string {
-	const slices = 48
-	pt := func(a, r float64) string {
-		a *= math.Pi / 180
-		return n(rec.cx+math.Cos(a)*r) + " " + n(rec.cy+math.Sin(a)*r)
+func resize(source image.Image, size int) image.Image {
+	if source.Bounds().Dx() == size && source.Bounds().Dy() == size {
+		return source
 	}
-	var b strings.Builder
-	for i := range slices {
-		a0 := mid - width/2 + width*float64(i)/slices
-		a1 := a0 + width/slices + 0.15 // overlap, so no seams show
-		t := (float64(i)+0.5)/slices*2 - 1
-		o := math.Round(peak*math.Exp(-t*t*3.2)*1000) / 1000
-		fmt.Fprintf(&b, `<path d="M%sL%sA%s %s 0 0 1 %sL%sA%s %s 0 0 0 %sZ" fill="#FFFFFF" fill-opacity="%s"/>`+"\n",
-			pt(a0, r0), pt(a0, r1), n(r1), n(r1), pt(a1, r1), pt(a1, r0), n(r0), n(r0), pt(a0, r0), n(o))
-	}
-	return b.String()
+	target := image.NewRGBA(image.Rect(0, 0, size, size))
+	xdraw.CatmullRom.Scale(target, target.Bounds(), source, source.Bounds(), xdraw.Src, nil)
+	return target
 }
 
-func labelSVG() string {
-	return svg(fmt.Sprintf(`<defs>
-<linearGradient id="l" x1="0" y1="0" x2="0" y2="1">
-<stop offset="0" stop-color="#FF5B5B"/><stop offset="1" stop-color="#E3122C"/></linearGradient>
-</defs>
-<circle cx="%[1]s" cy="%[2]s" r="%[3]s" fill="url(#l)"/>
-<circle cx="%[1]s" cy="%[2]s" r="%[4]s" fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="3"/>
-<circle cx="%[1]s" cy="%[2]s" r="%[5]s" fill="#FFF6F2"/>`, n(rec.cx), n(rec.cy), n(rec.r*0.358), n(rec.r*0.247), n(rec.r*0.052)))
+func writeIcon(source image.Image, path string, size int) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(file, resize(source, size)); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // render has ictool draw document as macOS does, and lays it on the

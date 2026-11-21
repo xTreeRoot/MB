@@ -48,7 +48,7 @@ public struct PluginManifest: Codable, Sendable {
     public let requestHeaders: [HeaderRule]?
     public var entry: String { main ?? "index.js" }
     public var displayName: String { name ?? id }
-    public func validate(hostVersion: String = "0.1.27") throws {
+    public func validate(hostVersion: String = "0.1.28") throws {
         guard id.range(of: "^[A-Za-z0-9][A-Za-z0-9_.-]*$", options: .regularExpression) != nil, !id.contains("..") else { throw PluginFailure.invalid("Invalid plugin ID") }
         guard !entry.hasPrefix("/"), !entry.split(separator: "/").contains(".."), entry.hasSuffix(".js") else { throw PluginFailure.invalid("Invalid entry path") }
         if let minAppVersion {

@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 internal class LibraryModel(application: Application, source: LibrarySource) : AndroidViewModel(application) {
-    constructor(application: Application) : this(application, (application as MBApplication).bilibili)
+    constructor(application: Application) : this(application, object : LibrarySource { override val id = ""; override suspend fun search(query: String, page: Int) = com.xtreeroot.mb.music.TrackPage(emptyList(), false); override suspend fun library(route: LibraryRoute, cursor: String?) = LibraryPage() })
 
     val pages = LibraryPages(viewModelScope, source::invalidateLibraryCache, source::library)
     val creatorPages = LibraryPages(viewModelScope, source::invalidateLibraryCache, source::library)

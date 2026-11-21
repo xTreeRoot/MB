@@ -318,7 +318,7 @@ func (a *app) pluginInstalled(id string) error {
 // comes back. The last one on stays, as there would be nothing to show.
 func (a *app) removePlugin(lib *library) {
 	p := pluginOf(lib)
-	if p == nil || p.IsBundled() || len(a.allLibs) <= 1 || a.installer.batch || a.installer.stars != nil || a.installer.updating[lib.id] {
+	if p == nil || len(a.allLibs) <= 1 || a.installer.batch || a.installer.stars != nil || a.installer.updating[lib.id] {
 		return
 	}
 	a.invalidateEdge(lib)
@@ -366,7 +366,7 @@ type pluginUpdateTarget struct {
 func (a *app) githubPluginTargets() []pluginUpdateTarget {
 	var targets []pluginUpdateTarget
 	for _, lib := range a.allLibs {
-		if plug := pluginOf(lib); plug != nil && !plug.IsBundled() {
+		if plug := pluginOf(lib); plug != nil {
 			if origin := plug.Origin(); origin != nil {
 				targets = append(targets, pluginUpdateTarget{lib.id, *origin, plug.Permissions()})
 			}
@@ -856,7 +856,7 @@ func (a *app) pluginMenu(c *ui.Context, lib *library, p palette) {
 	}
 	more := iconButton(c.Key("plugin-more"), iconMore, 16, p.muted, Tf("More for %s", lib.name()))
 	more.Menu(func(m *ui.Menu) {
-		if !plug.IsBundled() && plug.Origin() != nil {
+		if plug.Origin() != nil {
 			busy := a.installer.batch || a.installer.checked[lib.id] == checking || a.installer.updating[lib.id]
 			if m.Item(T("Check for Updates")).Disabled(busy).Chosen() {
 				a.checkPluginUpdate(lib)
@@ -865,11 +865,9 @@ func (a *app) pluginMenu(c *ui.Context, lib *library, p palette) {
 		if m.Item(T("Show Folder")).Chosen() {
 			revealFolder(plug.Dir())
 		}
-		if !plug.IsBundled() {
-			m.Separator()
-			if m.Item(T("Remove…")).Disabled(len(a.allLibs) <= 1 || a.installer.batch || a.installer.updating[lib.id]).Chosen() {
-				confirmRemovePlugin(a, lib.name(), func() { a.removePlugin(lib) })
-			}
+		m.Separator()
+		if m.Item(T("Remove…")).Disabled(len(a.allLibs) <= 1 || a.installer.batch || a.installer.updating[lib.id]).Chosen() {
+			confirmRemovePlugin(a, lib.name(), func() { a.removePlugin(lib) })
 		}
 	})
 }

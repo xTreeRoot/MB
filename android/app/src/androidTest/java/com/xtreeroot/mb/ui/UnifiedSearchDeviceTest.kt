@@ -53,7 +53,7 @@ class UnifiedSearchDeviceTest {
             val installed = app.plugins.installed().filter { it.id in ids }
             installed.forEach { app.plugins.rename(it, "") }
             app.plugins.move(ids.first(), -1)
-            app.settings.update { it.copy(builtInEnabled = false, selectedSourceId = ids.first(), language = AppLanguage.English, playbackMode = PlaybackMode.Music) }
+            app.settings.update { it.copy(selectedSourceId = ids.first(), language = AppLanguage.English, playbackMode = PlaybackMode.Music) }
             app.refreshPlugins()
             activity = instrumentation.startActivitySync(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
             await("First")
@@ -86,6 +86,13 @@ class UnifiedSearchDeviceTest {
                 tap("Search"); await("Direct resource")
                 screenshot("android-magnet-direct-result.png")
             } finally { prefs.edit().putString("search_history", previous).commit() }
+        }
+    }
+
+    @Test fun tappingAResourceOpensItsMusicPlayerImmediately() = runBlocking {
+        fixture {
+            await("First song"); tap("First song")
+            await("Now Playing")
         }
     }
 

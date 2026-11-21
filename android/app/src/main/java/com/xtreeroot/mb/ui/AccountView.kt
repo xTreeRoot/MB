@@ -51,35 +51,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AccountView(model: AccountModel, openSettings: () -> Unit = {}, openPlugins: () -> Unit = {}, open: (LibraryRoute) -> Unit) {
-    val state by model.account.collectAsStateWithLifecycle()
-    var signOut by rememberSaveable { mutableStateOf(false) }
-    val current = state.account
-    val refreshing = state.loading && !state.signingIn && current != null
-    RefreshableList(refreshing = refreshing, refresh = { if (!state.loading) model.refresh() },
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
-        item {
-            AccountHeader(mb("哔哩哔哩", "Bilibili"), current, state.loading,
-                mb("扫码登录", "QR Sign In").takeIf { state.canSignIn }, model::signIn,
-                upload = current?.let { user -> AccountDestination(mb("我的投稿", "My Uploads"), Icons.Default.AccountBox) { open(LibraryRoute.Creator(user.id)) } })
-        }
-        item {
-            AccountDestinations(listOf(LibraryRoute.Favorites to Icons.AutoMirrored.Filled.List,
-                LibraryRoute.Liked to Icons.Default.Favorite, LibraryRoute.History to Icons.Default.PlayArrow,
-                LibraryRoute.Following to Icons.Default.Person).map { (route, icon) -> AccountDestination(route.title(), icon) { open(route) } })
-        }
-        item { AccountTools(openSettings, openPlugins) }
-        if (current != null) item { AccountSignOutRow(state.loading) { signOut = true } }
-        if (!state.signingIn) {
-            if (state.loading && !refreshing) item { Loading() }
-            state.error?.let { message -> item { Retry(message, model::refresh) } }
-        }
-    }
-    if (state.signingIn) SignInDialog(state, model, builtIn = true)
-    if (signOut) AccountSignOutDialog({ signOut = false }, model::signOut)
-}
-
-@Composable
 internal fun AccountSignOutDialog(close: () -> Unit, signOut: () -> Unit) {
     AlertDialog(onDismissRequest = close, title = { Text(mb("退出登录？", "Sign out?")) },
         confirmButton = { TextButton(onClick = { close(); signOut() }) { Text(mb("退出", "Sign Out")) } },
@@ -87,7 +58,7 @@ internal fun AccountSignOutDialog(close: () -> Unit, signOut: () -> Unit) {
 }
 
 @Composable
-internal fun SignInDialog(state: AccountState, model: AccountModel, builtIn: Boolean = false) {
+internal fun SignInDialog(state: AccountState, model: AccountModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prompt = state.prompt
@@ -96,7 +67,7 @@ internal fun SignInDialog(state: AccountState, model: AccountModel, builtIn: Boo
     val qrLabel = mb("登录二维码", "Sign In QR Code")
     val shareLabel = mb("分享二维码", "Share QR Code")
     AlertDialog(onDismissRequest = model::cancelSignIn,
-        title = { Text(if (builtIn) mb("扫码登录", "QR Sign In") else mb("登录音源", "Sign In to Source")) },
+        title = { Text(mb("登录音源", "Sign In to Source")) },
         text = {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -114,8 +85,8 @@ internal fun SignInDialog(state: AccountState, model: AccountModel, builtIn: Boo
                 if (state.error != null) Text(state.error, color = MaterialTheme.colorScheme.error)
                 else if (prompt == null) Loading()
                 else Text(when (prompt.status) {
-                    SignInStatus.Scan -> mb("用哔哩哔哩 App 扫码登录", "Scan with the Bilibili app.")
-                    SignInStatus.Confirm -> mb("已扫码，请在哔哩哔哩 App 确认登录", "Scanned. Confirm sign in in the Bilibili app.")
+                    SignInStatus.Scan -> mb("使用对应平台 App 扫码登录", "Scan with the platform app.")
+                    SignInStatus.Confirm -> mb("已扫码，请在对应平台 App 确认登录", "Scanned. Confirm sign in in the platform app.")
                     SignInStatus.Refreshed -> mb("二维码已刷新，请扫描新的二维码", "QR code refreshed. Scan the new code.")
                     SignInStatus.Message -> prompt.message
                 })

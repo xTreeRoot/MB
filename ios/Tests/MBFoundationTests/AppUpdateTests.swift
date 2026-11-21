@@ -127,3 +127,16 @@ func officialAppReleaseCanDownloadAndVerifyItsPublishedIPA() async throws {
     #expect(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize == release.size)
     print("Verified official iOS release: \(release.tag), \(release.size) bytes")
 }
+
+@Test func renamedRepositorySupportsExactOldAndNewPathsOnly() throws {
+    for repo in ["MB", "ShanhaiMusic", "ShanhaiMusic-evil"] {
+        var release = releaseJSON(build: 29)
+        let tag = "mb-ios-v0.1.0-build29", name = "MB-iOS-v0.1.0-build29-unsigned.ipa"
+        release["html_url"] = "https://github.com/xTreeRoot/\(repo)/releases/tag/\(tag)"
+        var assets = try #require(release["assets"] as? [[String: Any]])
+        assets[0]["browser_download_url"] = "https://github.com/xTreeRoot/\(repo)/releases/download/\(tag)/\(name)"; release["assets"] = assets
+        let data = try JSONSerialization.data(withJSONObject: [release])
+        if repo.hasSuffix("-evil") { #expect(throws: AppUpdateFailure.self) { try AppRelease.latest(in: data) } }
+        else { #expect(try AppRelease.latest(in: data).build == 29) }
+    }
+}

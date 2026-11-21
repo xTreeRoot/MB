@@ -179,7 +179,7 @@ public struct MBRootView: View {
                 if !demo { platformData.sync(verifiedProfileAccount, platform: selectedSourceID) }
             }
             .task {
-                await router.register(initialSource, id: initialSourceID)
+                if demo { await router.register(initialSource, id: initialSourceID) }
                 if !demo { await plugins.restore(); await registerPlugins() }
                 if !demo { systemPlayback.connect(playback) }
                 if !demo { await networkSettings.restore() }
@@ -205,7 +205,9 @@ public struct MBRootView: View {
                 for item in downloads.items { playback.updateLocalTrack(item.track) }
                 video.updateTrack(playback.queue.current)
             }
-            .task(id: selectedSourceID + ":" + String(plugins.revision)) { await activateSource() }
+            .task(id: selectedSourceID + ":" + String(plugins.revision) + ":" + String(preferences.isRestored)) {
+                if demo || preferences.isRestored { await activateSource() }
+            }
             .task(id: (playback.queue.current?.id ?? "") + ":" + String(plugins.revision)) {
                 currentInteractions = nil
                 interactionTrackID = nil
@@ -226,13 +228,8 @@ public struct MBRootView: View {
 
     private var observedTabs: some View {
         AnyView(initializedTabs)
-            .onChange(of: selectedSourceID) { _, id in preferences.values.selectedSourceID = id }
+            .onChange(of: selectedSourceID) { _, id in if demo || preferences.isRestored { preferences.values.selectedSourceID = id } }
             .onChange(of: selectedTab) { _, _ in inputFocused = false }
-            .onChange(of: preferences.values.builtInEnabled) { _, enabled in
-                if !enabled, selectedSourceID == initialSourceID, plugins.sources[initialSourceID] == nil { switchSource(plugins.sources.keys.sorted().first ?? "") }
-                if enabled, selectedSourceID.isEmpty { switchSource(initialSourceID) }
-                Task { await registerPlugins() }
-            }
             .onChange(of: plugins.revision) { _, _ in Task { await registerPlugins() } }
             .onChange(of: playback.positionMilliseconds) { _, _ in syncVideoClock() }
             .onChange(of: playback.audioBuffering) { _, _ in syncVideoClock() }
@@ -271,6 +268,10 @@ public struct MBRootView: View {
             .onChange(of: playback.selectionRevision) { _, _ in
                 video.handleSelection(playback.queue.current, intent: playback.selectionIntent,
                                       positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing)
+                if playback.selectionIntent == .content, playback.queue.current != nil {
+                    if video.isVisible { showingPlayer = false; showVideo() }
+                    else { showingPlayer = true }
+                }
             }
             .onChange(of: video.isVisible) { _, visible in
                 syncVideoClock()
@@ -287,6 +288,7 @@ public struct MBRootView: View {
 
     private func syncVideoClock() {
         video.sync(positionMilliseconds: playback.positionMilliseconds, playing: playback.state == .playing && !playback.audioBuffering)
+        if !video.isVisible { video.preloadCurrent() }
         playback.holdForVideo(video.isVisible && (video.isLoading || video.isBuffering))
     }
 
@@ -426,10 +428,13 @@ public struct MBRootView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if !preferences.values.searchHistory.isEmpty {
-                    MusicSectionHeading(title: "最近搜索")
+                    HStack { Text("最近搜索").font(.headline); Spacer(); Button("全部清除") { preferences.values.searchHistory = [] }.font(.subheadline) }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], alignment: .leading, spacing: 10) {
                         ForEach(preferences.values.searchHistory, id: \.self) { term in
-                            Button(term) { input = term; submit() }.buttonStyle(.bordered).frame(minHeight: 44)
+                            HStack(spacing: 0) {
+                                Button { input = term; submit() } label: { Text(term).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 12) }
+                                Button { preferences.values.searchHistory.removeAll { $0 == term } } label: { Image(systemName: "xmark").font(.caption).frame(width: 44, height: 44) }.accessibilityLabel("删除搜索记录 \(term)")
+                            }.buttonStyle(.plain).background(.quaternary, in: Capsule())
                         }
                     }
                 }
@@ -460,7 +465,7 @@ public struct MBRootView: View {
             VideoPageView(video: video, playback: playback, interactionSource: interactionTrackID == playback.queue.current?.id ? currentInteractions : nil, accountRevision: account.revision, openMusic: {
                 showingPlayer = true
                 Task { await video.choose(.music) }
-            })
+            }, saveResource: { track in Task { await localLibrary.saveResource(track) } }, menu: trackMenu)
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar, .tabBar)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -558,25 +563,25 @@ public struct MBRootView: View {
     }
 
     private func registerPlugins() async {
-        if preferences.values.builtInEnabled { await router.register(initialSource, id: initialSourceID) }
-        await router.keep(Set(plugins.sources.keys).union(preferences.values.builtInEnabled ? [initialSourceID] : []))
+        if demo { await router.register(initialSource, id: initialSourceID) }
+        await router.keep(Set(plugins.sources.keys).union(demo ? [initialSourceID] : []))
         for (id, plugin) in plugins.sources { await router.register(plugin, id: id) }
     }
     private var discoveryProviders: [String: any MusicSource] {
         var result: [String: any MusicSource] = plugins.sources
-        if preferences.values.builtInEnabled, result[initialSourceID] == nil { result[initialSourceID] = initialSource }
+        if demo, result[initialSourceID] == nil { result[initialSourceID] = initialSource }
         return result
     }
     private var sourceDisplayNames: [String: String] {
         var names = Dictionary(plugins.installed.map { ($0.id, plugins.displayName($0)) }, uniquingKeysWith: { a, _ in a })
-        if names[initialSourceID] == nil { names[initialSourceID] = initialSource.displayName }
+        if demo, names[initialSourceID] == nil { names[initialSourceID] = initialSource.displayName }
         return names
     }
     private var sourceTabs: [SourceTab] {
         var tabs = plugins.installed.compactMap { plugin in
             plugins.sources[plugin.id] == nil ? nil : SourceTab(id: plugin.id, name: plugins.displayName(plugin))
         }
-        if preferences.values.builtInEnabled, plugins.sources[initialSourceID] == nil {
+        if demo, plugins.sources[initialSourceID] == nil {
             tabs.insert(SourceTab(id: initialSourceID, name: initialSource.displayName), at: 0)
         }
         return tabs
@@ -595,9 +600,9 @@ public struct MBRootView: View {
         let id = selectedSourceID
         let chosen: any MusicSource
         if let plugin = plugins.sources[id] { chosen = plugin }
-        else if id == initialSourceID, preferences.values.builtInEnabled { chosen = initialSource }
+        else if id == initialSourceID, demo { chosen = initialSource }
         else if let fallback = plugins.sources.keys.sorted().first { switchSource(fallback); return }
-        else if preferences.values.builtInEnabled { switchSource(initialSourceID); return }
+        else if demo { switchSource(initialSourceID); return }
         else if !id.isEmpty { switchSource(""); return }
         else { chosen = DisabledMusicSource() }
         account.cancelSignIn()
@@ -638,7 +643,7 @@ public struct MBRootView: View {
     }
     private var searchTargetName: String {
         if searchTarget == "all" { return AppLocalization.text("全平台搜索") }
-        if searchTarget == "torrent" { return AppLocalization.text("种子资源搜索") }
+        if searchTarget == "torrent" { return AppLocalization.text("磁力链搜索") }
         return sourceTabs.first { $0.id == (searchTarget ?? selectedSourceID) }?.name ?? source.displayName
     }
     private func chooseSearchTarget(_ id: String) {
@@ -652,7 +657,7 @@ public struct MBRootView: View {
         for tab in sourceTabs where target == "all" || target == tab.id {
             let provider: any MusicSource
             if let plugin = plugins.sources[tab.id] { provider = plugin }
-            else if tab.id == initialSourceID { provider = initialSource }
+            else if demo, tab.id == initialSourceID { provider = initialSource }
             else { continue }
             providers.append(SearchProvider(id: tab.id, name: tab.name, source: provider))
             if let plugin = provider as? PluginSource, (try? await plugin.supports("searchVideos")) == true {
@@ -661,8 +666,15 @@ public struct MBRootView: View {
         }
         guard !Task.isCancelled, target == (searchTarget ?? selectedSourceID) else { return }
         trackSearch.cancel()
-        if target == "torrent" { trackSearch = SearchModel(source: TorrentSearchSource()) }
+        if target == "torrent" { let resource = await resourceSearchPlugin()
+            trackSearch = SearchModel(source: TorrentSearchSource(provider: resource)) }
         else { trackSearch = SearchModel(source: UnifiedSearchSource(providers: providers)) }
+    }
+    private func resourceSearchPlugin() async -> PluginSource? {
+        for plugin in plugins.installed {
+            if let source = plugins.sources[plugin.id], (try? await source.supports("searchResources")) == true { return source }
+        }
+        return nil
     }
     private func selectSearch(_ tracks: [Track], _ index: Int) {
         if tracks[index].resourceURL != nil { resourceDetail = tracks[index]; return }
@@ -673,7 +685,10 @@ public struct MBRootView: View {
     }
     private func submit() {
         inputFocused = false; video.browse(); searchPath = []
-        if !demo { preferences.recordSearch(input) }
+        if demo {
+            let term = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !term.isEmpty { preferences.values.searchHistory = Array(([term] + preferences.values.searchHistory.filter { $0 != term }).prefix(20)) }
+        } else { preferences.recordSearch(input) }
         request = SearchRequest(model: search, query: input)
     }
 }

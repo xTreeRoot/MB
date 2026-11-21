@@ -66,10 +66,10 @@ func (a *app) scanStars() {
 	stars.message = T("Reading GitHub Stars list…")
 	in.busy = true
 	type owner struct{ id, repo string }
-	blocked := map[string]owner{"bilibili": {id: "bilibili"}}
+	blocked := map[string]owner{}
 	for _, lib := range a.allLibs {
 		var repo string
-		if current := pluginOf(lib); current != nil && !current.IsBundled() {
+		if current := pluginOf(lib); current != nil {
 			if origin := current.Origin(); origin != nil {
 				repo = origin.Repo
 			}
@@ -91,7 +91,7 @@ func (a *app) scanStars() {
 			} else {
 				id := strings.ToLower(pending.Manifest.ID)
 				if source, exists := blocked[id]; exists && (source.id != pending.Manifest.ID || !strings.EqualFold(source.repo, repo)) {
-					entry.issue = T("A built-in plugin or plugin from another source already uses this ID")
+					entry.issue = T("A plugin from another source already uses this ID")
 					pending.Discard()
 				} else {
 					blocked[id] = owner{pending.Manifest.ID, repo}

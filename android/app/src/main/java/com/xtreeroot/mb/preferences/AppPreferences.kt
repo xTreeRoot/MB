@@ -17,7 +17,6 @@ internal data class AppPreferences(
     val quality: AudioQuality = AudioQuality.High,
     val normalization: AudioNormalization = AudioNormalization.Standard,
     val playbackMode: PlaybackMode = PlaybackMode.Music,
-    val builtInEnabled: Boolean = true,
     val lyricsStage: Boolean = false,
     val nowPlayingLyrics: Boolean = true,
     val hotComments: Boolean = false,
@@ -32,7 +31,7 @@ internal data class AppPreferences(
 ) {
     fun toJson(): JSONObject = JSONObject().put("appearance", appearance.name).put("language", language.name)
         .put("volume", volume.toDouble()).put("quality", quality.name).put("normalization", normalization.name)
-        .put("builtInEnabled", builtInEnabled).put("playbackMode", playbackMode.name)
+        .put("playbackMode", playbackMode.name)
         .put("lyricsStage", lyricsStage).put("nowPlayingLyrics", nowPlayingLyrics).put("hotComments", hotComments)
         .put("playerStyle", playerStyle.name).put("lyricStyle", lyricStyle.name).put("stageSparks", stageSparks)
         .put("smoke", smoke).put("fog", fog).put("growFromCover", growFromCover)
@@ -47,7 +46,6 @@ internal data class AppPreferences(
             quality = json.choice("quality", AudioQuality.High),
             normalization = json.choice("normalization", AudioNormalization.Standard),
             playbackMode = json.choice("playbackMode", PlaybackMode.Music),
-            builtInEnabled = json.optBoolean("builtInEnabled", true),
             selectedSourceId = (json.opt("selectedSourceId") as? String)?.takeIf(String::isNotBlank),
             lyricsStage = json.optBoolean("lyricsStage"),
             nowPlayingLyrics = json.optBoolean("nowPlayingLyrics", true),

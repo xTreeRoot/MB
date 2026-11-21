@@ -55,7 +55,7 @@ internal val LocalSourceNames = staticCompositionLocalOf<Map<String, String>> { 
                     }
                 }
             }, play = open)
-            Text("${names[track.sourceId] ?: if (track.sourceId == "knaben") "Knaben" else track.sourceId} · $type${if (track.resourceUrl != null) " · BT" else ""}",
+            Text("${names[track.sourceId] ?: if (track.sourceId == "magnet") mb("磁力链接", "Magnet") else track.sourceId} · $type${if (track.resourceUrl != null) " · BT" else ""}",
                 Modifier.padding(start = 20.dp, bottom = 8.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

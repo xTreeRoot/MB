@@ -9,7 +9,6 @@ public enum AppAppearance: String, Codable, CaseIterable, Identifiable, Sendable
 
 public struct AppPreferences: Codable, Equatable, Sendable {
     public var selectedSourceID: String? = nil
-    public var builtInEnabled = true
     public var appearance = AppAppearance.system
     public var volume = 0.8
     public var cacheMegabytes = 2_048
@@ -27,11 +26,10 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var lyricsStage = false
     public var nowPlayingLyrics = true
     public init() {}
-    private enum CodingKeys: String, CodingKey { case selectedSourceID, builtInEnabled, appearance, volume, cacheMegabytes, searchHistory, playerStyle, lyricStyle, normalization, language, quality, stageSparks, lyricsStage, nowPlayingLyrics, smoke, fog, growFromCover, hotComments }
+    private enum CodingKeys: String, CodingKey { case selectedSourceID, appearance, volume, cacheMegabytes, searchHistory, playerStyle, lyricStyle, normalization, language, quality, stageSparks, lyricsStage, nowPlayingLyrics, smoke, fog, growFromCover, hotComments }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         selectedSourceID = try values.decodeIfPresent(String.self, forKey: .selectedSourceID)
-        builtInEnabled = try values.decodeIfPresent(Bool.self, forKey: .builtInEnabled) ?? true
         appearance = try values.decodeIfPresent(AppAppearance.self, forKey: .appearance) ?? .system
         volume = min(1, max(0, try values.decodeIfPresent(Double.self, forKey: .volume) ?? 0.8))
         cacheMegabytes = min(50_000, max(0, try values.decodeIfPresent(Int.self, forKey: .cacheMegabytes) ?? 2_048))
@@ -54,6 +52,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
 @MainActor @Observable
 public final class PreferencesModel {
     public var values = AppPreferences()
+    public private(set) var isRestored = false
     public private(set) var errorMessage: String?
     @ObservationIgnored private let store: AppPersistence
     @ObservationIgnored private let media: MediaLibrary
@@ -64,6 +63,7 @@ public final class PreferencesModel {
         do {
             if let saved = try await store.loadPreferences() { values = saved }
             try await media.setCacheLimit(megabytes: values.cacheMegabytes)
+            isRestored = true
         } catch { errorMessage = error.localizedDescription }
     }
     public func recordSearch(_ query: String) {
@@ -75,6 +75,7 @@ public final class PreferencesModel {
         save()
     }
     public func save() {
+        guard isRestored else { return }
         revision += 1
         guard writing == nil else { return }
         writing = Task {

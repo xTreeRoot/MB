@@ -165,7 +165,6 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         var showPlugins by rememberSaveable { mutableStateOf(false) }
         val pluginState by plugins.state.collectAsStateWithLifecycle()
         val sourceNames = buildMap {
-            if (preferences.builtInEnabled) put(app.bilibili.id, mb("哔哩哔哩", "Bilibili"))
             pluginState.installed.filter { it.enabled }.forEach { put(it.id, it.displayName) }
         }
         CompositionLocalProvider(LocalSourceNames provides (sourceNames + pluginState.installed.associate { it.id to it.displayName })) {
@@ -175,15 +174,15 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val searchUiState = key(activeSource) { rememberSaveableStateHolder() }
         LaunchedEffect(activeSource) {
             pluginAccount.activate(pluginSource)
-            if (activeSource !== app.bilibili) account.cancelSignIn()
+            account.cancelSignIn()
         }
         val catalogs = remember { mutableMapOf<PluginSource, PluginCatalogNavigator>() }
         val navigator: (PluginSource) -> PluginCatalogNavigator = { catalogs.getOrPut(it) { PluginCatalogNavigator() } }
         val catalog = remember(pluginSource) { pluginSource?.let(navigator) ?: PluginCatalogNavigator() }
         var searchTarget by rememberSaveable { mutableStateOf<String?>(null) }
         val target = searchTarget ?: sourceId.orEmpty()
-        val searchIdentity = if (target == "torrent") "knaben" else "search:$target"
-        LaunchedEffect(target, sourceNames, pluginState.installed.map { it.id to it.revision }, preferences.builtInEnabled) {
+        val searchIdentity = if (target == "torrent") "magnet" else "search:$target"
+        LaunchedEffect(target, sourceNames, pluginState.installed.map { it.id to it.revision }) {
             val query = browser.searchPages(SearchScope.Music).state.value.value.query
             try {
                 val provider = searchSource(app, target, sourceNames)
@@ -231,14 +230,13 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val nodeBinding by settings.nodeBinding.collectAsStateWithLifecycle()
         val nodeProfileState by nodeProfile.state.collectAsStateWithLifecycle()
         val accountSource = activeSource as? AccountSource
-        val selectedAccount = if (activeSource === app.bilibili) account else pluginAccount
-        val visibleAccount = if (activeSource === app.bilibili) user else pluginUser
+        val selectedAccount = pluginAccount
+        val visibleAccount = pluginUser
         val nodeTarget = NodeProfileTarget.verified(nodeBinding, sourceId, visibleAccount.verifiedFor(accountSource))
         fun currentNodeTarget(): NodeProfileTarget? {
             if (sourceId == null || app.musicSource(sourceId) !== activeSource) return null
             val latest = settings.values.value
             val available = buildList {
-                if (latest.builtInEnabled) add(app.bilibili.id)
                 app.installedPlugins.value.filter { it.enabled }.forEach { add(it.id) }
             }
             if (selectedSourceId(latest.selectedSourceId, available) != sourceId) return null
@@ -248,27 +246,9 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val webSignIn by app.pluginWebSignIn.requests.collectAsStateWithLifecycle(initialValue = null)
         val oauthSignIn by app.pluginOAuth.requests.collectAsStateWithLifecycle(initialValue = null)
         val webLink by app.pluginWebLink.collectAsStateWithLifecycle()
-        val playbackAccount = if (playback.current?.sourceId == app.bilibili.id) user.account
-            else pluginUser.account.takeIf { playback.current?.sourceId == pluginSource?.id && pluginUser.verifiedSource === pluginSource }
+        val playbackAccount = pluginUser.account.takeIf { playback.current?.sourceId == pluginSource?.id && pluginUser.verifiedSource === pluginSource }
         val playbackSignedIn = playbackAccount != null
         val isWide = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() >= 720.dp }
-        LaunchedEffect(preferences.builtInEnabled) {
-            account.activate(app.bilibili.takeIf { preferences.builtInEnabled })
-            if (!preferences.builtInEnabled) {
-                browser.sourceDisabled()
-                category = null
-                routes = arrayListOf()
-                browseCreators = emptyList()
-                playerCreators = emptyList()
-            }
-        }
-        LaunchedEffect(user.account?.id, preferences.builtInEnabled) { if (preferences.builtInEnabled) browser.refresh() }
-        LaunchedEffect(accountRoute, user.account?.id, preferences.builtInEnabled) {
-            library.pages.open(accountRoute.takeIf { preferences.builtInEnabled })
-        }
-        LaunchedEffect(creatorRoute, user.account?.id, preferences.builtInEnabled) {
-            library.creatorPages.open(creatorRoute.takeIf { preferences.builtInEnabled })
-        }
         LaunchedEffect(browsingPlayback) { if (!browsingPlayback) playerCreators = emptyList() }
         LaunchedEffect(playback.connected, playback.current?.id, playback.presentation.mode, playback.connectionIssue) {
             if ((playback.connected || playback.connectionIssue != null) && playback.current == null) { showPlayer = false; showVideo = false }
@@ -278,8 +258,8 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         LaunchedEffect(playback.presentation.opening) {
             if (playback.presentation.opening != seenVideoOpening) {
                 seenVideoOpening = playback.presentation.opening
-                showPlayer = false
-                showVideo = true
+                showPlayer = playback.presentation.mode == PlaybackMode.Music
+                showVideo = playback.presentation.mode == PlaybackMode.Video
             }
         }
         val select: (List<Track>, Track) -> Unit = { tracks, track ->
@@ -449,22 +429,20 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                                         when {
                                             page != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
                                                 page, catalog, select, player::play)
-                                            tab != Tab.Library && sourceId == null -> EmptyMessage(mb("没有可用音源", "No available sources"))
+                                            tab == Tab.Discover && sourceId == null -> EmptyMessage(mb("没有可用音源", "No available sources"))
                                             category != null -> CategoryView(browser, checkNotNull(category), select)
                                             else -> when (tab) {
                                                 Tab.Discover -> DiscoveryPlatforms(sourceNames.keys.toList(), sourceId.orEmpty(), switchSource,
                                                     { app.musicSource(it) as? PluginSource }, navigator, select, player::play) { Discover(browser, select, openCategory) }
                                                 Tab.Search -> Search(browser, searchIdentity, app.musicSource(target) as? PluginSource, null,
-                                                    openCategory.takeIf { target == app.bilibili.id }, { tracks, track ->
+                                                    null, { tracks, track ->
                                                         choosePlaybackMode(if (track.resourceType == "video") PlaybackMode.Video else PlaybackMode.Music)
                                                         select(tracks, track)
                                                     }, sourceNames, target, { searchTarget = it }, saved)
                                                 Tab.Library -> LocalLibraryView(select, selectGroup, saved)
                                                 Tab.Account -> if (pluginSource != null) PluginPersonalContent(pluginSource, catalog, pluginAccount, pluginUser,
                                                     openSettings = { showSettings = true }, openPlugins = { showPlugins = true })
-                                                else if (accountRoute == null) AccountView(account, openSettings = { showSettings = true }, openPlugins = { showPlugins = true }) { route ->
-                                                    routes = ArrayList(routes + route)
-                                                } else AccountLibraryView(library.pages, { routes = ArrayList(routes + it) }, select)
+                                                else Column { AccountTools({ showSettings = true }, { showPlugins = true }); EmptyMessage(mb("请安装并启用插件", "Install and enable a plugin")) }
                                             }
                                         }
                                     }

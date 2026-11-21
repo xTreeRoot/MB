@@ -8,7 +8,7 @@ struct SearchPlatformOptions: View {
     let choose: (String) -> Void
     private var options: [SourceTab] {
         [SourceTab(id: "all", name: AppLocalization.text("全平台搜索"))] + sources +
-        [SourceTab(id: "torrent", name: AppLocalization.text("种子资源搜索"))]
+        [SourceTab(id: "torrent", name: AppLocalization.text("磁力链搜索"))]
     }
     var body: some View {
         ScrollView {

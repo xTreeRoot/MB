@@ -89,3 +89,37 @@ func TestStarsImportReviewsBeforeInstallingAndKeepsPluginData(t *testing.T) {
 		t.Fatal("library not refreshed after install")
 	}
 }
+
+// A former built-in ID is an ordinary externally installed source. Reading a
+// Stars list must not reserve it or discard the plugin before permission review.
+func TestStarsImportAcceptsFormerPlatformID(t *testing.T) {
+	mygo.App.SetPath(mygo.PathUserData, t.TempDir())
+	t.Cleanup(func() { mygo.App.SetPath(mygo.PathUserData, "") })
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "plugin.json"), []byte(`{"id":"bilibili","name":"External Fixture"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "index.js"), []byte(`export function search() { return {tracks: []}; }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wasList, wasFetch := fetchStarsRepositories, fetchPlugin
+	t.Cleanup(func() { fetchStarsRepositories, fetchPlugin = wasList, wasFetch })
+	fetchStarsRepositories = func(context.Context, string) ([]string, error) { return []string{"owner/external"}, nil }
+	fetchPlugin = func(repo, target string) (*plugin.Pending, error) {
+		pending, err := plugin.Open(directory, target)
+		if err == nil {
+			pending.Repo = repo
+		}
+		return pending, err
+	}
+	a := newTestApp()
+	ch := posts(a)
+	a.installer.stars = &starsImport{open: true, address: "https://github.com/stars/owner/lists/fixture"}
+	a.scanStars()
+	runPost(t, ch)
+	entries := a.installer.stars.entries
+	if len(entries) != 1 || entries[0].issue != "" || entries[0].pending == nil {
+		t.Fatalf("external plugin was incorrectly reserved: %+v", entries)
+	}
+	entries[0].pending.Discard()
+}

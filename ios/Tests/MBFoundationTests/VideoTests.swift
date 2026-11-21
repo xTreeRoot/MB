@@ -5,6 +5,7 @@ import Testing
 @MainActor private final class TestVideo: VideoEngine, VideoEngineEvents {
     var onUpdate: (() -> Void)?
     var isBuffering = false
+    var aspectRatio: Double?
     var loads: [URL] = []
     var positions: [Int64] = []
     var isPlaying = false
@@ -438,4 +439,31 @@ private actor RestoredSession: PlaybackSessionStore {
     #expect(playback.selectionRevision == revision)
     #expect(video.mode == .video && !video.isVisible && !video.isLoading)
     #expect(await source.calls().isEmpty)
+}
+
+@Test @MainActor func musicPreloadsMutedVideoAndOpeningReusesItAndMeasuredSizeWins() async {
+    let source = VideoFixture(), engine = TestVideo()
+    engine.aspectRatio = 9.0 / 16
+    let model = VideoModel(source: source, engine: engine)
+    model.updateTrack(videoTracks[0])
+    model.sync(positionMilliseconds: 1200, playing: true)
+    model.preloadCurrent()
+    await model.waitUntilLoaded()
+    #expect(model.isReady && !model.isVisible && model.aspectRatio == 9.0 / 16)
+    #expect(engine.loads.count == 1)
+    model.watchCurrent()
+    #expect(model.isVisible && model.isReady && engine.loads.count == 1)
+    model.updateTrack(videoTracks[1])
+    #expect(!model.isReady)
+    await model.waitUntilLoaded()
+    #expect(engine.loads.count == 2)
+}
+
+@Test @MainActor func nativeVideoMeasuresPortraitTrackAndClearsGeometryOnStop() async throws {
+    let file = try #require(Bundle.module.url(forResource: "Fixtures/video-portrait", withExtension: "mp4"))
+    let engine = NativeVideoEngine()
+    try await engine.load(url: file, at: 0)
+    #expect(abs((engine.aspectRatio ?? 0) - 9.0 / 16) < 0.001)
+    engine.stop()
+    #expect(engine.aspectRatio == nil)
 }

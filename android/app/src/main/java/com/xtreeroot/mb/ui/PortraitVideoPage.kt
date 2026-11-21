@@ -48,6 +48,7 @@ internal fun PortraitVideoPage(track: Track, frame: VideoFrameState?, state: Pla
     val app = context.applicationContext as MBApplication
     val scope = rememberCoroutineScope()
     val resources by app.resourceBookmarks.tracks.collectAsStateWithLifecycle()
+    val preferences by app.settings.values.collectAsStateWithLifecycle()
     val saved = resources.any { it.id == track.id }
     val source = app.playbackSource(track.sourceId) as? InteractionSource
     var captions by remember(track.id) { mutableStateOf(false) }
@@ -103,7 +104,7 @@ internal fun PortraitVideoPage(track: Track, frame: VideoFrameState?, state: Pla
         }
     }
     if (captions) ModalBottomSheet(onDismissRequest = { captions = false }) {
-        VideoCaptions(track, state, model, app.settings.values.value, Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 440.dp))
+        VideoCaptions(track, state, model, preferences, Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 440.dp))
     }
     if (comments && source != null) CommentsSheet(source, track, signedIn) { comments = false }
 }

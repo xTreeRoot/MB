@@ -67,8 +67,16 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
         guard try await supports("home") else { return PluginBrowse(title: displayName) }
         return try await browseResult(try await catalogInvoke("home"))
     }
-    public func browse(_ page: String) async throws -> PluginBrowse {
-        try await browseResult(try await catalogInvoke("browse", arguments: .object(["page": .string(page)])))
+    public func browse(_ page: String) async throws -> PluginBrowse { try await browsePage(page).0 }
+    public func browsePage(_ page: String, offset: Int = 0) async throws -> (PluginBrowse, Bool, Int) {
+        let value = try await catalogInvoke("browse", arguments: .object(["page": .string(page), "offset": .number(Double(offset))]))
+        let result = try await browseResult(value)
+        let count = result.sections.reduce(0) { $0 + $1.tracks.count + $1.entities.count + $1.links.count }
+        return (result, value["more"] == .bool(true), count)
+    }
+    public func searchResources(query: String, page: Int) async throws -> TrackPage {
+        let value = try await runtime.invoke("searchResources", arguments: .object(["query": .string(query), "offset": .number(Double(max(0, page - 1) * 30))]))
+        return TrackPage(tracks: try await tracks(value["tracks"]), hasMore: value["more"] == .bool(true))
     }
     public func audio(track: Track, quality: AudioQuality) async throws -> MediaResource {
         let result = try await runtime.invoke("stream", arguments: .object(["id": .string(track.sourceTrackID), "quality": .string(quality.rawValue)]))
@@ -166,6 +174,11 @@ public actor PluginSource: PlaybackSource, VideoSource, AccountSource, Interacti
             var track = Track(sourceID: manifest.id, sourceTrackID: id, title: title, artist: artists.compactMap { $0["name"].string }.joined(separator: ", "), artworkURL: value["album"]["imageUrl"].string.flatMap(URL.init(string:)), durationMilliseconds: Int64(value["duration"].integer ?? 0), pageURL: value["url"].string.flatMap(URL.init(string:)))
             track.unavailable = value["unavailable"] == .bool(true)
             track.unavailableReason = TrackProblem.declared(value["unavailableReason"].string)
+            track.videoWidth = value["video"]["width"].integer
+            track.videoHeight = value["video"]["height"].integer
+            track.shortVideo = value["video"]["short"] == .bool(true)
+            track.resourceType = value["resourceType"].string
+            track.resourceURL = value["resourceUrl"].string.flatMap(URL.init(string:)).flatMap { $0.scheme == "magnet" || ($0.scheme == "https" && $0.host != nil) ? $0 : nil }
             track.artistID = artists.first?["id"].string
             if let url = track.artworkURL { track.artworkHeaders = try await runtime.headers(for: url, kind: "image") }
             result.append(track)

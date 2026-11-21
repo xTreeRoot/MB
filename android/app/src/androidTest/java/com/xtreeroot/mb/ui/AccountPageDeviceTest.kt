@@ -49,57 +49,6 @@ class AccountPageDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as MBApplication
 
-    @Test fun builtInAccountActionsOpenTheRightPageAndRequireSignOutConfirmation() = runBlocking {
-        val listener = SourceAccount("123456", "Fixture Listener", null)
-        val signOut = CompletableDeferred<Unit>()
-        val confirmSignIn = CompletableDeferred<Unit>()
-        val opened = Channel<LibraryRoute>(Channel.UNLIMITED)
-        val tools = Channel<String>(Channel.UNLIMITED)
-        val source = object : AccountSource {
-            override val id = "account-page-fixture"
-            override suspend fun search(query: String, page: Int) = TrackPage(emptyList(), false)
-            override suspend fun account(): SourceAccount? = null
-            override suspend fun signIn(prompt: suspend (SignInPrompt) -> Unit): SourceAccount {
-                prompt(SignInPrompt(null, message = "Fixture sign-in confirmation"))
-                confirmSignIn.await()
-                return listener
-            }
-            override suspend fun signOut() { signOut.complete(Unit) }
-        }
-        withPage(source, dark = false, content = { model ->
-            AccountView(model, openSettings = { tools.trySend("settings") }, openPlugins = { tools.trySend("plugins") }) { opened.trySend(it) }
-        }) {
-            awaitNode("QR Sign In")
-            assertNull(node("My Uploads"))
-            capture("android-account-guest-light")
-            tap("QR Sign In")
-            awaitNode("Fixture sign-in confirmation")
-            confirmSignIn.complete(Unit)
-            awaitNode(listener.name)
-            awaitNode("Watch History")
-            capture("android-account-signed-in-light")
-            tap("My Uploads")
-            assertEquals(LibraryRoute.Creator(listener.id), withTimeout(5_000) { opened.receive() })
-            tap("Watch History")
-            assertEquals(LibraryRoute.History, withTimeout(5_000) { opened.receive() })
-            tap("Settings")
-            assertEquals("settings", withTimeout(5_000) { tools.receive() })
-            tap("Plugins")
-            assertEquals("plugins", withTimeout(5_000) { tools.receive() })
-            tap("Sign Out")
-            tap("Cancel")
-            withTimeout(5_000) { while (node("Sign out?") != null) delay(25) }
-            assertFalse(signOut.isCompleted)
-            tap("Sign Out")
-            awaitNode("Sign out?")
-            tap("Sign Out")
-            withTimeout(5_000) { signOut.await() }
-            scrollTo("QR Sign In")
-            awaitNode("QR Sign In")
-            assertNull(node("My Uploads"))
-        }
-    }
-
     @Test fun pluginAccountDestinationsKeepTheirProfileAndCollectionRequests() = runBlocking {
         val id = "account-page-${UUID.randomUUID()}"
         val plugin = app.plugins.install(app.plugins.prepareZip { pluginZip(id).inputStream() })

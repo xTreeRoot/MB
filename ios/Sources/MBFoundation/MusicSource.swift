@@ -17,6 +17,9 @@ public struct Track: Identifiable, Equatable, Codable, Sendable {
     public var localMetadata: LocalAudioMetadata?
     public var resourceType: String?
     public var resourceURL: URL?
+    public var videoWidth: Int?
+    public var videoHeight: Int?
+    public var shortVideo: Bool?
 
     public var id: String { "\(sourceID):\(sourceTrackID)" }
 

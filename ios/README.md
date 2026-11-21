@@ -1,6 +1,6 @@
 # MB iPhone / iPad
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `ios` 分支，工程入口为 `ios/MBiOS.xcodeproj`。桌面源码在 `main`，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `23`。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。源码位于 [xTreeRoot/ShanhaiMusic](https://github.com/xTreeRoot/ShanhaiMusic) 的 `main` 分支，工程入口为 `ios/MBiOS.xcodeproj`。三端源码统一维护，功能对照基准见 [PARITY.md](PARITY.md)。当前产品版本为 `0.1.0`、build `29`。
 
 build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块，切歌复用，改音质、切源和改队列时取消；预取失败不打断当前播放。播放器显示中文模式反馈和底部功能小字，横屏支持歌词、律动、待播清单、选歌、评论。音乐与视频统一使用小圆点细进度条；视频单击切换控制条、双击播放/暂停，播放中无操作 4 秒收起，拖动时保留。YouTube 0.1.6 使用官方频道接口验证 OAuth 账号，登录已获用户确认。build 21 修复 iPad 播放器窄弹层导致的横屏失效；iPhone/iPad 相关 UI 回归通过。build 22 补齐插件 fetch 的手动跳转和逐跳网络权限检查，并为扫码登录申请短时后台执行。汽水 0.3.5 改用官方汽水专用扫码入口后仍返回 2156，0.3.6 增加本机匿名设备注册后仍返回 7。build 23 与汽水 0.4.0 使用隔离 WebKit 网页加载官方安全 SDK，并由同一浏览器会话取码和确认；2026-11-20 已装手机，用户确认授权登录成功并显示个人歌单。验收状态与截图见 [播放器验证](Review/PlayerExperience/README.md)。
 
@@ -9,8 +9,8 @@ build 20 增加播放到 70% 时预取下一首地址和首个 256 KiB 数据块
 安装完整 Xcode，首次打开并完成组件安装。终端执行：
 
 ```bash
-git clone --branch ios --single-branch https://github.com/xTreeRoot/MB.git
-cd MB/ios
+git clone https://github.com/xTreeRoot/ShanhaiMusic.git
+cd ShanhaiMusic/ios
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift package resolve
 open MBiOS.xcodeproj
@@ -48,7 +48,7 @@ build 7 参考 Apple Music、网易云音乐官方手机版截图重构页面：
 
 手机锁屏和控制中心也会使用同一份文字。系统决定刷新速度、截断与文字滚动，此功能不提供自定义滚动歌词界面。真实 CarPlay 尚未实测，不能将元数据回归或设置截图当成车机显示验收。
 
-## 插件登录（宿主兼容版本 0.1.27）
+## 插件登录（宿主兼容版本 0.1.28）
 
 `host.capabilities.webSignInHTML` 为真时，`host.webSignIn({url, cookiesOf, until, userAgent, html})` 可在独立临时 WKWebView 中加载插件提供的登录文档。`html` 必须为非空字符串、UTF-8 不超过 256 KiB，页面与 Cookie 目标须使用 HTTPS、同域名及端口，并通过插件网络权限检查；省略 `html` 保留原有加载远程网页登录方式。页面使用自己的浏览器网络栈和非持久 Cookie 库，达到 `until` 中的 Cookie 条件后把匹配目标路径的 Cookie 交给插件，是否保存由插件在线验证决定。
 
@@ -70,7 +70,7 @@ YouTube Music 0.1.6 使用 MB 自己的公开 iOS OAuth 客户端和 YouTube 权
 | --- | --- |
 | `MBiOS/` | App 入口、图标、系统配置、中英文资源 |
 | `Sources/MBFoundation/` | 来源协议、业务状态、网络、存储、原生播放、插件宿主 |
-| `Sources/MBBilibili/` | B 站合同、WBI、账号、发现、互动及媒体解析 |
+| 独立信息源插件 | 平台合同、签名、会话和媒体解析均在插件仓库，App 不内置平台适配器 |
 | `Sources/MBInterface/` | 手机/平板 SwiftUI 页面 |
 | `Sources/MBSignal/` | 音频响度及低音采样 |
 | `Sources/MBJavaScript/` | QuickJS C 桥与上游解释器 |

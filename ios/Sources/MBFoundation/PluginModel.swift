@@ -169,7 +169,7 @@ public enum PluginPreparation: Equatable {
         do {
             let repositories = try await starsRepositories(address)
             let existing = try await installer.installed()
-            var claimed: Set<String> = ["bilibili", "local"]
+            var claimed: Set<String> = ["local"]
             for repo in repositories {
                 try Task.checkCancellation()
                 do {
@@ -264,6 +264,7 @@ public enum PluginPreparation: Equatable {
         catch { errorMessage = error.localizedDescription }
     }
     private func source(_ plugin: InstalledPlugin) async throws -> PluginSource {
+        try LegacyPluginStorage.migrate(plugin)
         let settings = try await installer.settings(for: plugin)
         return PluginSource(manifest: plugin.manifest, runtime: try PluginRuntime(directory: plugin.directory, dataDirectory: plugin.dataDirectory, manifest: plugin.manifest, settings: settings, webSignIn: { [ui] request in try await ui.show(request) }, oauthSignIn: { [ui] request in try await ui.authorize(request) }, openURL: { [ui] url, title in await ui.open(url, title: title) }))
     }

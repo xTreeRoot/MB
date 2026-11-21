@@ -459,23 +459,19 @@ internal class PlaybackService : MediaLibraryService() {
             app.settings.values.map { it.quality }.distinctUntilChanged().drop(1).collect { preloader.cancel(); refreshPrefetch() }
         }
         scope.launch {
-            app.settings.values.map { it.builtInEnabled }.distinctUntilChanged().collect { enabled ->
-                val track = player.currentMediaItem?.track()
-                if (!enabled && track?.sourceId == app.bilibili.id && synchronized(locations) { locations[track.id]?.file == null }) {
-                    player.pause()
-                    player.stop()
-                    synchronized(locations) { locations.remove(track.id) }
-                    cacheJob?.cancel()
-                }
-            }
-        }
-        scope.launch {
             combine(currentMedia, app.settings.values) { track, preferences ->
-                track?.takeIf { preferences.nowPlayingLyrics && (it.sourceId != app.bilibili.id || preferences.builtInEnabled) }
+                track?.takeIf { preferences.nowPlayingLyrics }
             }.distinctUntilChanged().collectLatest { track ->
                 sessionPlayer.showCaption(track?.id, null)
                 if (track == null) return@collectLatest
                 showSystemCaptions(app, track, player, sessionPlayer)
+            }
+        }
+        scope.launch {
+            combine(currentMedia, app.installedPlugins) { track, _ -> track }.collect { track ->
+                if (track != null && !app.acceptsTrack(track) && synchronized(locations) { locations[track.id]?.file == null }) {
+                    player.pause(); player.stop(); cacheJob?.cancel()
+                }
             }
         }
         app.videoPlayback.value = video

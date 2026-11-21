@@ -82,9 +82,8 @@ internal class PlaybackModel(application: Application) : AndroidViewModel(applic
     init {
         connect()
         viewModelScope.launch {
-            app.settings.values.map { it.builtInEnabled }.distinctUntilChanged().collect { publish() }
+            app.installedPlugins.collect { publish() }
         }
-        viewModelScope.launch { app.installedPlugins.collect { publish() } }
         viewModelScope.launch { app.stationStatus.collect { publish() } }
         viewModelScope.launch { app.trackPlaybackIssues.values.collect { publish() } }
         viewModelScope.launch { app.audioFocusBlockedTrack.collect { publish() } }

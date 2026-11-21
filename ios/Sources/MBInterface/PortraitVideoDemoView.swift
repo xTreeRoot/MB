@@ -1,0 +1,26 @@
+#if DEBUG
+import MBFoundation
+import SwiftUI
+
+/// 显式验收入口，只使用本地示例，发布构建不包含此页面。
+public struct PortraitVideoDemoView: View {
+    @State private var playback: PlaybackModel
+    @State private var video = VideoModel(source: nil)
+    @State private var library = LocalLibraryModel(store: LocalLibraryStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+    public init() {
+        let playback = PlaybackModel(source: nil, engine: NativeAudioEngine())
+        let tracks = ["竖屏示例一", "竖屏示例二"].enumerated().map { index, title in
+            var track = Track(sourceID: "preview", sourceTrackID: String(index), title: title, artist: "本地界面验收")
+            track.videoWidth = 1080; track.videoHeight = 1920; track.shortVideo = true
+            return track
+        }
+        playback.select(tracks, index: 0, autoplay: false)
+        _playback = State(initialValue: playback)
+    }
+    public var body: some View {
+        VideoPageView(video: video, playback: playback, interactionSource: DemoSource(), accountRevision: 0, openMusic: {}, saveResource: { _ in }, menu: { _ in AnyView(Text("示例歌单")) })
+            .task { video.updateTrack(playback.queue.current); video.watchCurrent() }
+            .onChange(of: playback.selectionRevision) { _, _ in video.updateTrack(playback.queue.current); video.watchCurrent() }
+    }
+}
+#endif

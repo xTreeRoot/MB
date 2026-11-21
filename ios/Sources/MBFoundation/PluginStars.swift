@@ -51,7 +51,7 @@ enum PluginStars {
             return true
         }
         guard let list else { throw PluginFailure.invalid(AppLocalization.text("没有找到 GitHub 星标仓库列表")) }
-        var result: [String] = [], seen: Set<String> = ["xtreeroot/mb", "xtreeroot/mb-plugin-template"]
+        var result: [String] = [], seen: Set<String> = ["xtreeroot/shanhaimusic", "xtreeroot/mb", "xtreeroot/mb-plugin-template"]
         visit(list.pointee.children) { node in
             guard name(node) == "a", let parent = node.pointee.parent, name(parent) == "h2",
                   attribute(parent, "class")?.split(whereSeparator: \.isWhitespace).contains("h3") == true,

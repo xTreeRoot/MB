@@ -72,7 +72,7 @@ internal class PluginManagerModel(application: Application) : AndroidViewModel(a
         mutable.update { it.copy(check = PluginCheck.Checking, importReport = null) }
         try {
             val repositories = app.pluginPackages.repositories(input)
-            val report = GitHubPluginImport(app.plugins, app.pluginPackages::latestRevision, app.pluginPackages::download, app.bilibili.id)
+            val report = GitHubPluginImport(app.plugins, app.pluginPackages::latestRevision, app.pluginPackages::download)
                 .run(repositories, ::reviewImport)
             mutable.update { it.copy(importReport = report) }
             app.refreshPlugins()

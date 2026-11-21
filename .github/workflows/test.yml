@@ -31,8 +31,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - name: Test Bilibili strategy
-        run: npm run test:bilibili
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

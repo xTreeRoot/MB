@@ -116,8 +116,6 @@ internal fun SettingsView(values: AppPreferences, update: ((AppPreferences) -> A
             item {
                 MBGroupedSection(mb("音源", "Sources")) {
                     MBFormRow(mb("插件", "Plugins"), disclosure = true, onClick = openPlugins)
-                    MBFormDivider()
-                    SettingSwitch(mb("启用内置音源", "Enable Built-in Source"), values.builtInEnabled) { value -> update { it.copy(builtInEnabled = value) } }
                 }
             }
             item { MBGroupedSection(mb("山海服务", "Shanhai Server")) { MBFormRow(mb("接入节点", "Connect to Node"), disclosure = true, onClick = { node = true }) } }

@@ -1,6 +1,6 @@
 # MB 插件：音视频断点流播适配方案
 
-配套文档：[宿主 App 改造方案](streaming-host.md)。本文按内置 B 站和四个 GitHub 插件的已核对源码写，区分现状和待改项。**插件只管拿到可播且可重新解析的资源；不存断点、不代播放器发分段请求、不写第二套播放器。**
+配套文档：[宿主 App 改造方案](streaming-host.md)。本文记录哔哩哔哩和四个 GitHub 插件的流播契约与历史适配依据，区分现状和待改项。**插件只管拿到可播且可重新解析的资源；不存断点、不代播放器发分段请求、不写第二套播放器。**
 
 ## 1. 继续使用现有契约
 
@@ -14,9 +14,9 @@
 
 ## 2. 五个插件分别怎么改
 
-### 内置 B 站：两条 DASH 轨，优先验证同一个 `cid`
+### 外部哔哩哔哩插件：两条 DASH 轨，优先验证同一个 `cid`
 
-- **现状**：[`index.js`](../plugins/builtin/bilibili/index.js#L787) 通过既有 `playbackInfo` 解析 DASH，`stream` 取音轨，`video` 优先取接近 720p 的 AVC。桌面走内置 JS；[iOS](../ios/Sources/MBBilibili/BilibiliPlayback.swift#L6) 和 [Android](../android/app/src/main/java/com/xtreeroot/mb/bilibili/BilibiliSource.kt#L110) 各有现成原生适配，不能只改 JS 就算三端完成。
+- **实现归属**：[独立哔哩哔哩插件](https://github.com/xTreeRoot/mygo-music-bilibili) 负责平台请求、DASH 解析、账号与字幕；三端统一通过插件宿主调用，不再把平台实现编译或嵌入 App。以下流播校验在独立插件仓库执行，宿主只保留通用媒体能力。
 - **待改**：保留现有真实接口和请求头。恢复时重新解析同一内容，两条轨都来自同一个 `cid`；对照各端档位选择，确认重取返回实际对应的音频轨和视频编码。若要合并同一轮并发的 `playbackInfo`，只合并同内容、同会话的进行中请求，不缓存失败和已完成的签名结果。不为了传 `cid` 改所有插件协议；平台适配器内部校验即可。
 - **待验**：公有样本分别做音轨和视频轨非零 Range、签名重取、分轨解码。若主地址不稳定，才考虑适配器提供经过验证的响应内 `backup_url`；首版不依赖备用地址，不能猜 CDN 域名，也不能拿备用地址相似性判断字节等同。
 

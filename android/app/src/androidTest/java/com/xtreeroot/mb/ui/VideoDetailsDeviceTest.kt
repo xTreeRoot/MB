@@ -51,6 +51,9 @@ class VideoDetailsDeviceTest {
     private val app = instrumentation.targetContext.applicationContext as MBApplication
 
     @Test fun portraitResourcesUseTallPictureAndOpenCommentsCaptionsAndSave() = runBlocking {
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
         val id = "portrait-ui-${UUID.randomUUID()}"
         val plugin = app.plugins.install(app.plugins.prepareZip { fixtureZip(id).inputStream() })
         var activity: MainActivity? = null
@@ -61,9 +64,10 @@ class VideoDetailsDeviceTest {
             activity = screen
             withContext(Dispatchers.Main) {
                 val player = ViewModelProvider(screen)[PlaybackModel::class.java]
+                val preferences = app.settings.values.value
                 screen.setContent { com.xtreeroot.mb.ui.components.MBTheme(true) {
                     CompositionLocalProvider(LocalMBEnglish provides true) {
-                        VideoDetailsScreen(player, PlaybackState(tracks = listOf(track), index = 0), app.settings.values.value,
+                        VideoDetailsScreen(player, PlaybackState(tracks = listOf(track), index = 0), preferences,
                             accountId = null, fullScreen = false, setFullScreen = {}, browse = {}, chooseMode = {})
                     }
                 } }
@@ -387,7 +391,7 @@ class VideoDetailsDeviceTest {
             activity = screen
             val player = withContext(Dispatchers.Main) {
                 app.settings.update { it.copy(language = AppLanguage.English, playbackMode = PlaybackMode.Music,
-                    builtInEnabled = false, selectedSourceId = id) }
+                    selectedSourceId = id) }
                 ViewModelProvider(screen)[PlaybackModel::class.java].also {
                     model = it
                     it.play(tracks, tracks.last())
@@ -457,7 +461,9 @@ class VideoDetailsDeviceTest {
         fun visit(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> =
             listOf(node).filter { it.isVisibleToUser && (it.text?.toString() == text || it.contentDescription?.toString() == text) } +
                 (0 until node.childCount).flatMap { node.getChild(it)?.let(::visit).orEmpty() }
-        return instrumentation.uiAutomation.rootInActiveWindow?.let(::visit).orEmpty()
+        val roots = listOfNotNull(instrumentation.uiAutomation.rootInActiveWindow) +
+            instrumentation.uiAutomation.windows.mapNotNull { it.root }.filter { it.packageName == app.packageName }
+        return roots.flatMap(::visit)
     }
 
     private suspend fun await(text: String, condition: (AccessibilityNodeInfo) -> Boolean = { true }) {

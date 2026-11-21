@@ -207,7 +207,7 @@ struct PluginCatalogPage: View {
             let page: PluginBrowse, hasMore: Bool, count: Int
             switch request {
             case .home: page = try await source.home(); hasMore = false; count = 0
-            case .browse(let value): page = try await source.browse(value); hasMore = false; count = 0
+            case .browse(let value): (page, hasMore, count) = try await source.browsePage(value, offset: append ? offset : 0)
             case .collection(let method, _): (page, hasMore, count) = try await source.collection(method, offset: append ? offset : 0)
             case .entity(let item): (page, hasMore, count) = try await source.entity(item, offset: append ? offset : 0)
             case .search(let query, let kind): (page, hasMore, count) = try await source.searchCatalog(query, kind: kind, offset: append ? offset : 0)

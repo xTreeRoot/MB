@@ -47,7 +47,7 @@ func PrepareCatalogPackage(ctx context.Context, catalog *edge.Catalog, entry edg
 }
 
 func (p *Plugin) SessionMigrator() edge.Migrator {
-	if !p.bundled || !p.Can("exportSession") || !p.Can("validateSession") || !p.Can("commitSession") {
+	if !p.Can("exportSession") || !p.Can("validateSession") || !p.Can("commitSession") {
 		return nil
 	}
 	return p

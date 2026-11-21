@@ -44,7 +44,7 @@ class PluginInstallerTest {
             val repository = remote.archive.path.removePrefix("/")
             downloaded += repository
             zip(archive, files(if (repository.startsWith("xTreeRoot/")) "similar" else "other-owner"))
-        }, "bilibili")
+        })
         val sameName = "other/mb-plugin-template"
         val similarName = "xTreeRoot/mb-plugin-template-player"
         val mixedCaseTemplate = "XtReErOoT/MB-PLUGIN-TEMPLATE"
@@ -81,22 +81,22 @@ class PluginInstallerTest {
                 "example/reserved" -> zip(archive, files("bilibili"))
                 else -> zip(archive, files("new"))
             }
-        }, "bilibili")
+        })
         val repositories = listOf("xtreeroot/mb", "xtreeroot/shanhaimusic", "example/overwrite", "example/bad", "example/reserved", "example/duplicate", "example/last")
         var reviews = 0
         val report = batch.run(repositories) { candidates ->
             reviews++
-            assertEquals(listOf("same", "new"), candidates.map { it.manifest.id })
+            assertEquals(listOf("same", "bilibili", "new"), candidates.map { it.manifest.id })
             assertEquals(old.revision, installer.installed().single().revision)
             true
         }
         assertEquals(1, reviews)
         assertEquals(repositories.drop(2), downloaded)
         assertEquals(listOf("xtreeroot/mb", "xtreeroot/shanhaimusic"), report.skipped)
-        assertEquals(listOf("example/bad", "example/reserved", "example/duplicate"), report.failures.map { it.pluginName })
-        assertEquals(2, report.installed.size)
+        assertEquals(listOf("example/bad", "example/duplicate"), report.failures.map { it.pluginName })
+        assertEquals(3, report.installed.size)
         val installed = installer.installed().associateBy { it.id }
-        assertEquals(setOf("same", "new"), installed.keys)
+        assertEquals(setOf("same", "bilibili", "new"), installed.keys)
         val overwritten = installed.getValue("same")
         assertFalse(old.revision == overwritten.revision)
         assertEquals("example/overwrite", overwritten.repository)
@@ -164,7 +164,7 @@ class PluginInstallerTest {
         val installer = PluginInstaller(root)
         val old = installer.install(installer.prepareArchive("owner/original") { zip(it, files()) })
         val importer = GitHubPluginImport(installer, { GitHubPluginRevision("sha", URI("https://github.com/$it")) },
-            { _, file -> zip(file, files()) }, "bilibili")
+            { _, file -> zip(file, files()) })
         val report = importer.run(listOf("other/conflicting")) { fail("Source conflict must fail before review"); true }
         assertEquals(1, report.failures.size)
         assertEquals(old.revision, installer.installed().single().revision)

@@ -108,6 +108,27 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], isolati
     }
 }
 
+@Test func pluginParsesLargePublicResponsesWithoutRelaxingExportLoopProtection() async throws {
+    try await withPlugin("""
+    export async function parse() {
+      const value = await (await fetch('https://api.example.test/large')).json();
+      return value.rows.filter(row => row.title.includes('fixture')).length;
+    }
+    export function loop() { while (true) {} }
+    export function ok() { return 42; }
+    """) { _, root, manifest in
+        let body = try JSONSerialization.data(withJSONObject: ["rows": Array(repeating: ["title": String(repeating: "fixture", count: 20)], count: 7_000)])
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, transport: { request, _ in
+            (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+        #expect(try await runtime.invoke("parse") == .number(7_000))
+        let started = ContinuousClock.now
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("loop") }
+        #expect(ContinuousClock.now - started < .seconds(2))
+        #expect(try await runtime.invoke("ok") == .number(42))
+    }
+}
+
 @Test func pluginCancellationStopsPendingTimerAndDoesNotBlockNextInvocation() async throws {
     try await withPlugin("export async function wait(){await new Promise(resolve=>setTimeout(resolve,60000));return 1;} export function ok(){return 2;}") { runtime, _, _ in
         let operation = Task { try await runtime.invoke("wait", timeout: .seconds(90)) }
@@ -460,5 +481,22 @@ private actor PluginRedirectFixture {
         let first = try await source.home(), second = try await source.home()
         #expect(first.sections.first?.tracks.first?.title == "1")
         #expect(second.sections.first?.tracks.first?.title == "2")
+    }
+}
+
+@Test func pagedBrowsePreservesPortraitAndResourceMetadata() async throws {
+    try await withPlugin("""
+    export function browse({offset}) { return {sections:[{tracks:[{id:String(offset),name:'Portrait',video:{width:1080,height:1920,short:true}}]}],more:offset===0}; }
+    export function searchResources({query,offset}) { return {tracks:[{id:String(offset),name:query,resourceType:'software',resourceUrl:'https://example.test/file'}],more:false}; }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let (first, more, count) = try await source.browsePage("shorts")
+        #expect(more && count == 1 && first.sections.first?.tracks.first?.videoHeight == 1920)
+        #expect(first.sections.first?.tracks.first?.shortVideo == true)
+        let (next, again, _) = try await source.browsePage("shorts", offset: count)
+        #expect(!again && next.sections.first?.tracks.first?.sourceTrackID == "1")
+        let resource = try await source.searchResources(query: "Query", page: 2)
+        #expect(resource.tracks.first?.sourceTrackID == "30" && resource.tracks.first?.resourceType == "software")
+        #expect(resource.tracks.first?.resourceURL?.scheme == "https")
     }
 }

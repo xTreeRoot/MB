@@ -163,7 +163,8 @@ public actor PluginRuntime {
         events[completed.id] = nil
         do {
             let json = try completed.value.encoded()
-            let status = json.withCString { mbjs_settle(context.pointer, completed.id, completed.success ? 1 : 0, $0, 100) }
+            let budget: Int32 = json.utf8.count > 64 * 1024 ? 2_000 : 100
+            let status = json.withCString { mbjs_settle(context.pointer, completed.id, completed.success ? 1 : 0, $0, budget) }
             if status < 0 { backgroundFailure = readFailure(context) }
             else { try scheduleEvents(context) }
         } catch { backgroundFailure = error }

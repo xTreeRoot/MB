@@ -8,10 +8,16 @@ struct VideoPageView: View {
     let interactionSource: (any InteractionSource)?
     let accountRevision: Int
     let openMusic: () -> Void
+    var saveResource: (Track) -> Void = { _ in }
+    var menu: (Track) -> AnyView = { _ in AnyView(EmptyView()) }
     @State private var fullScreen = false
     @State private var chrome = VideoChromeState()
 
     var body: some View {
+        Group {
+        if video.aspectRatio < 1, let track = playback.queue.current {
+            PortraitVideoView(track: track, video: video, playback: playback, interactionSource: interactionSource, openMusic: openMusic, saveResource: saveResource, menu: menu)
+        } else {
         GeometryReader { geometry in
             let sideBySide = geometry.size.width >= 800 && geometry.size.width > geometry.size.height
             let layout = sideBySide ? AnyLayout(HStackLayout(alignment: .top, spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
@@ -22,6 +28,8 @@ struct VideoPageView: View {
                         .id("\(track.id):\(accountRevision)")
                 }
             }.accessibilityHidden(fullScreen)
+        }
+        }
         }.background(MBTheme.background, ignoresSafeAreaEdges: .bottom)
         .background(Color.black.ignoresSafeArea(edges: .top))
         #if os(iOS)
@@ -35,7 +43,7 @@ struct VideoPageView: View {
     private var picture: some View {
         VideoScreen(video: video, pictureVisible: !fullScreen)
             .modifier(VideoTapControls(chrome: chrome, playback: playback))
-            .aspectRatio(16 / 9, contentMode: .fit)
+            .aspectRatio(video.aspectRatio, contentMode: .fit)
             .overlay(alignment: .top) {
                 if chrome.visible { HStack {
                     Button { video.browse() } label: {

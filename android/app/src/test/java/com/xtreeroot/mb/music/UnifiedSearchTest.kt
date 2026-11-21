@@ -37,15 +37,4 @@ class UnifiedSearchTest {
         yield(); task.cancel()
         assertTrue(task.isCancelled)
     }
-    @Test fun knabenDecodesRealFieldsRejectsExecutableLinksAndKeepsPagination() {
-        val json = """{"hits":[{"id":"a","title":"Ubuntu","category":"PC / Unix","tracker":"Example","bytes":1048576,"seeders":8,"magnetUrl":"magnet:?xt=urn:btih:ABC","details":"https://example.org/item"},{"id":"bad","title":"Unsafe","link":"javascript:alert(1)"}],"total":{"value":31}}"""
-        val page = TorrentSearchSource.decode(json, 1)
-        val track = page.tracks.single()
-        assertEquals("software", track.resourceType)
-        assertEquals("knaben", track.sourceId)
-        assertEquals("https://example.org/item", track.pageUrl)
-        assertTrue(track.resourceUrl!!.startsWith("magnet:"))
-        assertTrue(page.hasMore)
-        assertFalse(TorrentSearchSource.decode(json, 2).hasMore)
-    }
 }

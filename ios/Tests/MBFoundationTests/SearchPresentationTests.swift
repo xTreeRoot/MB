@@ -30,17 +30,15 @@ private actor CombinedSearchFixture: MusicSource {
     #expect(await a.requested() == [1, 2])
 }
 
-@Test func torrentSearchParsesRealContractRejectsExecutableURLsAndClassifies() throws {
-    let data = Data("""
-    {"total":{"value":31},"hits":[
-      {"id":"linux","title":"Ubuntu","category":"PC / Unix","tracker":"Example","magnetUrl":"magnet:?xt=urn:btih:DAFC8C076CA2F3ED376EEAE7C76A0D6BE2415C45","bytes":1234,"seeders":10},
-      {"id":"bad","title":"Bad","link":"javascript:alert(1)"},
-      {"id":"song","title":"Song","category":"Audio / MP3","link":"https://knaben.org/live/dl/example"}]}
-    """.utf8)
-    let page = try TorrentSearchSource.decode(data, page: 1)
-    #expect(page.tracks.map(\.sourceTrackID) == ["linux", "song"] && page.hasMore)
-    #expect(page.tracks.map(\.resourceType) == ["software", "music"])
-    #expect(page.tracks.first?.resourceURL?.scheme == "magnet")
+@Test func magnetLinkImportsWithoutNetworkAndRejectsMalformedHashes() async throws {
+    let link = "magnet:?xt=urn:btih:30D1F776C01C1F67FA425D4FA683D0AFA21AA1E4&dn=Direct%20resource"
+    let page = try await TorrentSearchSource().search(query: link, page: 1)
+    #expect(page.tracks.first?.title == "Direct resource")
+    #expect(page.tracks.first?.resourceURL?.absoluteString == link && !page.hasMore)
+    #expect(try await TorrentSearchSource().search(query: link, page: 2).tracks.isEmpty)
+    #expect(TorrentSearchSource.directMagnet("magnet:?xt=urn:btih:broken") == nil)
+    #expect(TorrentSearchSource.directMagnet("magnet:?xt=urn:btih:" + String(repeating: "a", count: 40) + "\nextra") == nil)
+    #expect(TorrentSearchSource.directMagnet("magnet:?xt=urn:btmh:1220" + String(repeating: "a", count: 64)) != nil)
 }
 
 @Test func resourceBookmarksPersistAndReplaceWithoutTouchingPlaylists() async throws {
