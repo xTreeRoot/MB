@@ -11,6 +11,9 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
         if query == "error" { throw DemoFailure.network }
         if query == "empty" { return TrackPage(tracks: [], hasMore: false) }
         if query == "loading" { try await Task.sleep(for: .seconds(120)) }
+        if ProcessInfo.processInfo.arguments.contains("--demo-pagination") {
+            return TrackPage(tracks: paginationTracks(page), hasMore: page == 1)
+        }
         return TrackPage(tracks: page == 1 ? DemoCatalog.tracks : [], hasMore: false)
     }
 
@@ -29,6 +32,9 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
     }
     public func signOut() async throws { await accountState.signOut() }
     public func library(_ route: LibraryRoute, cursor: String?) async throws -> LibraryPage {
+        if ProcessInfo.processInfo.arguments.contains("--demo-pagination"), route == .liked {
+            return LibraryPage(title: route.title, tracks: paginationTracks(cursor == nil ? 1 : 2), nextCursor: cursor == nil ? "2" : nil)
+        }
         switch route {
         case .favorites: return LibraryPage(title: route.title, links: [LibraryLink(id: "folder", title: "音乐收藏 · 示例", subtitle: "3 个视频", route: .folder("folder"))])
         case .following: return LibraryPage(title: route.title, links: [LibraryLink(id: "up", title: "示例 UP 主", subtitle: "关注列表 · 演示数据", route: .creator("up"))])
@@ -42,6 +48,13 @@ public struct DemoSource: DiscoverySource, AccountSource, LibrarySource, Interac
     }
     public func postComment(trackID: String, text: String) async throws -> TrackComment {
         TrackComment(id: UUID().uuidString, author: "界面示例用户", text: text, date: Date(), likes: 0)
+    }
+
+    private func paginationTracks(_ page: Int) -> [Track] {
+        guard page <= 2 else { return [] }
+        return (page == 1 ? 1...18 : 19...21).map { index in
+            Track(sourceID: "demo", sourceTrackID: "page-\(index)", title: "分页示例 \(index)", artist: "MB 界面示例", durationMilliseconds: 180_000)
+        }
     }
 
 }
@@ -58,12 +71,12 @@ private actor DemoAccountState {
 enum DemoCatalog {
     static let comments = [
         TrackComment(id: "one", author: "示例听众", text: "慢下来，听见晚风里的片刻。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 128),
-        TrackComment(id: "two", author: "山海界面示例", text: "这是供界面验收使用的演示评论。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 36),
+        TrackComment(id: "two", author: "MB 界面示例", text: "这是供界面验收使用的演示评论。", date: Date(timeIntervalSince1970: 1_794_960_000), likes: 36),
     ]
     static let tracks = [
-        Track(sourceID: "demo", sourceTrackID: "night", title: "晚风里的片刻", artist: "山海界面示例", durationMilliseconds: 180_000),
-        Track(sourceID: "demo", sourceTrackID: "city", title: "城市慢下来", artist: "山海界面示例", durationMilliseconds: 210_000),
-        Track(sourceID: "demo", sourceTrackID: "rain", title: "雨落在窗沿", artist: "山海界面示例", durationMilliseconds: 160_000),
+        Track(sourceID: "demo", sourceTrackID: "night", title: "晚风里的片刻", artist: "MB 界面示例", durationMilliseconds: 180_000),
+        Track(sourceID: "demo", sourceTrackID: "city", title: "城市慢下来", artist: "MB 界面示例", durationMilliseconds: 210_000),
+        Track(sourceID: "demo", sourceTrackID: "rain", title: "雨落在窗沿", artist: "MB 界面示例", durationMilliseconds: 160_000),
     ].map { original in var track = original; track.artistID = "preview"; return track }
     static let timeline = CaptionTimeline(lines: [
         CaptionLine(startMilliseconds: 0, endMilliseconds: 4_000, text: "让晚风经过耳边"),
@@ -76,6 +89,7 @@ enum DemoCatalog {
 /// 演示资料与实际 App 沙盒资料库隔离；测试歌曲为程序生成的静音 WAV。
 @MainActor final class DemoLibrary {
     var pluginDirectory: URL { directory.appendingPathComponent("plugins") }
+    var skinDirectory: URL { directory.appendingPathComponent("background-skin") }
     let media: MediaLibrary
     let store: LocalLibraryStore
     private let directory: URL
@@ -85,17 +99,18 @@ enum DemoCatalog {
         media = MediaLibrary(directory: directory.appendingPathComponent("media"))
         store = LocalLibraryStore(directory: directory)
     }
-    func pluginFixture() throws -> URL {
+    func pluginFixture(includeTrackProblems: Bool = false) throws -> URL {
         let folder = directory.appendingPathComponent("plugin")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let manifest = #"{"id":"fixture","name":"示例插件","version":"1.0.0","minAppVersion":"0.1.0","settings":[{"key":"server","label":"服务地址","type":"text"},{"key":"enabled","label":"启用示例","type":"boolean"}],"permissions":{"network":["media.example.test"]},"navigation":[{"title":"示例分页","page":"more"}]}"#
+        let manifest = #"{"id":"fixture","name":"示例插件","version":"1.0.0","minAppVersion":"0.1.0","settings":[{"key":"server","label":"服务地址","type":"text"},{"key":"enabled","label":"启用示例","type":"boolean"}],"permissions":{"network":["media.example.test"]},"navigation":[{"title":"示例曲目","page":"duplicate"},{"title":"示例分页","page":"more"}]}"#
         try manifest.write(to: folder.appendingPathComponent("plugin.json"), atomically: true, encoding: .utf8)
-        let script = #"""
+        let script = (includeTrackProblems ? "const extraTracks = [{id:'vip',name:'会员示例曲目',unavailableReason:'vip'}, {id:'missing',name:'无音源示例曲目'}];\n" : "const extraTracks = [];\n") + #"""
         let listName='示例歌单', listTracks=[];
         const track = {id:'sample',name:'插件示例歌曲',artists:[{id:'artist',name:'示例作者'}],album:{},duration:180000};
-        export function home(){return {title:'示例插件首页',sections:[{title:'示例曲目',tracks:[track],links:[{title:'更多示例',page:'more'}],albums:[{id:'al',name:'示例专辑'}],artists:[{id:'ar',name:'示例作者'}],playlists:[{id:'pl',name:listName,mine:true}],shows:[{id:'sh',name:'示例播客'}],stations:[{id:'st',name:'示例电台'}]}]};}
-        export function browse({page}){return {title:'示例分页',sections:[{title:'分页曲目',tracks:[track]}]};}
+        export function home(){return {title:'示例插件首页',sections:[{title:'示例曲目',tracks:[track,...extraTracks],links:[{title:'更多示例',page:'more'}],albums:[{id:'al',name:'示例专辑'}],artists:[{id:'ar',name:'示例作者'}],playlists:[{id:'pl',name:listName,mine:true}],shows:[{id:'sh',name:'示例播客'}],stations:[{id:'st',name:'示例电台'}]}]};}
+        export function browse({page}){return {title:page==='duplicate'?'相同导航完整内容':'示例分页',sections:[{title:'分页曲目',tracks:[track]}]};}
         export function search({query,kind}){return {tracks:kind==='tracks'?[{...track,name:query+' · 插件结果'}]:[],albums:kind==='albums'?[{id:'al',name:'示例专辑'}]:[],artists:kind==='artists'?[{id:'ar',name:'示例作者'}]:[],playlists:kind==='playlists'?[{id:'pl',name:listName,mine:true}]:[],shows:kind==='shows'?[{id:'sh',name:'示例播客'}]:[],more:false};}
+        export function searchVideos({query,offset}){return offset===0?{tracks:[{...track,id:'sample-video',name:query+' · 视频结果'},{}],more:true}:offset===2?{tracks:[{...track,id:'sample-video-next',name:query+' · 更多视频'}],more:false}:{tracks:[],more:false};}
         export function album(){return {album:{id:'al',name:'示例专辑',description:'专辑详情 · 演示数据'},tracks:[track]};}
         export function artist(){return {artist:{id:'ar',name:'示例作者'},tracks:[track]};}
         export function playlist(){return {playlist:{id:'pl',name:listName,mine:true},tracks:listTracks};}
@@ -117,7 +132,7 @@ enum DemoCatalog {
         export function followArtist(){}
         export function subscribeShow(){}
         export function savePlaylist(){}
-        export function stream(){return {url:'https://media.example.test/sample.mp3',type:'mp3'};}
+        export function stream({id}){return id==='missing'?{url:''}:{url:'https://media.example.test/sample.mp3',type:'mp3'};}
         """#
         try script.write(to: folder.appendingPathComponent("index.js"), atomically: true, encoding: .utf8)
         return folder
@@ -137,9 +152,9 @@ enum DemoCatalog {
             try bytes.write(to: file)
             var tracks: [Track] = []
             for (index, original) in DemoCatalog.tracks.enumerated() {
-                var track = Track(sourceID: "local", sourceTrackID: original.sourceTrackID, title: original.title, artist: "山海界面示例", durationMilliseconds: 1_000)
+                var track = Track(sourceID: "local", sourceTrackID: original.sourceTrackID, title: original.title, artist: "MB 界面示例", durationMilliseconds: 1_000)
                 track.localFileID = original.sourceTrackID
-                track.localMetadata = LocalAudioMetadata(album: "城市的声音 · 示例", albumArtist: "山海界面示例", trackNumber: index + 1, folderID: "preview")
+                track.localMetadata = LocalAudioMetadata(album: "城市的声音 · 示例", albumArtist: "MB 界面示例", trackNumber: index + 1, folderID: "preview")
                 try await media.saveDownload(file: file, track: track)
                 tracks.append(track)
             }
@@ -154,7 +169,7 @@ enum DemoCatalog {
 
 #if DEBUG
 import SwiftUI
-#Preview("山海本地示例") { MBRootView(source: DemoSource(), demo: true) }
+#Preview("MB 本地示例") { MBRootView(source: DemoSource(), demo: true) }
 #endif
 
 

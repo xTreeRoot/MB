@@ -5,11 +5,19 @@ struct SettingsView: View {
     @Bindable var preferences: PreferencesModel
     let network: NetworkSettingsModel
     let plugins: PluginModel
+    let skin: BackgroundSkin
+    @Bindable var platformData: PlatformDataModel
+    let account: SourceAccount?
+    let platform: String
     @Environment(\.dismiss) private var dismiss
     @State private var clearingHistory = false
+    @State private var appUpdates = AppUpdateModel()
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink("检查版本") { AppUpdateView(model: appUpdates) }.accessibilityIdentifier("settings-app-updates")
+                }
                 Section("显示") {
                     Picker("语言", selection: $preferences.values.language) {
                         ForEach(AppLanguage.allCases) { language in Text(LocalizedStringKey(language.title)).tag(language) }
@@ -17,6 +25,25 @@ struct SettingsView: View {
                     Picker("外观", selection: $preferences.values.appearance) {
                         ForEach(AppAppearance.allCases) { mode in Text(LocalizedStringKey(mode.title)).tag(mode) }
                     }
+                    NavigationLink("背景皮肤") { BackgroundSkinSettings(skin: skin) }
+                        .accessibilityIdentifier("background-skin-settings")
+                }
+                Section {
+                    NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
+                    Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
+                } header: { Text("音源") }
+                Section("MB Server") {
+                    TextField("HTTPS 节点地址", text: $platformData.address).autocorrectionDisabled()
+                    SecureField("节点密码", text: $platformData.password)
+                    Button(platformData.linked ? "重新接入" : "接入节点") { Task { await platformData.join() } }
+                        .disabled(platformData.busy || platformData.password.isEmpty || platformData.address.isEmpty)
+                    if platformData.linked {
+                        Text(platformData.authorized ? "已绑定" : "授权已过期").foregroundStyle(.secondary)
+                        Button("同步当前平台资料") { platformData.sync(account, platform: platform, publish: true) }
+                            .disabled(platformData.busy || !platformData.authorized || account == nil)
+                        Button("解除此设备绑定", role: .destructive) { Task { await platformData.unlink() } }.disabled(platformData.busy)
+                    }
+                    if let message = platformData.message { Text(message).foregroundStyle(.secondary) }
                 }
                 Section("播放") {
                     Picker("音质", selection: $preferences.values.quality) {
@@ -29,11 +56,11 @@ struct SettingsView: View {
                     HStack { Text("应用音量"); Spacer(); Text("\(Int(preferences.values.volume * 100))%").monospacedDigit().foregroundStyle(.secondary) }
                 }
                 Section {
-                    Toggle("在歌手栏显示当前歌词", isOn: $preferences.values.nowPlayingLyrics)
+                    Toggle("在主标题显示当前歌词", isOn: $preferences.values.nowPlayingLyrics)
                 } header: {
                     Text("CarPlay 与锁屏")
                 } footer: {
-                    Text("保留歌名，按播放时间逐句更新歌词；无歌词时显示歌手。")
+                    Text("主标题按播放时间逐句更新歌词，副标题显示歌名；无歌词时主标题显示歌名。")
                 }
                 Section("缓存") {
                     Picker("缓存上限", selection: $preferences.values.cacheMegabytes) {
@@ -57,8 +84,6 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("启用内置音源", isOn: $preferences.values.builtInEnabled)
-                    NavigationLink("插件") { PluginsView(model: plugins) }.accessibilityIdentifier("settings-plugins")
                     NavigationLink("网络与系统代理") { NetworkSettingsView(model: network) }
                     Button("清空搜索记录", role: .destructive) { clearingHistory = true }.disabled(preferences.values.searchHistory.isEmpty)
                 }
@@ -70,5 +95,6 @@ struct SettingsView: View {
                 Button("清空搜索记录", role: .destructive) { preferences.values.searchHistory = [] }
             }
         }.id(preferences.values.language).accessibilityIdentifier("settings-sheet")
+            .modifier(PluginPreparationPresentation(model: plugins))
     }
 }

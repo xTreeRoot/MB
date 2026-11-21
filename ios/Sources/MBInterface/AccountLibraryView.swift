@@ -3,6 +3,8 @@ import MBFoundation
 import SwiftUI
 
 struct AccountLibraryView: View {
+    @Environment(\.sourceNames) private var sourceNames
+    private var platformName: String { plugin.flatMap { sourceNames[$0.manifest.id] } ?? account.displayName }
     let account: AccountModel
     var plugin: PluginSource?
     let source: (any LibrarySource)?
@@ -19,15 +21,15 @@ struct AccountLibraryView: View {
             List {
                 Section {
                     HStack(spacing: 16) {
-                        PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL).frame(width: 64, height: 64)
+                        PersonArtwork(name: account.account?.name ?? "M", url: account.account?.avatarURL, headers: account.account?.avatarHeaders ?? [:], sourceID: account.displayName).frame(width: 64, height: 64)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(account.account?.name ?? AppLocalization.text("我的音乐")).font(.title2.bold())
-                            Text(account.displayName).font(.subheadline).foregroundStyle(.secondary)
+                            Text(platformName).font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 0)
                     }.padding(.vertical, 18)
                     if account.account == nil, account.available {
-                        Button("登录\(account.displayName)", systemImage: "qrcode.viewfinder") { showingSignIn = true; account.signIn() }
+                        Button("登录\(platformName)", systemImage: "qrcode.viewfinder") { showingSignIn = true; account.signIn() }
                             .buttonStyle(.borderedProminent).frame(minHeight: 44)
                     }
                     if let user = account.account, source != nil { NavigationLink("我的投稿", value: LibraryRoute.creator(user.id)) }
@@ -51,9 +53,11 @@ struct AccountLibraryView: View {
                 if account.account != nil { Section { Button("退出登录", role: .destructive) { Task { await account.signOut() } } } }
             }
             .modifier(MusicGroupedList())
+            .modifier(SkinSurface(list: true, base: MBTheme.grouped))
             // 导航容器外的迷你播放器不计入 List 的滚动内容边距。
             .contentMargins(.bottom, playback.queue.current == nil ? 0 : 76, for: .scrollContent)
-            .navigationTitle("我的")
+            .navigationTitle("")
+            .modifier(CompactRootNavigation())
             .toolbar { ToolbarItem(placement: .primaryAction) { Button("设置", systemImage: "gearshape") { openSettings() }.labelStyle(.iconOnly).accessibilityIdentifier("open-settings") } }
             .navigationDestination(for: LibraryRoute.self) { route in
                 if let source {
@@ -111,6 +115,7 @@ struct LibraryPageView: View {
     @State private var model: LibraryModel
     let select: ([Track], Int) -> Void
     let menu: (Track) -> AnyView
+    @State private var artworkPrefetch: Task<Void, Never>?
     init(source: any LibrarySource, route: LibraryRoute, select: @escaping ([Track], Int) -> Void, menu: @escaping (Track) -> AnyView = { _ in AnyView(EmptyView()) }) {
         _model = State(initialValue: LibraryModel(source: source, route: route)); self.select = select
         self.menu = menu
@@ -120,7 +125,9 @@ struct LibraryPageView: View {
             ForEach(model.links) { link in
                 NavigationLink(value: link.route) {
                     HStack {
-                        Image(systemName: link.route.isCreator ? "person.crop.circle" : "folder").font(.title2).frame(width: 40)
+                        if let url = link.imageURL {
+                            ArtworkView(track: Track(sourceID: model.sourceID, sourceTrackID: link.id, title: link.title, artist: "", artworkURL: url, durationMilliseconds: 0))
+                        } else { Image(systemName: link.route.isCreator ? "person.crop.circle" : "folder").font(.title2).frame(width: 40) }
                         VStack(alignment: .leading, spacing: 4) {
                             Text(link.title)
                             if !link.subtitle.isEmpty { Text(link.subtitle).font(.caption).foregroundStyle(.secondary) }
@@ -134,6 +141,7 @@ struct LibraryPageView: View {
             ForEach(Array(model.tracks.enumerated()), id: \.element.id) { index, track in
                 HStack(spacing: 4) {
                     Button { select(model.tracks, index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
+                        .modifier(TrackProblemAccessibility(track: track))
                     Menu { menu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                 }.contextMenu { menu(track) }
             }
@@ -145,14 +153,25 @@ struct LibraryPageView: View {
             else if model.tracks.isEmpty && model.links.isEmpty && model.errorMessage == nil {
                 ContentUnavailableView("暂无内容", systemImage: "tray")
             }
-            if model.nextCursor != nil {
-                Button("加载更多") { Task { await model.loadMore() } }.disabled(model.isLoading)
+            if let cursor = model.nextCursor {
+                PaginationFooter(page: "\(model.paginationGeneration):\(cursor)", loading: model.isLoading, blocked: model.errorMessage != nil) {
+                    await model.loadMore(); prefetchArtwork()
+                }
             }
         }
         .listStyle(.plain)
+        .modifier(PaginationViewport())
         .navigationTitle(Text(LocalizedStringKey(model.title)))
-        .task { await model.refresh() }
-        .refreshable { await model.refresh() }
+        .task { await model.restore(); prefetchArtwork() }
+        .onDisappear { artworkPrefetch?.cancel() }
+        .refreshable { await model.refresh(); prefetchArtwork() }
+    }
+    private func prefetchArtwork() {
+        artworkPrefetch?.cancel()
+        let images = model.tracks + model.links.map { link in
+            Track(sourceID: model.sourceID, sourceTrackID: link.id, title: link.title, artist: "", artworkURL: link.imageURL, durationMilliseconds: 0)
+        }
+        artworkPrefetch = Task { await ArtworkCache.shared.prefetch(images) }
     }
 }
 

@@ -5,8 +5,9 @@ public struct SourceAccount: Identifiable, Equatable, Sendable {
     public let name: String
     public let avatarURL: URL?
     public let page: String?
-    public init(id: String, name: String, avatarURL: URL? = nil, page: String? = nil) {
-        self.id = id; self.name = name; self.avatarURL = avatarURL; self.page = page
+    public let avatarHeaders: [String: String]
+    public init(id: String, name: String, avatarURL: URL? = nil, page: String? = nil, avatarHeaders: [String: String] = [:]) {
+        self.id = id; self.name = name; self.avatarURL = avatarURL; self.page = page; self.avatarHeaders = avatarHeaders
     }
 }
 
@@ -22,7 +23,7 @@ public protocol AccountSource: MusicSource {
     func signOut() async throws
 }
 
-public enum LibraryRoute: Hashable, Sendable {
+public enum LibraryRoute: Hashable, Codable, Sendable {
     case favorites, liked, history, following, folder(String), creator(String)
     public var title: String {
         switch self {
@@ -36,7 +37,7 @@ public enum LibraryRoute: Hashable, Sendable {
     }
 }
 
-public struct LibraryLink: Identifiable, Equatable, Sendable {
+public struct LibraryLink: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let title: String
     public let subtitle: String
@@ -47,7 +48,7 @@ public struct LibraryLink: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct LibraryPage: Sendable {
+public struct LibraryPage: Codable, Sendable {
     public let title: String
     public let tracks: [Track]
     public let links: [LibraryLink]
@@ -59,6 +60,10 @@ public struct LibraryPage: Sendable {
 
 public protocol LibrarySource: MusicSource {
     func library(_ route: LibraryRoute, cursor: String?) async throws -> LibraryPage
+    func invalidateLibraryCache() async
+}
+public extension LibrarySource {
+    func invalidateLibraryCache() async {}
 }
 
 public struct TrackComment: Identifiable, Equatable, Sendable {

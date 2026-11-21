@@ -206,3 +206,45 @@ func qrCookieRejectsUntrustedCallback(_ callback: String) throws {
     await #expect(throws: BilibiliError.signInRequired) { try await source.library(.favorites, cursor: nil) }
     #expect(await routes.calls.isEmpty)
 }
+
+@Test func personalLibraryReusesAllPagesUntilRefreshAndSignOutCannotReadCachedLikes() async throws {
+    let routes = AccountRoutes([
+        "/x/web-interface/nav": [loggedIn],
+        "/x/space/like/video": [#"{"code":0,"data":{"list":[{"bvid":"BVcached","title":"已缓存","pic":"//i0.hdslb.com/c.jpg","duration":61,"owner":{"mid":8,"name":"作者"}}]}}"#],
+    ])
+    let source = accountSource(routes, store: SessionMemory(BilibiliSession(cookie: testCookie, active: true)))
+    let first = try await source.library(.liked, cursor: nil)
+    let again = try await source.library(.liked, cursor: nil)
+    #expect(first.tracks.map(\.id) == again.tracks.map(\.id))
+    #expect(await routes.calls.filter { $0.url?.path == "/x/space/like/video" }.count == 1)
+    await source.invalidateLibraryCache()
+    _ = try await source.library(.liked, cursor: nil)
+    #expect(await routes.calls.filter { $0.url?.path == "/x/space/like/video" }.count == 2)
+    try await source.signOut()
+    await #expect(throws: BilibiliError.signInRequired) { try await source.library(.liked, cursor: nil) }
+}
+
+@Test func personalLibraryDoesNotPersistRowsArrivingAfterSignOut() async throws {
+    let gate = PollGate()
+    let store = SessionMemory(BilibiliSession(cookie: testCookie, active: true))
+    let source = BilibiliSource(transport: { request in
+        let url = try #require(request.url)
+        let body: String
+        if url.path == "/x/web-interface/nav" { body = loggedIn }
+        else {
+            #expect(url.path == "/x/space/like/video")
+            await gate.pause()
+            body = #"{"code":0,"data":{"list":[]}}"#
+        }
+        return (Data(body.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
+    }, now: { Date(timeIntervalSince1970: 1_702_204_169) }, sessionStore: store)
+    let pending = Task { try await source.library(.liked, cursor: nil) }
+    await gate.wait()
+    try await source.signOut()
+    await gate.release()
+    await #expect(throws: CancellationError.self) { try await pending.value }
+    let route = String(decoding: try JSONEncoder().encode(LibraryRoute.liked), as: UTF8.self)
+    let key = ResponseCache.key(["user:42", route, ""])
+    let result = try await source.libraryCache.data(key: key, lifetime: 3600) { Data("new".utf8) }
+    #expect(result == Data("new".utf8))
+}

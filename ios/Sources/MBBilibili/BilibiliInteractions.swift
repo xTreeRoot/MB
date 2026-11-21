@@ -13,6 +13,7 @@ extension BilibiliSource {
         _ = try await requireAccount()
         let detail = try await detail(trackID)
         let _: EmptyActionDTO? = try await post(path: "/x/web-interface/archive/like", fields: ["aid": detail.aid.value, "like": enabled ? "1" : "2"])
+        await invalidateLibraryCache()
     }
 
     public func comments(trackID: String, page: Int) async throws -> CommentPage {

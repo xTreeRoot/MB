@@ -40,16 +40,15 @@ static void result(MBJSRuntime *r, const char *value) {
 static int failure(MBJSRuntime *r, JSValue value, const char *fallback) {
     const char *message = JS_ToCString(r->context, value);
     result(r, message ? message : fallback);
-    if (message) JS_FreeCString(r->context, message);
-    else JS_FreeValue(r->context, JS_GetException(r->context));
+    JS_FreeCString(r->context, message);
+    if (!message) JS_FreeValue(r->context, JS_GetException(r->context));
     if (JS_IsObject(value)) {
         JSValue code = JS_GetPropertyStr(r->context, value, "code");
         if (JS_IsString(code)) {
             const char *text = JS_ToCString(r->context, code);
-            if (text) {
-                r->error_code = strdup(text);
-                JS_FreeCString(r->context, text);
-            } else JS_FreeValue(r->context, JS_GetException(r->context));
+            if (text) r->error_code = strdup(text);
+            else JS_FreeValue(r->context, JS_GetException(r->context));
+            JS_FreeCString(r->context, text);
         } else if (JS_IsException(code)) {
             JS_FreeValue(r->context, JS_GetException(r->context));
         }

@@ -13,11 +13,66 @@ struct ArtworkView: View {
     }
 }
 
+struct VideoArtwork: View {
+    let track: Track
+
+    var body: some View {
+        RemoteArtwork(track: track).aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(alignment: .bottomTrailing) {
+                if track.durationMilliseconds > 0 {
+                    Text(TimeLabel.string(milliseconds: track.durationMilliseconds)).font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white).padding(4).background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4)).padding(5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .accessibilityHidden(true)
+    }
+}
+
+struct VideoTrackGrid: View {
+    let tracks: [Track]
+    let select: ([Track], Int) -> Void
+    let menu: (Track) -> AnyView
+    var includeArtistInLabel = true
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 142), spacing: 12, alignment: .top)], spacing: 16) {
+            ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+                Button { select(tracks, index) } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        VideoArtwork(track: track)
+                        Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                        Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain).contextMenu { menu(track) }
+                    .accessibilityLabel(includeArtistInLabel ? "播放 \(track.title)，\(track.artist)" : "播放 \(track.title)")
+            }
+        }
+    }
+}
+
+struct VideoTrackRow: View {
+    let track: Track
+    var selected = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VideoArtwork(track: track).frame(width: 122)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(track.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                    .foregroundStyle(selected ? MBTheme.accent : .primary)
+                Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.contentShape(Rectangle())
+    }
+}
+
 /// 封面和 API/音频共用代理策略，图片上下文由音源随曲目提供。
 struct RemoteArtwork: View {
     let track: Track
     @State private var image: Image?
     private struct Request: Hashable {
+        let sourceID: String
         let url: URL?
         let headers: [String: String]
     }
@@ -35,7 +90,7 @@ struct RemoteArtwork: View {
                 else { Image(systemName: "music.note").foregroundStyle(.white.opacity(0.75)).frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         }
-        .task(id: Request(url: track.artworkURL, headers: track.artworkHeaders)) {
+        .task(id: Request(sourceID: track.sourceID, url: track.artworkURL, headers: track.artworkHeaders)) {
             image = nil
             guard let url = track.artworkURL else { return }
             if url.isFileURL {
@@ -43,12 +98,9 @@ struct RemoteArtwork: View {
                 guard !Task.isCancelled else { return }
                 image = result.flatMap(decodedImage); return
             }
-            var request = URLRequest(url: url)
-            request.allHTTPHeaderFields = track.artworkHeaders
             do {
-                let (value, response) = try await NetworkClient.shared.data(for: request)
-                guard !Task.isCancelled, let response = response as? HTTPURLResponse,
-                      (200..<300).contains(response.statusCode) else { return }
+                let value = try await ArtworkCache.shared.data(url: url, sourceID: track.sourceID, headers: track.artworkHeaders)
+                guard !Task.isCancelled else { return }
                 image = decodedImage(value)
             } catch { /* 无封面时保留渐变占位。 */ }
         }
@@ -66,23 +118,38 @@ struct RemoteArtwork: View {
     }
 }
 
+struct TrackProblemAccessibility: ViewModifier {
+    @Environment(\.stationPlayback) private var playback
+    let track: Track
+    var enabled = true
+
+    func body(content: Content) -> some View {
+        let problem = enabled ? (playback?.trackProblem(for: track) ?? track.declaredProblem) : nil
+        content.accessibilityValue(problem?.label ?? "")
+    }
+}
+
 struct TrackRow: View {
+    @Environment(\.stationPlayback) private var playback
     let track: Track
     var selected = false
 
     var body: some View {
+        let problem = playback?.trackProblem(for: track) ?? track.declaredProblem
         HStack(spacing: 14) {
             ArtworkView(track: track)
             VStack(alignment: .leading, spacing: 5) {
                 Text(track.title).font(.body.weight(.medium)).lineLimit(2)
                     .foregroundStyle(selected ? MBTheme.accent : .primary)
                 Text(track.artist.isEmpty ? "未知作者" : track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if let problem {
+                    Text(problem.label).font(.caption.weight(.medium)).foregroundStyle(MBTheme.accent)
+                }
             }
             Spacer(minLength: 8)
             Text(TimeLabel.string(milliseconds: track.durationMilliseconds))
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .opacity(track.unavailable == true ? 0.45 : 1)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -113,7 +180,7 @@ private struct PreviewCover: View {
                     }
                 }
                 VStack(alignment: .leading) {
-                    Text("山海 / DEMO").font(.system(size: max(5, side * 0.045), weight: .medium, design: .monospaced)).tracking(side * 0.005)
+                    Text("MB / DEMO").font(.system(size: max(5, side * 0.045), weight: .medium, design: .monospaced)).tracking(side * 0.005)
                     Spacer()
                     Text(track.title).font(.system(size: max(7, side * 0.09), weight: .bold)).lineLimit(2)
                 }.foregroundStyle(.white).padding(side * 0.09)

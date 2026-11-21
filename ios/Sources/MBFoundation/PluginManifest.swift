@@ -2,10 +2,11 @@ import Foundation
 
 public enum PluginFailure: LocalizedError, Sendable {
     case invalid(String), execution(String), unavailable
+    case playback(TrackProblem, String)
     public var errorDescription: String? {
         switch self {
         case .invalid(let reason): AppLocalization.text("插件无效：%@", arguments: [reason])
-        case .execution(let reason): AppLocalization.text("插件执行失败：%@", arguments: [reason])
+        case .execution(let reason), .playback(_, let reason): AppLocalization.text("插件执行失败：%@", arguments: [reason])
         case .unavailable: AppLocalization.text("此插件需要 iOS 不提供的桌面宿主能力")
         }
     }
@@ -47,7 +48,7 @@ public struct PluginManifest: Codable, Sendable {
     public let requestHeaders: [HeaderRule]?
     public var entry: String { main ?? "index.js" }
     public var displayName: String { name ?? id }
-    public func validate(hostVersion: String = "0.1.25") throws {
+    public func validate(hostVersion: String = "0.1.27") throws {
         guard id.range(of: "^[A-Za-z0-9][A-Za-z0-9_.-]*$", options: .regularExpression) != nil, !id.contains("..") else { throw PluginFailure.invalid("Invalid plugin ID") }
         guard !entry.hasPrefix("/"), !entry.split(separator: "/").contains(".."), entry.hasSuffix(".js") else { throw PluginFailure.invalid("Invalid entry path") }
         if let minAppVersion {

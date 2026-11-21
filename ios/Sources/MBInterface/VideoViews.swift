@@ -2,105 +2,158 @@ import AVFoundation
 import MBFoundation
 import SwiftUI
 
-/// 手机竖屏顶部画面与详情；宽屏平板将队列放在右侧，横屏全屏共用原生播放器。
 struct VideoPageView: View {
     let video: VideoModel
     let playback: PlaybackModel
-    var openMusic: () -> Void = {}
+    let interactionSource: (any InteractionSource)?
+    let accountRevision: Int
+    let openMusic: () -> Void
     @State private var fullScreen = false
-    @State private var selectedTab = VideoDetailTab.info
+    @State private var chrome = VideoChromeState()
 
     var body: some View {
         GeometryReader { geometry in
-            if geometry.size.width >= 800 {
-                HStack(alignment: .top, spacing: 24) {
-                    ScrollView { mainContent }
-                    VideoQueueView(playback: playback).frame(width: 300)
-                }.padding(20)
-            } else {
-                VStack(spacing: 0) {
-                    PlaybackModePicker(video: video, openMusic: openMusic).padding(.horizontal, 16).padding(.vertical, 8)
-                    picture
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            VideoTransport(playback: playback)
-                            PlaybackOrderControls(playback: playback)
-                            Picker("视频详情", selection: $selectedTab) {
-                                Text("简介").tag(VideoDetailTab.info)
-                                Text("字幕").tag(VideoDetailTab.captions)
-                                Text("队列").tag(VideoDetailTab.queue)
-                            }.pickerStyle(.segmented)
-                            switch selectedTab {
-                            case .info: information
-                            case .captions: CaptionView(timeline: playback.timeline, positionMilliseconds: playback.positionMilliseconds, message: playback.captionMessage, seek: { playback.seek(to: $0) }).frame(minHeight: 240)
-                            case .queue: VideoQueueView(playback: playback)
-                            }
-                        }.padding(16)
-                    }
+            let sideBySide = geometry.size.width >= 800 && geometry.size.width > geometry.size.height
+            let layout = sideBySide ? AnyLayout(HStackLayout(alignment: .top, spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                picture.frame(width: sideBySide ? geometry.size.width * 0.57 : geometry.size.width)
+                if let track = playback.queue.current {
+                    VideoDetailsView(track: track, video: video, playback: playback, interactionSource: interactionSource)
+                        .id("\(track.id):\(accountRevision)")
                 }
-            }
-        }
+            }.accessibilityHidden(fullScreen)
+        }.background(MBTheme.background, ignoresSafeAreaEdges: .bottom)
+        .background(Color.black.ignoresSafeArea(edges: .top))
         #if os(iOS)
+        .statusBarHidden(video.isVisible)
         .fullScreenCover(isPresented: $fullScreen) { VideoFullscreenView(video: video, playback: playback) }
         #else
         .sheet(isPresented: $fullScreen) { VideoFullscreenView(video: video, playback: playback) }
         #endif
     }
 
-    private var mainContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            PlaybackModePicker(video: video, openMusic: openMusic)
-            picture
-            VideoTransport(playback: playback)
-            PlaybackOrderControls(playback: playback)
-            information
-            CaptionView(timeline: playback.timeline, positionMilliseconds: playback.positionMilliseconds, message: playback.captionMessage, seek: { playback.seek(to: $0) })
-                .frame(minHeight: 160)
-        }
-    }
-
     private var picture: some View {
         VideoScreen(video: video, pictureVisible: !fullScreen)
+            .modifier(VideoTapControls(chrome: chrome, playback: playback))
             .aspectRatio(16 / 9, contentMode: .fit)
-            .overlay(alignment: .bottomTrailing) {
-                Button("全屏播放", systemImage: "arrow.up.left.and.arrow.down.right") { fullScreen = true }
-                    .labelStyle(.iconOnly).padding(12)
-                    .background(.black.opacity(0.55), in: Circle()).foregroundStyle(.white).padding(8)
+            .overlay(alignment: .top) {
+                if chrome.visible { HStack {
+                    Button { video.browse() } label: {
+                        Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("返回浏览")
+                    Spacer()
+                    Button(action: openMusic) {
+                        Label("听歌模式", systemImage: "headphones").padding(.horizontal, 8).frame(minHeight: 44).contentShape(Rectangle())
+                    }.accessibilityIdentifier("video-open-music")
+                }
+                .buttonStyle(.plain).font(.subheadline.weight(.semibold)).imageScale(.large)
+                .foregroundStyle(.white).padding(.horizontal, 4)
+                .background(alignment: .top) { LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom).allowsHitTesting(false) } }
+            }
+            .overlay(alignment: .bottom) {
+                if chrome.visible { VideoTransport(playback: playback, fullscreen: { fullScreen = true }, editing: chrome.editing)
+                    .accessibilityIdentifier("video-transport")
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom)) }
+            }
+    }
+}
+
+private struct VideoDetailsView: View {
+    let track: Track
+    let video: VideoModel
+    let playback: PlaybackModel
+    let interactionSource: (any InteractionSource)?
+    @State private var selectedTab = VideoDetailTab.info
+    @State private var interaction: InteractionModel?
+    @State private var loadedInteractions = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                ForEach(VideoDetailTab.allCases, id: \.self) { tab in
+                    Button { selectedTab = tab } label: {
+                        HStack(spacing: 4) {
+                            Text(tab.title)
+                            if tab == .comments, let total = interaction?.total, total > 0 {
+                                Text(total.formatted()).font(.caption)
+                            }
+                        }.font(.subheadline.weight(selectedTab == tab ? .semibold : .regular))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) {
+                                if selectedTab == tab { Capsule().frame(width: 25, height: 3) }
+                            }
+                            .foregroundStyle(selectedTab == tab ? MBTheme.accent : .secondary)
+                    }.buttonStyle(.plain).accessibilityLabel(tab.title)
+                        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+                }
+            }.padding(.horizontal, 8)
+            Divider()
+            switch selectedTab {
+            case .info: ScrollView { information.padding(16) }
+            case .comments:
+                if let interaction, interaction.capabilities.comments { TrackCommentsList(model: interaction) }
+                else if interaction != nil && !loadedInteractions { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
+                else {
+                    ContentUnavailableView("此音源不支持评论", systemImage: "bubble.left.and.bubble.right")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            case .captions:
+                CaptionView(timeline: playback.timeline, positionMilliseconds: playback.positionMilliseconds, message: playback.captionMessage, seek: { playback.seek(to: $0) })
+                    .padding(16)
+            case .queue:
+                ScrollView {
+                    VideoQueueView(playback: playback)
+                    #if os(iOS)
+                    SystemVolumeView().frame(maxWidth: 240).frame(height: 28).accessibilityLabel("系统音量").padding(.top, 12)
+                    #endif
+                }.contentMargins(16)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .task(id: interactionSource != nil) {
+                loadedInteractions = false
+                guard let interactionSource else { interaction = nil; return }
+                let interaction = InteractionModel(source: interactionSource, track: track)
+                self.interaction = interaction
+                await interaction.refresh()
+                guard !Task.isCancelled else { return }
+                loadedInteractions = true
+                await interaction.loadLike()
             }
     }
 
     private var information: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let track = playback.queue.current {
-                Text(track.title).font(.title3.bold())
-                Label(track.artist, systemImage: "person.crop.circle").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Button("返回浏览", systemImage: "square.grid.2x2") { video.browse() }
+        VStack(alignment: .leading, spacing: 14) {
+            Label(track.artist, systemImage: "person.crop.circle").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            Text(track.title).font(.title3.bold())
+            if let interaction { TrackLikeButton(model: interaction) }
             if let message = playback.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.red) }
             if let message = video.persistenceMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary) }
+            Divider()
+            HStack {
+                Button("上一首", systemImage: "backward.end.fill") { playback.previous() }
+                Spacer()
+                Button("下一首", systemImage: "forward.end.fill") { playback.next() }
+            }
+            .font(.subheadline)
+            PlaybackOrderControls(playback: playback)
+            VideoQueueView(playback: playback)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// 同一会话中切换画面，不重新选择曲目或启动第二条音轨。
-struct PlaybackModePicker: View {
-    let video: VideoModel
-    var openMusic: () -> Void = {}
-    var body: some View {
-        Picker("播放模式", selection: Binding(get: { video.presentationMode }, set: { mode in
-            Task {
-                if mode == .music { openMusic() }
-                await video.choose(mode)
-            }
-        })) {
-            Text("听歌模式").tag(PlaybackMode.music)
-            Text("视频模式").tag(PlaybackMode.video)
-        }.pickerStyle(.segmented).accessibilityIdentifier("current-playback-mode")
-            .disabled(video.track?.localFileID != nil)
+private enum VideoDetailTab: CaseIterable {
+    case info, comments, captions, queue
+
+    var title: LocalizedStringKey {
+        switch self {
+        case .info: "简介"
+        case .comments: "评论"
+        case .captions: "字幕"
+        case .queue: "队列"
+        }
     }
 }
-
-private enum VideoDetailTab { case info, captions, queue }
 
 private struct VideoQueueView: View {
     let playback: PlaybackModel
@@ -109,7 +162,7 @@ private struct VideoQueueView: View {
             Text("播放队列 · \(playback.queue.tracks.count)").font(.headline)
             ForEach(Array(playback.queue.tracks.enumerated()), id: \.offset) { index, track in
                 Button { playback.jump(to: index, intent: .transport) } label: {
-                    TrackRow(track: track, selected: playback.queue.index == index)
+                    VideoTrackRow(track: track, selected: playback.queue.index == index)
                 }.buttonStyle(.plain).accessibilityLabel("队列选择 \(track.title)")
             }
         }
@@ -120,12 +173,12 @@ private struct VideoFullscreenView: View {
     let video: VideoModel
     let playback: PlaybackModel
     @Environment(\.dismiss) private var dismiss
-    @State private var controlsVisible = true
+    @State private var chrome = VideoChromeState()
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            VideoScreen(video: video).ignoresSafeArea().onTapGesture { controlsVisible.toggle() }
-            if controlsVisible {
+            VideoScreen(video: video).ignoresSafeArea().modifier(VideoTapControls(chrome: chrome, playback: playback))
+            if chrome.visible {
                 VStack {
                     HStack {
                         Button("退出全屏", systemImage: "chevron.left") { dismiss() }
@@ -134,10 +187,11 @@ private struct VideoFullscreenView: View {
                     }
                     .padding().background(.black.opacity(0.6))
                     Spacer()
-                    VideoTransport(playback: playback).padding().background(.black.opacity(0.6))
+                    VideoTransport(playback: playback, editing: chrome.editing).accessibilityIdentifier("video-transport").background(.black.opacity(0.6))
                 }.foregroundStyle(.white)
             }
         }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("fullscreen-video")
         .tint(MBTheme.accent)
         #if os(iOS)
         .statusBarHidden()
@@ -150,30 +204,38 @@ private struct VideoFullscreenView: View {
 
 private struct VideoTransport: View {
     let playback: PlaybackModel
+    var fullscreen: (() -> Void)? = nil
+    var editing: (Bool) -> Void = { _ in }
     @State private var preview = 0.0
     @State private var scrubbing = false
     @State private var selection: Int?
     var body: some View {
-        VStack(spacing: 8) {
-            Slider(value: Binding(get: { min(max(0, scrubbing ? preview : Double(playback.positionMilliseconds)), Double(max(1, playback.durationMilliseconds))) }, set: { preview = $0 }),
+        HStack(spacing: 8) {
+            Button { playback.toggle() } label: {
+                Image(systemName: playback.state == .playing ? "pause.fill" : "play.fill")
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }.accessibilityLabel(LocalizedStringKey(playback.state == .playing ? "暂停" : "播放"))
+            PlaybackSeekBar(value: Binding(get: { min(max(0, scrubbing ? preview : Double(playback.positionMilliseconds)), Double(max(1, playback.durationMilliseconds))) }, set: { preview = $0 }),
                    in: 0...Double(max(1, playback.durationMilliseconds))) { editing in
                 scrubbing = editing
+                self.editing(editing)
                 if editing { selection = playback.selectionRevision; preview = Double(playback.positionMilliseconds) }
                 else { if selection == playback.selectionRevision { playback.seek(to: Int64(preview)) }; selection = nil }
             }
                 .accessibilityLabel("视频播放进度")
-            HStack {
+            HStack(spacing: 2) {
                 Text(TimeLabel.string(milliseconds: playback.positionMilliseconds))
-                Text("/ \(TimeLabel.string(milliseconds: playback.durationMilliseconds))")
-                Spacer()
-                Button("上一首", systemImage: "backward.end.fill") { playback.previous() }.frame(minWidth: 44, minHeight: 44)
-                Button(LocalizedStringKey(playback.state == .playing ? "暂停" : "播放"), systemImage: playback.state == .playing ? "pause.fill" : "play.fill") { playback.toggle() }.frame(minWidth: 44, minHeight: 44)
-                Button("下一首", systemImage: "forward.end.fill") { playback.next() }.frame(minWidth: 44, minHeight: 44)
-            }.font(.subheadline.monospacedDigit()).labelStyle(.iconOnly)
-            #if os(iOS)
-            SystemVolumeView().frame(maxWidth: 240).frame(height: 28).accessibilityLabel("系统音量")
-            #endif
-        }.onChange(of: playback.selectionRevision) { _, _ in scrubbing = false; selection = nil }
+                Text("/\(TimeLabel.string(milliseconds: playback.durationMilliseconds))")
+            }.font(.caption.monospacedDigit()).fixedSize()
+            if let fullscreen {
+                Button(action: fullscreen) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44).contentShape(Rectangle())
+                }.accessibilityLabel("全屏播放")
+            }
+        }.labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(.white).tint(MBTheme.accent)
+            .accessibilityElement(children: .contain)
+            .padding(.horizontal, 8)
+            .onChange(of: playback.selectionRevision) { _, _ in scrubbing = false; selection = nil }
     }
 }
 
@@ -198,7 +260,6 @@ struct VideoScreen: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     private func message(_ text: String) -> some View {
         Text(LocalizedStringKey(text)).font(.callout).foregroundStyle(.white.opacity(0.85)).multilineTextAlignment(.center).padding(20)

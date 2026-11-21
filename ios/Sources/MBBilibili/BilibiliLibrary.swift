@@ -2,7 +2,26 @@ import Foundation
 import MBFoundation
 
 extension BilibiliSource {
+    public func invalidateLibraryCache() async { await libraryCache.invalidate() }
     public func library(_ route: LibraryRoute, cursor: String?) async throws -> LibraryPage {
+        try await loadSession()
+        let revision = accountRevision
+        let scope = session?.active == true ? "user:" + (try await requireAccount()).id : "guest"
+        guard revision == accountRevision else { throw CancellationError() }
+        let routeKey = String(decoding: try JSONEncoder().encode(route), as: UTF8.self)
+        let data = try await libraryCache.data(key: ResponseCache.key([scope, routeKey, cursor ?? ""]), lifetime: 6 * 3600) { [self] in
+            try await libraryData(route, cursor: cursor, revision: revision)
+        }
+        guard revision == accountRevision else { throw CancellationError() }
+        return try JSONDecoder().decode(LibraryPage.self, from: data)
+    }
+    private func libraryData(_ route: LibraryRoute, cursor: String?, revision: Int) async throws -> Data {
+        guard revision == accountRevision else { throw CancellationError() }
+        let page = try await uncachedLibrary(route, cursor: cursor)
+        guard revision == accountRevision else { throw CancellationError() }
+        return try JSONEncoder().encode(page)
+    }
+    private func uncachedLibrary(_ route: LibraryRoute, cursor: String?) async throws -> LibraryPage {
         switch route {
         case .favorites:
             let account = try await requireAccount()

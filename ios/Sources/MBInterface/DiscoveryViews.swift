@@ -5,8 +5,11 @@ import SwiftUI
 struct DiscoveryHomeView: View {
     let model: DiscoveryModel
     let source: any DiscoverySource
+    var videoMode = false
     let select: ([Track], Int) -> Void
     var menu: (Track) -> AnyView = { _ in AnyView(EmptyView()) }
+
+    @ScaledMetric(relativeTo: .subheadline) private var cardHeight = 246.0
 
     var body: some View {
         ScrollView {
@@ -18,12 +21,15 @@ struct DiscoveryHomeView: View {
                         NavigationLink(value: MBPage.discovery(section.category)) {
                             HStack(alignment: .center) {
                                 MusicSectionHeading(title: section.category.title)
+                                Text("更多").font(.subheadline).foregroundStyle(.secondary)
                                 Image(systemName: "chevron.right").font(.subheadline.bold()).foregroundStyle(.tertiary)
                             }.frame(minHeight: 44).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityLabel("查看更多\(section.category.title)").padding(.horizontal, 20)
                         if let message = section.errorMessage { Text(LocalizedStringKey(message)).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 20) }
                         if section.tracks.isEmpty {
                             Text(LocalizedStringKey(section.errorMessage == nil ? "暂无视频" : "下拉刷新重试")).foregroundStyle(.secondary).padding(.horizontal, 20)
+                        } else if videoMode {
+                            VideoTrackGrid(tracks: section.tracks, select: select, menu: menu).padding(.horizontal, 16)
                         } else if section.category == .chart {
                             VStack(spacing: 0) {
                                 ForEach(Array(section.tracks.prefix(3).enumerated()), id: \.element.id) { index, track in
@@ -37,13 +43,11 @@ struct DiscoveryHomeView: View {
                                 }
                             }.padding(.horizontal, 20)
                         } else {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(alignment: .top, spacing: 16) {
-                                    ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
-                                        DiscoveryCoverCard(track: track, prominent: section.category == .recommended,
-                                                           play: { select(section.tracks, index) }, menu: { menu(track) })
-                                    }
-                                }.padding(.horizontal, 20).padding(.bottom, 4)
+                            DiscoveryShelf(count: section.tracks.count, rowHeight: cardHeight) {
+                                ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
+                                    DiscoveryCoverCard(track: track, prominent: section.category == .recommended,
+                                                       play: { select(section.tracks, index) }, menu: { menu(track) })
+                                }
                             }
                         }
                     }
@@ -54,7 +58,7 @@ struct DiscoveryHomeView: View {
                     } actions: { Button("重新加载") { Task { await model.refresh() } }.buttonStyle(.borderedProminent) }
                 }
             }.padding(.top, 12).padding(.bottom, 24)
-        }.background(MBTheme.background).refreshable { await model.refresh() }
+        }.modifier(SkinSurface(defaultColor: MBTheme.background)).refreshable { await model.refresh() }
     }
 }
 
@@ -81,37 +85,44 @@ private struct DiscoveryCoverCard<MenuContent: View>: View {
                 }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)，\(track.artist)")
                 Menu(content: menu) { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
             }
-        }.frame(width: prominent ? 240 : 168).contextMenu(menuItems: menu)
+        }.frame(width: 156).contextMenu(menuItems: menu)
     }
 }
 
 struct DiscoveryPageView: View {
     @State private var model: DiscoveryPageModel
+    let videoMode: Bool
     let select: ([Track], Int) -> Void
     let menu: (Track) -> AnyView
-    init(source: any DiscoverySource, category: DiscoveryCategory, select: @escaping ([Track], Int) -> Void, menu: @escaping (Track) -> AnyView = { _ in AnyView(EmptyView()) }) {
+    init(source: any DiscoverySource, category: DiscoveryCategory, videoMode: Bool = false, select: @escaping ([Track], Int) -> Void, menu: @escaping (Track) -> AnyView = { _ in AnyView(EmptyView()) }) {
         _model = State(initialValue: DiscoveryPageModel(source: source, category: category)); self.select = select; self.menu = menu
+        self.videoMode = videoMode
     }
     var body: some View {
         List {
             if let section = model.section, !section.tracks.isEmpty {
-                Section {
-                    HStack(spacing: 12) {
-                        if let track = section.tracks.first { ArtworkView(track: track, size: 76) }
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(LocalizedStringKey(model.category.title)).font(.title2.bold())
-                            if let subtitle = section.subtitle { Text(subtitle).font(.subheadline).foregroundStyle(.secondary) }
-                            Text("\(section.tracks.count) 首").font(.caption).foregroundStyle(.secondary)
+                if videoMode {
+                    if let subtitle = section.subtitle { Text(subtitle).font(.subheadline).foregroundStyle(.secondary) }
+                    VideoTrackGrid(tracks: section.tracks, select: select, menu: menu).listRowSeparator(.hidden)
+                } else {
+                    Section {
+                        HStack(spacing: 12) {
+                            if let track = section.tracks.first { ArtworkView(track: track, size: 76) }
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(LocalizedStringKey(model.category.title)).font(.title2.bold())
+                                if let subtitle = section.subtitle { Text(subtitle).font(.subheadline).foregroundStyle(.secondary) }
+                                Text("\(section.tracks.count) 首").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 8)
+                        Button { select(section.tracks, 0) } label: { MusicActionLabel(title: "播放全部", symbol: "play.fill") }.buttonStyle(.borderedProminent)
+                    }.listRowSeparator(.hidden)
+                    Section {
+                        ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
+                            HStack(spacing: 4) {
+                                Button { select(section.tracks, index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)，\(track.artist)")
+                                Menu { menu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
+                            }.contextMenu { menu(track) }
                         }
-                    }.padding(.vertical, 8)
-                    Button { select(section.tracks, 0) } label: { MusicActionLabel(title: "播放全部", symbol: "play.fill") }.buttonStyle(.borderedProminent)
-                }.listRowSeparator(.hidden)
-                Section {
-                    ForEach(Array(section.tracks.enumerated()), id: \.element.id) { index, track in
-                        HStack(spacing: 4) {
-                            Button { select(section.tracks, index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)，\(track.artist)")
-                            Menu { menu(track) } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("曲目操作 \(track.title)")
-                        }.contextMenu { menu(track) }
                     }
                 }
             }

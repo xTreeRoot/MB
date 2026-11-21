@@ -1,6 +1,25 @@
 # 页面核对与验证
 
-产品版本 0.1.0，当前 build 7；桌面功能对照 main `27d4337`。本轮页面重构与交互验证见 [build 7 说明](Build7/README.md)、[图库](Build7/index.html) 和 [编号索引](Build7/SCREENSHOTS.md)。[build 6](Build6/README.md) 保留历史验证。底栏与歌词设置的 [build 5 图库](Build5/index.html)、[原有完整图库](index.html) 保留历史验证。
+Build 26：设置检查版本、校验下载与签名安装交接，iPhone / iPad 各连续五轮通过，见 [验收记录与截图](AppUpdates/README.md)。
+
+Build 25：远程插件直接比较更新、触底分页和播放器动作对齐，见 [验收记录](RemoteUpdates/README.md)。
+
+## 紧凑页面与系统授权（2026-11-19）
+
+四页 hero 标题移除，音源独占一行；YouTube iOS 系统 OAuth 和 CarPlay 主标题歌词已实现。Swift 全量 162 项、最终相关回归 29 项、插件 Node 14 项及 iPhone 4 项 / iPad 2 项 UI 方法通过。26 张截图、源码摘要、流播结论和真机未验收范围见 [本轮验证](CompactOAuth/README.md)。
+
+## Build 15（2026-11-19）
+
+- 浏览页切换视频模式只更新偏好和卡片布局，不会打开当前暂停或播放中的资源。主动点选后，在同一播放会话打开视频详情；播放器固定，简介、评论、字幕和队列独立切换。插件入口移到设置的“显示”下方。
+- Swift 行为回归通过；iPhone 覆盖切模式、视频评论/队列/全屏、样式和设置首屏插件入口，iPad 覆盖视频详情横竖布局。模拟器游客实测哔哩哔哩真实音频、两次视频渲染和切回暂停状态；未进行真实账号发评、点赞或扫码。
+- iPhone/iPad Release 构建及签名校验通过。无线安装后从真机读回 `0.1.0 (15)`；不将安装成功算作真机播放验证。
+- 本地截图及索引：`ios/.build/Build15/screenshots/README.md`。结果包：`PhoneFinal.xcresult`、`TabletFinal.xcresult`、`TabletBilibili.xcresult`（同在 `ios/.build/Build15/`）。
+
+内置发现沿用现有四区接口，简介使用音源返回的标题和作者，详情下部使用当前队列，不假冒平台相关推荐。评论读取、发评和点赞按音源现有能力显示。宿主复用插件 `trackLayout: "videos"` 卡片、导航与 `video` 播放合同；未新增插件视频专用搜索类型、视频简介正文、弹幕、投币或关注等接口。
+
+## 历史验证
+
+产品版本 0.1.0，build 7 的桌面功能对照 main `27d4337`。当时的页面重构与交互验证见 [build 7 说明](Build7/README.md)、[图库](Build7/index.html) 和 [编号索引](Build7/SCREENSHOTS.md)。[build 6](Build6/README.md) 保留历史验证。底栏与歌词设置的 [build 5 图库](Build5/index.html)、[原有完整图库](index.html) 保留历史验证。
 
 截图来自 XCTest 在 iPhone 18 Pro / iPad Pro 13-inch (M5) 模拟器上的实际操作。账号、歌曲、评论、插件均为隔离演示数据，系统分享页使用演示静音 WAV。它们用于检查页面、导航、弹窗与状态，不代表真实账号互动、真机媒体播放或第三方平台验收。每张图的测试名称、设备、采集时间与 SHA-256 记录在 [manifest.json](manifest.json)。
 

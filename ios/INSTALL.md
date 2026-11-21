@@ -4,7 +4,7 @@
 
 ## 用 Xcode 直接安装
 
-1. 下载仓库 `main` 分支，打开 `ios/MBiOS.xcodeproj`。顶部 scheme 选 `MBiOS`。
+1. 下载仓库 `ios` 分支，打开 `ios/MBiOS.xcodeproj`。顶部 scheme 选 `MBiOS`。
 2. Xcode → Settings → Apple Accounts（旧版叫 Accounts）登录自己的 Apple 账号。
 3. 数据线连接手机，解锁并在手机点“信任此电脑”。
 4. Xcode 左侧点蓝色工程图标，中间 TARGETS 选 `MBiOS`，再点 `Signing & Capabilities`。勾上 `Automatically manage signing`，`Team` 下拉选择“你的名字 (Personal Team)”。这就是让 Xcode 用你自己的账号给 App 签名。
@@ -36,7 +36,7 @@ bash scripts/install-device.sh TEAM_ID DEVICE_UDID
 
 ## CarPlay 使用
 
-在手机打开 MB 并开始播放，再连接 CarPlay、进入车机自带的「正在播放」。这条路径不需要独立 CarPlay App 的专属权限。默认用歌手栏显示当前句歌词，歌名保持不变；可在「设置 → CarPlay 与锁屏」关闭，也会同步影响手机锁屏和控制中心。车机决定文字刷新、截断和滚动，暂无真实车辆验收。
+在手机打开 MB 并开始播放，再连接 CarPlay、进入车机自带的「正在播放」。这条路径不需要独立 CarPlay App 的专属权限。默认主标题按音频时钟逐句显示歌词，副标题显示歌名；无歌词时主标题回退到歌名。可在「设置 → CarPlay 与锁屏」关闭，也会同步影响手机锁屏和控制中心。车机决定文字刷新、截断和滚动，暂无真实车辆验收。
 
 
 ## 设备工具更新插件

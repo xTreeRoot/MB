@@ -113,7 +113,7 @@ private actor StreamingSource: PlaybackSource {
     var local: URL?
     func load(resource: MediaResource, at milliseconds: Int64) throws {
         remote = resource
-        if rejectRange { throw URLError(.badServerResponse) }
+        if rejectRange { throw MediaStreamingFailure.rangeStatus(200) }
     }
     func load(url: URL, at milliseconds: Int64) { local = url }
     func play() {}

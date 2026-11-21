@@ -6,10 +6,16 @@ struct DetailDTO: Decodable, Sendable { let aid: ScalarText; let cid: ScalarText
 extension BilibiliSource {
     public func audio(trackID: String) async throws -> MediaResource {
         let result = try await playbackInfo(trackID)
-        guard let audio = result.dash?.audio?.first, let address = audio.base_url ?? audio.baseUrl,
-              let url = URL(string: address), url.scheme == "https" else { throw BilibiliError.noContent }
+        let audio = (result.dash?.audio ?? []).compactMap { item in
+            [item.base_url, item.baseUrl].compactMap { $0 }.first(where: { !$0.isEmpty }).map { (item, $0) }
+        }
+        guard !audio.isEmpty else { throw TrackProblem.noSource }
+        guard let (url, stream) = audio.lazy.compactMap({ item, address -> (URL, PlaybackDTO.Dash.Audio)? in
+            guard let url = URL(string: address), url.scheme == "https", url.host != nil else { return nil }
+            return (url, item)
+        }).first else { throw BilibiliError.invalidResponse }
         return MediaResource(url: url, headers: Self.headers,
-                             fileExtension: (audio.mime_type ?? audio.mimeType ?? "").hasPrefix("audio/mp4") ? "m4a" : "aac")
+                             fileExtension: (stream.mime_type ?? stream.mimeType ?? "").hasPrefix("audio/mp4") ? "m4a" : "aac")
     }
 
     public func video(trackID: String) async throws -> MediaResource {

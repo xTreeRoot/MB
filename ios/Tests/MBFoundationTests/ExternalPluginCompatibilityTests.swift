@@ -33,7 +33,33 @@ import Testing
     #expect(audio["bitRate"] == .number(128000))
 }
 
-@Test func sodaIOSPluginReturnsNativeAudioAndDoesNotOfferUnimplementedLogin() async throws {
+@Test func youtubeIOSPluginSystemOAuthValidatesBearerAndKeepsSessionDisabledAfterLogout() async throws {
+    let root = try #require(Bundle.module.url(forResource: "Fixtures/YouTubeIOSPlugin", withExtension: nil))
+    let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: root.appendingPathComponent("plugin.json")))
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let runtime = try PluginRuntime(directory: root, dataDirectory: folder, manifest: manifest, oauthSignIn: { request in
+        #expect(request.authorizationEndpoint.host == "accounts.google.com")
+        #expect(request.scopes == ["https://www.googleapis.com/auth/youtube"])
+        return .object(["access_token": .string("synthetic-access"), "refresh_token": .string("synthetic-refresh"),
+                        "token_type": .string("Bearer"), "expires_in": .number(3600)])
+    }, transport: { request, _ in
+        #expect(request.url?.absoluteString == "https://youtube.googleapis.com/youtube/v3/channels?part=snippet&mine=true")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-access")
+        #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        let text = #"{"items":[{"id":"UCfixture","snippet":{"title":"Fixture"}}]}"#
+        return (Data(text.utf8), try #require(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])))
+    })
+    #expect(try await runtime.invoke("signIn")["name"] == .string("Fixture"))
+    _ = try await runtime.invoke("signOut")
+    #expect(try await runtime.invoke("account") == .null)
+    let stored = try JSONDecoder().decode(PluginJSON.self, from: Data(contentsOf: folder.appendingPathComponent("storage.json")))
+    #expect(stored["oauthSession"]["active"] == .bool(false))
+    #expect(stored["oauthSession"]["refresh"] == .string("synthetic-refresh"))
+    #expect(try await runtime.invoke("signIn")["id"] == .string("UCfixture"))
+}
+
+@Test func sodaIOSPluginReturnsNativeAudioAndOffersAccountLogin() async throws {
     let root = try #require(Bundle.module.url(forResource: "Fixtures/SodaPlugin", withExtension: nil))
     let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: root.appendingPathComponent("plugin.json")))
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -48,8 +74,92 @@ import Testing
         let body: PluginJSON = .object(["track_player": .object(["video_model": .string(try model.encoded())]), "seo_track": .object(["track": .object(["duration": .number(180000)])])])
         return (Data(try body.encoded().utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
     })
-    #expect(try await runtime.supports("signIn") == false)
+    #expect(try await runtime.supports("signIn") == true)
     let audio = try await runtime.invoke("stream", arguments: .object(["id": .string("123"), "quality": .string("lossless")]))
     #expect(audio["type"] == .string("m4a"))
     #expect(audio["quality"] == .string("high"))
+}
+
+@Test func sodaIOSPluginReadsVerifiedAccountAndPrivatePlaylistWithNativeQuickJS() async throws {
+    let root = try #require(Bundle.module.url(forResource: "Fixtures/SodaPlugin", withExtension: nil))
+    let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: root.appendingPathComponent("plugin.json")))
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let saved = #"{"qishuiAccount":{"version":1,"id":"9012345678901234561","active":true,"cookies":[{"name":"sessionid","value":"synthetic-session","domain":"api.qishui.com","path":"/"}]}}"#
+    try Data(saved.utf8).write(to: folder.appendingPathComponent("storage.json"))
+    let runtime = try PluginRuntime(directory: root, dataDirectory: folder, manifest: manifest, transport: { request, _ in
+        let url = try #require(request.url)
+        #expect(url.host == "api.qishui.com")
+        #expect(request.value(forHTTPHeaderField: "Cookie") == "sessionid=synthetic-session")
+        let text: String
+        switch url.path {
+        case "/luna/pc/me": text = #"{"my_info":{"id":9012345678901234561,"nickname":"汽水测试"}}"#
+        case "/luna/pc/me/playlist": text = #"{"playlists":[{"id":9012345678901234562,"title":"私密歌单","type":2,"owner":{"id":9012345678901234561}}]}"#
+        case "/luna/pc/playlist/detail": text = #"{"media_resources":[{"entity":{"track":{"id":9012345678901234563,"name":"Private track","vid":"fixture-vid","duration":123456}}}]}"#
+        default: throw NetworkFailure.response
+        }
+        return (Data(text.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
+    })
+    #expect(try await runtime.invoke("account")["name"] == .string("汽水测试"))
+    let page = try await runtime.invoke("browse", arguments: .object(["page": .string("my-library")]))
+    #expect(page["sections"].array.first?["playlists"].array.first?["id"] == .string("account:9012345678901234562"))
+    let list = try await runtime.invoke("playlist", arguments: .object(["id": .string("account:9012345678901234562")]))
+    #expect(list["tracks"].array.first?["id"] == .string("9012345678901234563"))
+    _ = try await runtime.invoke("signOut")
+    #expect(try await runtime.invoke("account") == .null)
+}
+
+private actor SodaBrowserLoginFixture {
+    private(set) var devices = 0
+    private(set) var profiles = 0
+    private(set) var pages = 0
+    func page(_ request: PluginWebSignIn) -> PluginJSON {
+        pages += 1
+        #expect(request.url.absoluteString == "https://api.qishui.com/passport/")
+        #expect(request.cookiesOf.absoluteString == "https://api.qishui.com/")
+        #expect(request.until == ["sessionid"])
+        #expect(request.html?.contains("9012345678901234564") == true)
+        #expect(request.html?.contains("9012345678901234565") == true)
+        #expect((request.html?.utf8.count ?? 0) < 256 * 1_024)
+        return .object(["cookie": .string("sessionid=synthetic-browser-session")])
+    }
+    func response(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let url = try #require(request.url)
+        #expect(url.host == "api.qishui.com")
+        let text: String
+        switch url.path {
+        case "/service/2/desktop/device_register":
+            devices += 1
+            #expect(request.httpMethod == "POST")
+            let body = try JSONDecoder().decode(PluginJSON.self, from: #require(request.httpBody))
+            #expect(body["header"]["app_version"] == .string("3.7.0"))
+            #expect(body["header"]["pc_serial"] == .string(""))
+            text = #"{"device_id_str":"9012345678901234564","install_id_str":"9012345678901234565"}"#
+        case "/luna/pc/me":
+            profiles += 1
+            #expect(request.value(forHTTPHeaderField: "Cookie") == "sessionid=synthetic-browser-session")
+            if profiles == 1 { throw URLError(.networkConnectionLost) }
+            text = #"{"my_info":{"id":"77","nickname":"汽水回归账号"}}"#
+        default: throw NetworkFailure.response
+        }
+        return (Data(text.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
+    }
+}
+
+@Test func sodaIOSBrowserLoginKeepsBrowserCookiesAndRecoversProfileDisconnectWithoutReopeningLogin() async throws {
+    let root = try #require(Bundle.module.url(forResource: "Fixtures/SodaPlugin", withExtension: nil))
+    let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: root.appendingPathComponent("plugin.json")))
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let fixture = SodaBrowserLoginFixture()
+    let runtime = try PluginRuntime(directory: root, dataDirectory: folder, manifest: manifest, webSignIn: { request in
+        await fixture.page(request)
+    }, transport: { request, _ in
+        try await fixture.response(request)
+    })
+    #expect(try await runtime.invoke("signIn")["name"] == .string("汽水回归账号"))
+    #expect(await fixture.devices == 1)
+    #expect(await fixture.pages == 1)
+    #expect(await fixture.profiles == 2)
 }

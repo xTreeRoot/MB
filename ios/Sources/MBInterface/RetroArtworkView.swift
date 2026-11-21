@@ -50,7 +50,7 @@ struct RetroArtworkView: View {
                     Circle().fill(playing ? Color.orange : Color.gray).frame(width: 10, height: 10)
                     Text("33 ⅓").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
                     Spacer()
-                    Text("山海").font(.system(size: 12, weight: .black)).foregroundStyle(.white.opacity(0.55))
+                    Text("MB").font(.system(size: 12, weight: .black)).foregroundStyle(.white.opacity(0.55))
                 }.padding(18)
             }
         }.shadow(color: .black.opacity(0.2), radius: 20, y: 12)

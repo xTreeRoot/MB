@@ -9,31 +9,43 @@ public final class SearchModel {
     public private(set) var isLoading = false
     public private(set) var hasMore = false
     public private(set) var errorMessage: String?
+    public private(set) var warnings: [String] = []
 
-    @ObservationIgnored private let source: any MusicSource
-    @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var nextPage = 1
+    @ObservationIgnored private let loadPage: @Sendable (String, Int) async throws -> (TrackPage, Int)
+    @ObservationIgnored private let initialCursor: Int
+    private var generation = 0
+    public var paginationGeneration: Int { generation }
+    public private(set) var cursor: Int
 
-    public init(source: any MusicSource) { self.source = source }
+    public init(source: any MusicSource) {
+        initialCursor = 1; cursor = 1
+        loadPage = { query, page in (try await source.search(query: query, page: page), page + 1) }
+    }
+
+    public init(videoSource: PluginSource) {
+        initialCursor = 0; cursor = 0
+        loadPage = { query, offset in try await videoSource.searchVideos(query: query, offset: offset) }
+    }
 
     public func search(_ value: String) async {
         generation += 1
         let current = generation
         query = value.trimmingCharacters(in: .whitespacesAndNewlines)
         tracks = []
-        nextPage = 1
+        cursor = initialCursor
         hasMore = false
         errorMessage = nil
+        warnings = []
         isLoading = !query.isEmpty
         guard !query.isEmpty else { return }
-        await load(page: 1, generation: current)
+        await load(generation: current)
     }
 
     public func loadMore() async {
         guard hasMore, !isLoading else { return }
         isLoading = true
         errorMessage = nil
-        await load(page: nextPage, generation: generation)
+        await load(generation: generation)
     }
 
     public func cancel() {
@@ -41,15 +53,16 @@ public final class SearchModel {
         isLoading = false
     }
 
-    private func load(page: Int, generation current: Int) async {
+    private func load(generation current: Int) async {
         do {
-            let result = try await source.search(query: query, page: page)
+            let (result, nextCursor) = try await loadPage(query, cursor)
             guard current == generation else { return }
             guard !Task.isCancelled else { isLoading = false; return }
             var seen = Set(tracks.map(\.id))
             tracks += result.tracks.filter { seen.insert($0.id).inserted }
+            warnings = result.warnings
             hasMore = result.hasMore
-            nextPage = page + 1
+            cursor = nextCursor
             isLoading = false
         } catch {
             guard current == generation else { return }

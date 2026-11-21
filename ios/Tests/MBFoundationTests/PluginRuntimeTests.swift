@@ -2,7 +2,7 @@ import Foundation
 @testable import MBFoundation
 import Testing
 
-private func withPlugin(_ source: String, extra: [String: String] = [:], perform: (PluginRuntime, URL, PluginManifest) async throws -> Void) async throws {
+private func withPlugin(_ source: String, extra: [String: String] = [:], isolation: isolated (any Actor)? = #isolation, perform: (PluginRuntime, URL, PluginManifest) async throws -> Void) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -11,6 +11,42 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
     let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(#"{"id":"fixture","name":"Fixture","version":"1.0.0","permissions":{"network":["api.example.test"]}}"#.utf8))
     let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, settings: ["quality": "high"])
     try await perform(runtime, root, manifest)
+}
+
+@Test @MainActor func pluginVideoSearchUsesRawOffsetsAndKeepsTrackSearchIndependent() async throws {
+    try await withPlugin("""
+    export function search({query,kind,offset}) {
+      if (kind !== 'tracks' || offset !== 0) throw Error('unexpected track request');
+      return {tracks:[{id:'music',name:query}],more:false};
+    }
+    export function searchVideos({query,offset}) {
+      const video = {id:'first',name:query};
+      if (offset === 0) return {tracks:[{},video,video],more:true};
+      if (offset === 3) return {tracks:[{},video],more:true};
+      if (offset === 5) return {tracks:[{id:'next',name:query}],more:false};
+      throw Error('unexpected video offset ' + offset);
+    }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let music = SearchModel(source: source)
+        let videos = SearchModel(videoSource: source)
+        try await #require(source.supports("searchVideos"))
+        await videos.search(" video ")
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first"])
+        #expect(videos.hasMore)
+        await music.search("music")
+        await videos.loadMore()
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first"])
+        #expect(videos.hasMore)
+        await videos.loadMore()
+        #expect(videos.tracks.map(\.sourceTrackID) == ["first", "next"])
+        #expect(!videos.hasMore)
+        #expect(videos.query == "video")
+        #expect(music.query == "music")
+        #expect(music.tracks.map(\.sourceTrackID) == ["music"])
+        await videos.search("new")
+        #expect(videos.tracks.map(\.title) == ["new"])
+    }
 }
 
 @Test func pluginRunsRealESModulesAsyncTimersStorageAndCrypto() async throws {
@@ -121,12 +157,13 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
 
 @Test func pluginBackgroundTimersSurviveFunctionReturnAndURLMutationsStaySynchronized() async throws {
     try await withPlugin("""
-    let count = 0, timer;
-    export function start() { timer=setInterval(()=>count++,5); return 1; }
+    let count = 0, timer, wake;
+    export function start() { timer=setInterval(()=>{count++; if(wake) wake(true)},5); return 1; }
+    export function waitTick() { return count > 0 ? true : new Promise(resolve=>wake=resolve); }
     export function read() { clearInterval(timer); const u=new URL('https://api.example.test/a');u.searchParams.set('q','hello'); const href=u.href;u.search='x=2';return {count,href,search:u.searchParams.get('x')}; }
     """) { runtime, _, _ in
         #expect(try await runtime.invoke("start") == .number(1))
-        try await Task.sleep(for: .milliseconds(80))
+        #expect(try await runtime.invoke("waitTick") == .bool(true))
         let value = try await runtime.invoke("read")
         #expect((value["count"].integer ?? 0) > 0)
         #expect(value["href"].string == "https://api.example.test/a?q=hello")
@@ -195,6 +232,31 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
     }
 }
 
+@Test func pluginOAuthBridgeChecksPermissionsAndCancelsPendingAuthorization() async throws {
+    try await withPlugin("""
+    const options = {authorizationEndpoint:'https://api.example.test/authorize', tokenEndpoint:'https://api.example.test/token', clientID:'public-client', redirectURI:'mb-fixture:/oauthredirect', scopes:['library']};
+    export async function signIn(){return await host.oauthSignIn(options)}
+    export async function forbidden(){return await host.oauthSignIn({...options,tokenEndpoint:'https://other.test/token'})}
+    export function ok(){return 1}
+    """) { _, root, manifest in
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, oauthSignIn: { request in
+            #expect(request.clientID == "public-client" && request.scopes == ["library"])
+            return .object(["access_token": .string("synthetic-token")])
+        })
+        #expect(try await runtime.invoke("signIn")["access_token"] == .string("synthetic-token"))
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("forbidden") }
+        let pending = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("pending"), manifest: manifest, oauthSignIn: { _ in
+            try await Task.sleep(for: .seconds(60))
+            return .null
+        })
+        let task = Task { try await pending.invoke("signIn", timeout: .seconds(90)) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try await pending.invoke("ok") == .number(1))
+    }
+}
+
 @Test func signInDiagnosticsKeepFailureCodesWithoutRequestOrAccountSecrets() async throws {
     try await withPlugin("""
     export async function signIn() {
@@ -216,11 +278,187 @@ private func withPlugin(_ source: String, extra: [String: String] = [:], perform
     }
 }
 
+@Test func signInDiagnosticsKeepOnlyBoundedServiceCodesFromResponse() async throws {
+    try await withPlugin("""
+    export async function signIn() {
+      await fetch('https://api.example.test/login'); return true;
+    }
+    """) { _, root, manifest in
+        let directory = root.appendingPathComponent("data")
+        let runtime = try PluginRuntime(directory: root, dataDirectory: directory, manifest: manifest, transport: { request, _ in
+            let text = #"{"code":0,"status_code":"2046","error_code":9876543211234567,"data":{"error_code":1105,"cookie":"response-secret"},"message":"private-message","account":"private-account"}"#
+            return (Data(text.utf8), try #require(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: [:])))
+        })
+        #expect(try await runtime.invoke("signIn") == .bool(true))
+        let text = try String(contentsOf: directory.appendingPathComponent("sign-in-diagnostics.json"), encoding: .utf8)
+        let report = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
+        #expect(report["entries"].array.first?["serviceCodes"].array.compactMap(\.integer) == [0, 1105, 2046])
+        for secret in ["response-secret", "private-message", "private-account", "9876543211234567"] { #expect(!text.contains(secret)) }
+    }
+}
+
+@Test func pluginMediaProblemsUseCodesAndNeverGuessFromMessages() async throws {
+    try await withPlugin("""
+    export function search() { return {tracks:[{id:'one',name:'Track',unavailableReason:'vip'}], more:false}; }
+    export async function stream({id}) {
+      switch (id) {
+        case 'one': await new Promise(resolve => setTimeout(resolve, 0)); throw Object.assign(new Error('blocked'), {code:'vip'});
+        case 'two': return {url:''};
+        case 'three': throw new Error('VIP only');
+        default: return {url:'bad-url'};
+      }
+    }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let tracks = try await source.search(query: "Track", page: 1).tracks
+        #expect(tracks.first?.declaredProblem == .vip)
+        for id in ["one", "two", "three", "four"] {
+            do {
+                _ = try await source.audio(trackID: id)
+                Issue.record("Expected resolution to fail for \(id)")
+            } catch PluginFailure.playback(let problem, _) {
+                #expect(id == "one" && problem == .vip)
+            } catch let problem as TrackProblem {
+                #expect(id == "two" && problem == .noSource)
+            } catch PluginFailure.execution {
+                #expect(id == "three" || id == "four")
+            } catch {
+                Issue.record("Unexpected media error \(error)")
+            }
+        }
+    }
+}
+
 
 @Test func pluginInterruptsInfiniteModuleInitialization() async throws {
     try await withPlugin("while(true){} export function ok(){return 42;}") { runtime, _, _ in
         let started = ContinuousClock.now
         await #expect(throws: PluginFailure.self) { try await runtime.supports("ok") }
         #expect(ContinuousClock.now - started < .seconds(2))
+    }
+}
+
+private actor PluginRedirectFixture {
+    private(set) var paths: [String] = []
+    func response(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let url = try #require(request.url)
+        #expect(url.host == "api.example.test")
+        paths.append(url.path)
+        if url.path == "/done" {
+            #expect(request.httpMethod == "GET")
+            #expect(request.httpBody == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == "pending=synthetic")
+            return (Data("done".utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [:])))
+        }
+        let location = url.path == "/outside" ? "https://outside.example.test/" : url.path == "/loop" ? "/loop" : "/done"
+        return (Data("pending".utf8), try #require(HTTPURLResponse(url: url, statusCode: 302, httpVersion: nil,
+            headerFields: ["Location": location, "Set-Cookie": "session=synthetic; Path=/; HttpOnly"])))
+    }
+}
+
+@Test func pluginFetchRedirectModesPreserveManualSessionAndBoundFollowing() async throws {
+    try await withPlugin("""
+    export async function read({redirect='follow',path='/start'}) {
+      const response=await fetch('https://api.example.test'+path,{method:'POST',body:'ticket=synthetic',headers:{Cookie:'pending=synthetic'},redirect});
+      return {status:response.status,body:await response.text(),url:response.url,cookies:response.headers.getSetCookie(),location:response.headers.get('location')};
+    }
+    """) { _, root, manifest in
+        let fixture = PluginRedirectFixture()
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest,
+                                        transport: { request, _ in try await fixture.response(request) })
+        let manual = try await runtime.invoke("read", arguments: .object(["redirect": .string("manual")]))
+        #expect(manual["status"] == .number(302))
+        #expect(manual["body"] == .string("pending"))
+        #expect(manual["location"] == .string("/done"))
+        #expect(manual["cookies"].array == [.string("session=synthetic; Path=/; HttpOnly")])
+        #expect(await fixture.paths == ["/start"])
+        let followed = try await runtime.invoke("read")
+        #expect(followed["status"] == .number(200))
+        #expect(followed["url"] == .string("https://api.example.test/done"))
+        #expect(followed["body"] == .string("done"))
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["redirect": .string("error")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["path": .string("/outside")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["redirect": .string("unknown")])) }
+        await #expect(throws: PluginFailure.self) { try await runtime.invoke("read", arguments: .object(["path": .string("/loop")])) }
+        #expect(await fixture.paths == ["/start", "/start", "/done", "/start", "/outside"] + Array(repeating: "/loop", count: 10))
+    }
+}
+
+@Test func pluginWebSignInDocumentUsesPermittedOriginAndRejectsInvalidDocuments() async throws {
+    try await withPlugin("""
+    export const supported=()=>host.capabilities.webSignInHTML;
+    const options={url:'https://api.example.test/passport/',cookiesOf:'https://api.example.test/',until:['session'],html:'<!doctype html><meta charset="utf-8"><p>登录</p>'};
+    export const signIn=()=>host.webSignIn(options);
+    export const wrongPort=()=>host.webSignIn({...options,cookiesOf:'https://api.example.test:8443/'});
+    export const oversized=()=>host.webSignIn({...options,html:'x'.repeat(262145)});
+    export const wrongType=()=>host.webSignIn({...options,html:42});
+    """) { _, root, manifest in
+        let runtime = try PluginRuntime(directory: root, dataDirectory: root.appendingPathComponent("data"), manifest: manifest, webSignIn: { request in
+            #expect(request.url.absoluteString == "https://api.example.test/passport/")
+            #expect(request.html?.contains("登录") == true)
+            return .object(["cookie": .string("session=fixture")])
+        })
+        #expect(try await runtime.invoke("supported") == .bool(true))
+        #expect(try await runtime.invoke("signIn")["cookie"] == .string("session=fixture"))
+        for method in ["wrongPort", "oversized", "wrongType"] {
+            await #expect(throws: PluginFailure.self) { try await runtime.invoke(method) }
+        }
+    }
+}
+
+@Test @MainActor func pluginWebSignInBrokerRejectsLateCookiesAfterPageFailure() async throws {
+    let service = PluginUIService()
+    let request = PluginWebSignIn(title: "Fixture", url: URL(string: "https://example.test")!, cookiesOf: URL(string: "https://example.test")!, until: ["session"], userAgent: nil, html: "<p>Fixture</p>")
+    let task = Task { try await service.show(request) }
+    while service.signIn == nil { await Task.yield() }
+    service.fail(request.id, message: "平台拒绝（7）")
+    service.finish(request.id, cookie: "session=late")
+    await #expect(throws: PluginFailure.self) { try await task.value }
+    #expect(service.signIn == nil)
+}
+
+@Test func personalCatalogCachesPagesAcrossRecreationAndSeparatesAccountsAndMutations() async throws {
+    try await withPlugin("""
+    let who = 'a', calls = 0;
+    export function account() { return {id:who,name:who}; }
+    export function signOut() { who = 'guest'; }
+    export function signIn() { who = 'b'; return account(); }
+    export function liked({offset}) { calls++; return {tracks:[{id:who+offset,name:who+calls}],more:offset===0}; }
+    export function like() {}
+    export function callsCount() { return calls; }
+    """) { runtime, _, manifest in
+        let first = PluginSource(manifest: manifest, runtime: runtime)
+        let (page, more, count) = try await first.collection("liked")
+        #expect(page.sections.first?.tracks.first?.title == "a1")
+        #expect(more && count == 1)
+        let reopened = PluginSource(manifest: manifest, runtime: runtime)
+        let again = try await reopened.collection("liked")
+        #expect(again.0.sections.first?.tracks.first?.title == "a1")
+        _ = try await reopened.collection("liked", offset: 1)
+        #expect(try await runtime.invoke("callsCount") == .number(2))
+        try await reopened.signOut()
+        _ = try await reopened.collection("liked")
+        _ = try await reopened.signIn { _ in }
+        let other = try await reopened.collection("liked")
+        #expect(other.0.sections.first?.tracks.first?.sourceTrackID == "b0")
+        #expect(try await runtime.invoke("callsCount") == .number(4))
+        try await reopened.like(trackID: "b0", enabled: true)
+        _ = try await reopened.collection("liked")
+        #expect(try await runtime.invoke("callsCount") == .number(5))
+        await reopened.invalidateCatalog()
+        _ = try await reopened.collection("liked")
+        #expect(try await runtime.invoke("callsCount") == .number(6))
+    }
+}
+
+@Test func accountNetworkFailureDoesNotBlockPublicHomeOrCacheUnknownAccountData() async throws {
+    try await withPlugin("""
+    export function account() { throw Error('temporary account failure'); }
+    export function home() { const calls = (host.storage.get('calls') || 0) + 1; host.storage.set('calls', calls); return {title:'Public',sections:[{tracks:[{id:'one',name:String(calls)}]}]}; }
+    """) { runtime, _, manifest in
+        let source = PluginSource(manifest: manifest, runtime: runtime)
+        let first = try await source.home(), second = try await source.home()
+        #expect(first.sections.first?.tracks.first?.title == "1")
+        #expect(second.sections.first?.tracks.first?.title == "2")
     }
 }

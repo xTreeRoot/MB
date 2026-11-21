@@ -23,6 +23,7 @@ struct PluginPersonalLinks: View {
 
 enum PluginPageRequest {
     case home, browse(String), collection(String, String), entity(PluginEntity), search(String, String)
+    var isHome: Bool { if case .home = self { true } else { false } }
 }
 
 struct PluginCatalogPage: View {
@@ -35,8 +36,10 @@ struct PluginCatalogPage: View {
     @State private var loading = false
     @State private var loadRevision = 0
     @State private var initialLoad: Task<Void, Never>?
+    @State private var artworkPrefetch: Task<Void, Never>?
     @State private var offset = 0
     @State private var more = false
+    @State private var appendFailed = false
     @State private var capabilities: Set<String> = []
     @State private var changing = false
     @State private var enabled = false
@@ -47,17 +50,25 @@ struct PluginCatalogPage: View {
     @State private var adding = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.stationPlayback) private var playback
+    @Environment(\.sourceNames) private var sourceNames
     var body: some View {
-        List {
-            if case .home = request {
-                ForEach(Array((source.manifest.navigation ?? []).enumerated()), id: \.offset) { _, item in
-                    if let page = item.page { NavigationLink(item.title ?? page) { PluginBrowseView(source: source, page: page, select: select, menu: menu) } }
-                    else if let method = item.builtin, method == "home" || capabilities.contains(method) {
-                        NavigationLink(item.title ?? method) { PluginCatalogPage(source: source, request: method == "home" ? .home : .collection(method, item.title ?? method), select: select, menu: menu) }
-                    }
-                }
-                if capabilities.contains("search") { NavigationLink("搜索音源") { PluginCatalogSearch(source: source, select: select, menu: menu) } }
+        Group {
+            if request.isHome {
+                PluginDiscoveryHome(source: source, capabilities: capabilities, content: content, loading: loading, error: error,
+                                    retry: { Task { await load() } }, select: select, menu: menu)
+            } else {
+                catalogList
             }
+        }
+        .modifier(SkinSurface(defaultColor: MBTheme.background, enabled: request.isHome))
+        .navigationTitle(title)
+        .onAppear { startLoading() }
+        .onDisappear { initialLoad?.cancel(); initialLoad = nil; artworkPrefetch?.cancel() }
+        .refreshable { await source.invalidateCatalog(); await load() }
+    }
+
+    private var catalogList: some View {
+        List {
             if let content {
                 if !content.subtitle.isEmpty { Text(content.subtitle).font(.subheadline).foregroundStyle(.secondary) }
                 if !content.description.isEmpty { Text(content.description).font(.callout).foregroundStyle(.secondary) }
@@ -68,17 +79,12 @@ struct PluginCatalogPage: View {
                 ForEach(content.sections) { section in
                     Section {
                         if section.trackLayout == "videos" {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155))], spacing: 16) {
-                                ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
-                                    Button { play(section.tracks, index: index) } label: {
-                                        VStack(alignment: .leading) { RemoteArtwork(track: track).aspectRatio(16 / 9, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 10)); Text(track.title).font(.subheadline).lineLimit(2); Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                                    }.buttonStyle(.plain).contextMenu { menu(track) }.accessibilityLabel("播放 \(track.title)")
-                                }
-                            }
+                            VideoTrackGrid(tracks: section.tracks, select: { play($0, index: $1) }, menu: menu, includeArtistInLabel: false)
                         } else {
                         ForEach(Array(section.tracks.enumerated()), id: \.offset) { index, track in
                             HStack {
                                 Button { play(section.tracks, index: index) } label: { TrackRow(track: track) }.buttonStyle(.plain).accessibilityLabel("播放 \(track.title)")
+                                    .modifier(TrackProblemAccessibility(track: track))
                                 Menu { menu(track); playlistTrackActions(track, index: index) } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("曲目操作 \(track.title)")
                             }.contextMenu { menu(track); playlistTrackActions(track, index: index) }
                         }
@@ -86,7 +92,7 @@ struct PluginCatalogPage: View {
                         ForEach(section.entities) { entity in
                             NavigationLink { PluginCatalogPage(source: source, request: .entity(entity), select: select, menu: menu) } label: {
                                 HStack(spacing: 12) {
-                                    if let url = entity.value["imageUrl"].string.flatMap(URL.init(string:)) { ArtworkView(track: Track(sourceID: source.manifest.id, sourceTrackID: entity.id, title: entity.title, artist: "", artworkURL: url, durationMilliseconds: 0)) }
+                                    if entity.value["imageUrl"].string != nil { ArtworkView(track: entity.artworkTrack(sourceID: source.manifest.id)) }
                                     else { Image(systemName: entity.kind == .artist ? "person.crop.circle.fill" : entity.kind == .playlist ? "music.note.list" : "square.stack.fill").font(.title2).foregroundStyle(MBTheme.accent).frame(width: 52, height: 52).background(MBTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10)) }
                                     VStack(alignment: .leading, spacing: 5) { Text(entity.title).font(.headline); if !entity.subtitle.isEmpty { Text(entity.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) } }
                                 }
@@ -114,26 +120,15 @@ struct PluginCatalogPage: View {
                 if capabilities.contains("renamePlaylist") { Button("重命名歌单") { name = content?.title ?? item.title; rename = true } }
                 if capabilities.contains("deletePlaylist") { Button("删除平台歌单", role: .destructive) { delete = true } }
             }
-            if more { Button("加载更多") { Task { await load(append: true) } }.disabled(loading) }
+            if more { PaginationFooter(page: "\(loadRevision):\(offset)", loading: loading, blocked: error != nil || changing) { await load(append: true) } }
             if loading { ProgressView() }
-            if let error { Text(error).foregroundStyle(.red); Button("重试") { Task { await load() } } }
+            if let error { Text(error).foregroundStyle(.red); Button("重试") { Task { await load(append: appendFailed) } } }
             if !loading && content?.sections.isEmpty != false && error == nil { ContentUnavailableView("暂无内容", systemImage: "music.note") }
         }
         .listStyle(.plain)
+        .modifier(PaginationViewport())
+        .modifier(SkinSurface(list: true, enabled: request.isHome))
         .navigationTitle(title)
-        .onAppear {
-            initialLoad?.cancel()
-            initialLoad = Task {
-                var found: Set<String> = []
-                for method in ["liked", "savedAlbums", "stations", "shows", "search", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "movePlaylistTrack", "savePlaylist", "saveAlbum", "followArtist", "subscribeShow"] where (try? await source.supports(method)) == true { found.insert(method) }
-                guard !Task.isCancelled else { return }
-                capabilities = found
-                if case .entity(let item) = request { enabled = item.value["saved"] == .bool(true) || item.value["following"] == .bool(true) || item.value["subscribed"] == .bool(true) }
-                await load()
-            }
-        }
-        .onDisappear { initialLoad?.cancel(); initialLoad = nil }
-        .refreshable { await load() }
         .alert("歌单名称", isPresented: $rename) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("保存") { Task { await playlistName(create: false) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
         .alert("新建平台歌单", isPresented: $create) { TextField("名称", text: $name); Button("取消", role: .cancel) {}; Button("创建") { Task { await playlistName(create: true) } }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || changing) }
         .sheet(isPresented: $adding) {
@@ -145,11 +140,23 @@ struct PluginCatalogPage: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
                 guard case .entity(let item) = request else { return }
-                Task { await change { _ = try await source.runtime.invoke("deletePlaylist", arguments: .object(["id": .string(item.sourceID)])); dismiss() } }
+                Task { await change { try await source.mutate("deletePlaylist", arguments: .object(["id": .string(item.sourceID)])); dismiss() } }
             }
         }
     }
+    private func startLoading() {
+        initialLoad?.cancel()
+        initialLoad = Task {
+            var found: Set<String> = []
+            for method in ["liked", "savedAlbums", "stations", "shows", "search", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "movePlaylistTrack", "savePlaylist", "saveAlbum", "followArtist", "subscribeShow"] where (try? await source.supports(method)) == true { found.insert(method) }
+            guard !Task.isCancelled else { return }
+            capabilities = found
+            if case .entity(let item) = request { enabled = item.value["saved"] == .bool(true) || item.value["following"] == .bool(true) || item.value["subscribed"] == .bool(true) }
+            await load()
+        }
+    }
     private var title: String {
+        if request.isHome { return sourceNames[source.manifest.id] ?? source.displayName }
         if case .collection(_, let title) = request { return AppLocalization.text(title) }
         if let content, !content.title.isEmpty { return content.title }
         switch request { case .home: return source.displayName; case .browse(let page): return page; case .collection(_, let title): return title; case .entity(let item): return item.title; case .search(let query, _): return query }
@@ -172,12 +179,12 @@ struct PluginCatalogPage: View {
     @ViewBuilder private func playlistTrackActions(_ track: Track, index: Int) -> some View {
         if case .entity(let item) = request, item.kind == .playlist, item.value["mine"] == .bool(true), item.value["fixed"] != .bool(true) {
             if capabilities.contains("removeFromPlaylist") { Button("从歌单移除", role: .destructive) { Task { await playlistTracks("removeFromPlaylist", ids: [track.sourceTrackID]) } } }
-            if capabilities.contains("movePlaylistTrack"), index > 0 { Button("向上移动") { Task { await change { _ = try await source.runtime.invoke("movePlaylistTrack", arguments: .object(["id": .string(item.sourceID), "from": .number(Double(index)), "to": .number(Double(index - 1))])); await load() } } } }
+            if capabilities.contains("movePlaylistTrack"), index > 0 { Button("向上移动") { Task { await change { try await source.mutate("movePlaylistTrack", arguments: .object(["id": .string(item.sourceID), "from": .number(Double(index)), "to": .number(Double(index - 1))])); await load() } } } }
         }
     }
     private func playlistTracks(_ method: String, ids: [String]) async {
         guard !ids.isEmpty, case .entity(let item) = request else { return }
-        await change { _ = try await source.runtime.invoke(method, arguments: .object(["id": .string(item.sourceID), "trackIds": .array(ids.map(PluginJSON.string))])); await load() }
+        await change { try await source.mutate(method, arguments: .object(["id": .string(item.sourceID), "trackIds": .array(ids.map(PluginJSON.string))])); await load() }
     }
     private func playlistName(create: Bool) async {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -185,11 +192,13 @@ struct PluginCatalogPage: View {
         await change {
             var values: [String: PluginJSON] = ["name": .string(name)]
             if case .entity(let item) = request { values["id"] = .string(item.sourceID) }
-            _ = try await source.runtime.invoke(create ? "createPlaylist" : "renamePlaylist", arguments: .object(values)); await load()
+            try await source.mutate(create ? "createPlaylist" : "renamePlaylist", arguments: .object(values)); await load()
         }
     }
     private func change(_ operation: () async throws -> Void) async { guard !changing else { return }; changing = true; defer { changing = false }; do { try await operation() } catch { self.error = error.localizedDescription } }
     private func load(append: Bool = false) async {
+        if append { guard more, !loading else { return } }
+        appendFailed = append
         loadRevision += 1
         let revision = loadRevision
         loading = true; error = nil
@@ -207,6 +216,9 @@ struct PluginCatalogPage: View {
             if append, var previous = content { previous.sections += page.sections.enumerated().map { index, section in section.reidentified("\(offset)-\(index)") }; content = previous; offset += count }
             else { content = page; offset = count }
             more = hasMore && count > 0
+            artworkPrefetch?.cancel()
+            let artwork = page.artworkTracks(sourceID: source.manifest.id)
+            artworkPrefetch = Task { await ArtworkCache.shared.prefetch(artwork) }
         } catch { if revision == loadRevision, !Task.isCancelled { self.error = error.localizedDescription } }
     }
 }

@@ -29,7 +29,7 @@ struct DownloadsView: View {
                         }
                     }
                 }
-                if query.isEmpty { navigation; recentAdditions; playlists }
+                if query.isEmpty { navigation; ResourceLibrarySection(library: library, playback: playback); recentAdditions; playlists }
                 else { results }
                 Section {
                     HStack { Text("播放缓存"); Spacer(); Text(ByteCountFormatter.string(fromByteCount: model.cacheBytes, countStyle: .file)).foregroundStyle(.secondary) }
@@ -38,7 +38,9 @@ struct DownloadsView: View {
                 if let error = model.errorMessage ?? library.errorMessage { Text(LocalizedStringKey(error)).font(.caption).foregroundStyle(.red) }
             }
             .modifier(MusicGroupedList())
-            .navigationTitle("资料库")
+            .modifier(SkinSurface(list: true, base: MBTheme.grouped))
+            .navigationTitle("")
+            .modifier(CompactRootNavigation())
             .confirmationDialog("清空播放缓存？", isPresented: $clearingCache, titleVisibility: .visible) {
                 Button("清空播放缓存", role: .destructive) { Task { await model.clearCache() } }
             } message: { Text("已下载和导入的音频会保留。") }

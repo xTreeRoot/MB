@@ -17,8 +17,9 @@ public final class InteractionModel {
     public private(set) var likeError: String?
     @ObservationIgnored private let source: any InteractionSource
     @ObservationIgnored private let track: Track
-    @ObservationIgnored private var nextPage = 1
-    @ObservationIgnored private var generation = 0
+    public private(set) var nextPage = 1
+    private var generation = 0
+    public var paginationGeneration: Int { generation }
     public init(source: any InteractionSource, track: Track) { self.source = source; self.track = track }
 
     public func loadLike() async {

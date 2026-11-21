@@ -12,36 +12,44 @@ private final class PluginContext: @unchecked Sendable {
 
 /// QuickJS 仅在本 actor 串行执行。长请求异步离开解释器，取消可直接中断同步 JS 循环。
 public actor PluginRuntime {
+    /// 单跳网络传输；由运行时执行 fetch 的重定向模式和逐跳权限检查。
     public typealias Transport = @Sendable (URLRequest, PluginManifest.Permissions) async throws -> (Data, HTTPURLResponse)
+    public nonisolated let catalogCache: ResponseCache
     private let host: PluginHostState
     private var signInDiagnostics: PluginSignInDiagnostics?
     private var context: PluginContext?
     private struct Completed: Sendable { let id: Int32; let success: Bool; let value: PluginJSON }
     private var events: [Int32: Task<Void, Never>] = [:]
-    private var backgroundFailure: String?
+    private var backgroundFailure: (any Error)?
     private var loaded = false
     private var busy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private let transport: Transport
     private let webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON
+    private let oauthSignIn: @Sendable (PluginOAuthRequest) async throws -> PluginJSON
     private let openURL: @Sendable (URL, String) async throws -> Void
     public init(directory: URL, dataDirectory: URL, manifest: PluginManifest, settings: [String: String] = [:],
                 webSignIn: @escaping @Sendable (PluginWebSignIn) async throws -> PluginJSON = { _ in throw PluginFailure.unavailable },
+                oauthSignIn: @escaping @Sendable (PluginOAuthRequest) async throws -> PluginJSON = { _ in throw PluginFailure.unavailable },
                 openURL: @escaping @Sendable (URL, String) async throws -> Void = { _, _ in throw PluginFailure.unavailable },
                 transport: @escaping Transport = { request, permissions in
-                    let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 16 * 1_024 * 1_024, permitting: { url in
+                    let (data, response) = try await NetworkClient.shared.data(for: request, maximumBytes: 16 * 1_024 * 1_024, followRedirects: false, permitting: { url in
                         ["http", "https"].contains(url.scheme ?? "") && url.user == nil && permissions.reaches(url.host ?? "")
                     })
                     guard let response = response as? HTTPURLResponse else { throw NetworkFailure.response }
                     return (data, response)
                 }) throws {
         try manifest.validate()
+        catalogCache = ResponseCache(directory: dataDirectory.appendingPathComponent("catalog-cache", isDirectory: true))
         host = try PluginHostState(root: directory, data: dataDirectory, manifest: manifest, settings: settings)
-        self.transport = transport; self.webSignIn = webSignIn; self.openURL = openURL
+        self.transport = transport; self.webSignIn = webSignIn; self.oauthSignIn = oauthSignIn; self.openURL = openURL
     }
     deinit { for task in events.values { task.cancel() } }
     public func headers(for url: URL, kind: String) throws -> [String: String] { try host.headers(for: url, kind: kind) }
-    public func updateSettings(_ settings: [String: String]) { host.settings = settings }
+    public func updateSettings(_ settings: [String: String]) async {
+        host.settings = settings
+        await catalogCache.invalidate()
+    }
     public func setPrompt(_ prompt: (@Sendable (SignInPrompt) -> Void)?) { host.prompt = prompt }
     public func supports(_ name: String) async throws -> Bool {
         await acquire(); defer { release() }
@@ -115,8 +123,8 @@ public actor PluginRuntime {
         let deadline = ContinuousClock.now + timeout
         while true {
             try Task.checkCancellation()
-            if let backgroundFailure { throw PluginFailure.execution(backgroundFailure) }
-            if status < 0 { throw PluginFailure.execution(readResult(context)) }
+            if let backgroundFailure { throw backgroundFailure }
+            if status < 0 { throw readFailure(context) }
             try scheduleEvents(context)
             if status > 0 { return try JSONDecoder().decode(PluginJSON.self, from: Data(readResult(context).utf8)) }
             guard ContinuousClock.now < deadline else { context.cancel(); throw PluginFailure.execution("Execution timed out") }
@@ -131,16 +139,19 @@ public actor PluginRuntime {
             let event = try JSONDecoder().decode(PluginJSON.self, from: Data(text.utf8))
             if event["kind"].string == "cancel", let id = event["request"].integer { events.removeValue(forKey: Int32(id))?.cancel(); continue }
             guard let id = event["id"].integer, events.count < 512 else { throw PluginFailure.execution("Host request limit exceeded") }
-            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, openURL = openURL, name = host.manifest.displayName, diagnostics = signInDiagnostics
+            let permissions = host.manifest.permissions, transport = transport, webSignIn = webSignIn, oauthSignIn = oauthSignIn, openURL = openURL, name = host.manifest.displayName, diagnostics = signInDiagnostics
             events[Int32(id)] = Task { [weak self] in
                 let completed: Completed
                 do {
-                    let value = try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, openURL: openURL, transport: transport)
+                    let value = try await Self.process(event, permissions: permissions, name: name, webSignIn: webSignIn, oauthSignIn: oauthSignIn, openURL: openURL, transport: transport)
                     await diagnostics?.record(event, result: value, error: nil)
                     completed = Completed(id: Int32(id), success: true, value: value)
                 } catch {
                     await diagnostics?.record(event, result: nil, error: error)
-                    completed = Completed(id: Int32(id), success: false, value: .string(error.localizedDescription))
+                    completed = Completed(id: Int32(id), success: false, value: .object([
+                        "message": .string(error.localizedDescription),
+                        "code": TrackProblem.isConnectionError(error) ? .string("network") : .null,
+                    ]))
                 }
                 guard !Task.isCancelled else { return }
                 await self?.complete(completed, context: context)
@@ -153,9 +164,19 @@ public actor PluginRuntime {
         do {
             let json = try completed.value.encoded()
             let status = json.withCString { mbjs_settle(context.pointer, completed.id, completed.success ? 1 : 0, $0, 100) }
-            if status < 0 { backgroundFailure = readResult(context) }
+            if status < 0 { backgroundFailure = readFailure(context) }
             else { try scheduleEvents(context) }
-        } catch { backgroundFailure = error.localizedDescription }
+        } catch { backgroundFailure = error }
+    }
+    private func readFailure(_ context: PluginContext) -> any Error {
+        let message = readResult(context)
+        if let pointer = mbjs_error_code(context.pointer) {
+            defer { mbjs_free_string(pointer) }
+            let code = String(cString: pointer)
+            if let problem = TrackProblem.declared(code) { return PluginFailure.playback(problem, message) }
+            if code == "network" { return PluginFailure.playback(.network, message) }
+        }
+        return PluginFailure.execution(message)
     }
     private func readResult(_ context: PluginContext) -> String {
         guard let result = mbjs_result(context.pointer) else { return "null" }
@@ -172,7 +193,10 @@ public actor PluginRuntime {
         }
         result.append(header[start...].trimmingCharacters(in: .whitespaces)); return result
     }
-    private nonisolated static func process(_ event: PluginJSON, permissions: PluginManifest.Permissions?, name: String, webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON, openURL: @Sendable (URL, String) async throws -> Void, transport: Transport) async throws -> PluginJSON {
+    private nonisolated static func process(_ event: PluginJSON, permissions: PluginManifest.Permissions?, name: String, webSignIn: @Sendable (PluginWebSignIn) async throws -> PluginJSON, oauthSignIn: @Sendable (PluginOAuthRequest) async throws -> PluginJSON, openURL: @Sendable (URL, String) async throws -> Void, transport: Transport) async throws -> PluginJSON {
+        if event["kind"].string == "oauthSignIn" {
+            return try await oauthSignIn(PluginOAuthRequest(event["options"], permissions: permissions))
+        }
         if event["kind"].string == "openURL" {
             guard let address = event["url"].string, let url = URL(string: address), ["http", "https"].contains(url.scheme ?? ""), url.user == nil, url.host != nil else { throw PluginFailure.invalid("Not a web address") }
             try await openURL(url, name); return .null
@@ -184,7 +208,12 @@ public actor PluginRuntime {
                   let permissions, permissions.reaches(url.host ?? ""), permissions.reaches(target.host ?? "") else { throw PluginFailure.invalid("Sign-in page outside plugin network permissions") }
             let until = value["until"].array.compactMap(\.string)
             guard !until.isEmpty, until.allSatisfy({ !$0.isEmpty && !$0.contains(where: { "=;\r\n".contains($0) }) }) else { throw PluginFailure.invalid("Sign-in requires completion cookie names") }
-            return try await webSignIn(PluginWebSignIn(title: name, url: url, cookiesOf: target, until: until, userAgent: value["userAgent"].string))
+            let html = value["html"].string
+            if value["html"] != .null {
+                guard let html, !html.isEmpty, html.utf8.count <= 256 * 1_024,
+                      url.host == target.host, url.port == target.port else { throw PluginFailure.invalid("Invalid sign-in document or cookie origin") }
+            }
+            return try await webSignIn(PluginWebSignIn(title: name, url: url, cookiesOf: target, until: until, userAgent: value["userAgent"].string, html: html))
         }
         if event["kind"].string == "timer" {
             try await Task.sleep(for: .milliseconds(min(300_000, max(0, event["delay"].integer ?? 0)))); return .null
@@ -201,12 +230,26 @@ public actor PluginRuntime {
         }
         request.httpBody = event["body"].string.map { Data($0.utf8) }
         guard (request.httpBody?.count ?? 0) <= 8 * 1_024 * 1_024 else { throw PluginFailure.invalid("Request body too large") }
-        let (data, response) = try await transport(request, permissions)
-        guard data.count <= 16 * 1_024 * 1_024 else { throw PluginFailure.invalid("Response body too large") }
-        let headers = Dictionary(uniqueKeysWithValues: response.allHeaderFields.compactMap { key, value -> (String, PluginJSON)? in
-            guard let key = key as? String else { return nil }; return (key.lowercased(), .string(String(describing: value)))
-        })
-        let cookies = response.value(forHTTPHeaderField: "Set-Cookie").map(Self.setCookies) ?? []
-        return .object(["setCookies": .array(cookies.map(PluginJSON.string)), "status": .number(Double(response.statusCode)), "url": .string(response.url?.absoluteString ?? url.absoluteString), "headers": .object(headers), "body": .string(String(decoding: data, as: UTF8.self)), "base64": .string(data.base64EncodedString())])
+        let redirect = event["redirect"].string ?? "follow"
+        guard ["follow", "manual", "error"].contains(redirect) else { throw PluginFailure.invalid("Invalid fetch redirect mode") }
+        // transport 只执行单跳，先让插件决定是否消费 3xx 和其中的会话响应头。
+        for _ in 0..<10 {
+            try Task.checkCancellation()
+            guard let target = request.url, ["http", "https"].contains(target.scheme ?? ""),
+                  target.user == nil, permissions.reaches(target.host ?? "") else { throw PluginFailure.invalid("Request outside plugin network permissions") }
+            let (data, response) = try await transport(request, permissions)
+            guard data.count <= 16 * 1_024 * 1_024 else { throw PluginFailure.invalid("Response body too large") }
+            if redirect != "manual", [301, 302, 303, 307, 308].contains(response.statusCode) {
+                guard redirect == "follow", let next = try NetworkClient.redirect(request, response: response) else { throw NetworkFailure.redirect }
+                request = next
+                continue
+            }
+            let headers = Dictionary(uniqueKeysWithValues: response.allHeaderFields.compactMap { key, value -> (String, PluginJSON)? in
+                guard let key = key as? String else { return nil }; return (key.lowercased(), .string(String(describing: value)))
+            })
+            let cookies = response.value(forHTTPHeaderField: "Set-Cookie").map(Self.setCookies) ?? []
+            return .object(["setCookies": .array(cookies.map(PluginJSON.string)), "status": .number(Double(response.statusCode)), "url": .string(response.url?.absoluteString ?? target.absoluteString), "headers": .object(headers), "body": .string(String(decoding: data, as: UTF8.self)), "base64": .string(data.base64EncodedString())])
+        }
+        throw NetworkFailure.redirect
     }
 }

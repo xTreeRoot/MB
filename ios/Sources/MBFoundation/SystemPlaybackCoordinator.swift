@@ -103,14 +103,11 @@ import AppKit
             artworkTrack = track.id; artwork = nil; artworkTask?.cancel()
             if let url = track.artworkURL {
                 artworkTask = Task { [weak self] in
-                    var request = URLRequest(url: url); request.allHTTPHeaderFields = track.artworkHeaders
                     do {
                         let data: Data
                         if url.isFileURL { data = try await Task.detached(priority: .utility) { try Data(contentsOf: url) }.value }
                         else {
-                            let (bytes, response) = try await NetworkClient.shared.data(for: request)
-                            guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else { return }
-                            data = bytes
+                            data = try await ArtworkCache.shared.data(url: url, sourceID: track.sourceID, headers: track.artworkHeaders)
                         }
                         guard !Task.isCancelled, self?.artworkTrack == track.id else { return }
                         self?.artwork = Self.makeArtwork(data: data)
@@ -119,18 +116,19 @@ import AppKit
                 }
             }
         }
-        var artist = track.artist
+        var title = track.title
+        let artist = lyricsEnabled ? track.title : track.artist
         if lyricsEnabled, let index = playback.timeline.activeIndex(at: playback.positionMilliseconds) {
             let line = playback.timeline.lines[index].text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            if !line.isEmpty { artist = line }
+            if !line.isEmpty { title = line }
         }
         // 普通进度每秒更新；同一秒内换句、拖动、切曲或修改设置立即更新。
-        let key = InfoKey(trackID: track.id, title: track.title, artist: artist,
+        let key = InfoKey(trackID: track.id, title: title, artist: artist,
                           second: playback.positionMilliseconds / 1_000, duration: playback.durationMilliseconds,
                           controlRevision: playback.controlRevision, playing: playback.state == .playing, artwork: artwork != nil)
         guard key != infoKey else { return }; infoKey = key
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: track.title, MPMediaItemPropertyArtist: artist,
+            MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: artist,
             MPMediaItemPropertyPlaybackDuration: Double(playback.durationMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(playback.positionMilliseconds) / 1_000,
             MPNowPlayingInfoPropertyPlaybackRate: playback.state == .playing ? 1.0 : 0.0,
