@@ -11,7 +11,9 @@
 # quit first.
 set -euo pipefail
 
-name="MB"
+name="山海"
+storage_name="MB"
+app_suffix=""
 id="com.xtreeroot.mb"
 release=0 songs=0
 for arg in "$@"; do
@@ -30,6 +32,8 @@ for arg in "$@"; do
 done
 if [[ $release == 0 ]]; then
 	name+=" Dev"
+	storage_name+=" Dev"
+	app_suffix=" Dev"
 	id+=".dev"
 fi
 
@@ -37,17 +41,17 @@ if [[ $(uname) != Darwin ]]; then
 	echo "only macOS for now" >&2
 	exit 1
 fi
-data="$HOME/Library/Application Support/$name"
-cache="$HOME/Library/Caches/$name"
+data="$HOME/Library/Application Support/$storage_name"
+cache="$HOME/Library/Caches/$storage_name"
 
-if pgrep -f "/$name.app/Contents/MacOS/" >/dev/null; then
+if pgrep -f "/(山海|MB)$app_suffix\.app/Contents/MacOS/" >/dev/null; then
 	echo "quitting $name…"
 	osascript -e "tell application id \"$id\" to quit" >/dev/null 2>&1 || true
 	for _ in $(seq 50); do
-		pgrep -f "/$name.app/Contents/MacOS/" >/dev/null || break
+		pgrep -f "/(山海|MB)$app_suffix\.app/Contents/MacOS/" >/dev/null || break
 		sleep 0.1
 	done
-	if pgrep -f "/$name.app/Contents/MacOS/" >/dev/null; then
+	if pgrep -f "/(山海|MB)$app_suffix\.app/Contents/MacOS/" >/dev/null; then
 		echo "$name is still running: quit it and try again" >&2
 		exit 1
 	fi

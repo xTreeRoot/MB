@@ -1,7 +1,8 @@
+/** 定义山海网站品牌、介绍、源码地址及构建时的发布与插件数据。 */
 import type { Lang } from './i18n'
 import type { Plugin } from './plugins'
 
-export const repo = 'https://github.com/egoist/mygo-music'
+export const repo = 'https://github.com/xTreeRoot/ShanhaiMusic'
 
 export type Asset = { name: string; size: number; browser_download_url: string }
 export type Release = { tag_name: string; published_at: string; assets: Asset[] }
@@ -16,13 +17,13 @@ export const builtPlugins = __PLUGINS__
 export const mygo = 'https://mygo.egoist.dev'
 
 export const site = {
-  name: 'MyGo Music',
+  name: '山海',
   title: {
-    en: 'MyGo Music — a native music player for your files, and more',
-    zh: 'MyGo Music — 原生的桌面音乐播放器',
+    en: 'Shanhai · Every platform, one place',
+    zh: '山海 · 万端归一',
   } satisfies Record<Lang, string>,
   description: {
-    en: 'A desktop music player written in Go with MyGo, no WebView. It plays your local files out of the box, with tags, covers and lyrics, and everything else comes from plugins.',
-    zh: '用 Go 与 MyGo 写成的桌面音乐播放器，原生界面，没有 WebView。开箱即可播放本地音乐，读取标签、封面与歌词；其余的一切，交给插件。',
+    en: 'Shanhai brings music, video and information together through plugins, with native desktop, iOS and Android clients.',
+    zh: '山海 · 万端归一。通过插件连接音乐、视频与资讯，提供桌面、iOS 和 Android 原生客户端。',
   } satisfies Record<Lang, string>,
 }

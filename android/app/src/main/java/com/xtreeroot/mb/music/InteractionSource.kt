@@ -1,0 +1,19 @@
+package com.xtreeroot.mb.music
+
+data class TrackComment(val id: String, val author: String, val avatarUrl: String?, val text: String, val likes: Int,
+                        val timeMs: Long = 0, val liked: Boolean = false)
+
+data class CommentPage(val comments: List<TrackComment>, val total: Int, val nextCursor: Int?)
+
+data class InteractionCapabilities(val likes: Boolean = true, val comments: Boolean = true,
+                                   val posting: Boolean = true, val commentLikes: Boolean = false)
+
+interface InteractionSource : MusicSource {
+    suspend fun interactionCapabilities(): InteractionCapabilities = InteractionCapabilities()
+    suspend fun isLiked(trackId: String): Boolean
+    suspend fun like(trackId: String, enabled: Boolean)
+    suspend fun comments(trackId: String, cursor: Int? = null): CommentPage
+    suspend fun postComment(trackId: String, text: String): TrackComment
+    suspend fun likeComment(trackId: String, commentId: String, enabled: Boolean): Unit =
+        throw UnsupportedOperationException("Comment likes are not available")
+}

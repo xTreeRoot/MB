@@ -1,0 +1,80 @@
+package com.xtreeroot.mb.ui
+
+import com.xtreeroot.mb.plugin.PluginCatalogPage
+import com.xtreeroot.mb.plugin.PluginCatalogSection
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PluginCatalogPagerTest {
+    @Test fun refreshRetainsLoadedPagesUntilTheReplacementSucceedsAndRestartsAtZero() = runBlocking {
+        val pager = PluginCatalogPager()
+        pager.load { page("First", 3) }
+        pager.load(append = true) { page("Second", 6) }
+        val paginated = pager.state.value.page
+        pager.invalidate()
+        assertTrue(pager.state.value.needsReload)
+        assertEquals(paginated, pager.state.value.page)
+
+        pager.load { offset ->
+            assertEquals(0, offset)
+            assertTrue(pager.state.value.busy)
+            assertFalse(pager.state.value.appending)
+            assertEquals(paginated, pager.state.value.page)
+            error("offline")
+        }
+        assertEquals(paginated, pager.state.value.page)
+        assertEquals("offline", pager.state.value.error)
+        assertFalse(pager.state.value.needsReload)
+        assertFalse(pager.state.value.appendRetry)
+
+        val replacement = page("New", 2)
+        pager.invalidate()
+        pager.load { offset -> assertEquals(0, offset); replacement }
+        assertEquals(replacement, pager.state.value.page)
+        assertFalse(pager.state.value.needsReload)
+    }
+
+    @Test fun failedAppendRetriesAtSameOffsetAndDoesNotDropTheCurrentPage() = runBlocking {
+        val pager = PluginCatalogPager()
+        val first = page("First", 3)
+        val second = page("Second", null)
+        pager.load { offset -> assertEquals(0, offset); first }
+        pager.load(append = true) { offset -> assertEquals(3, offset); error("offline") }
+        assertEquals(first, pager.state.value.page)
+        assertTrue(pager.state.value.appendRetry)
+        assertEquals("offline", pager.state.value.error)
+        pager.load(append = true) { offset -> assertEquals(3, offset); second }
+        assertEquals(first.sections + second.sections, pager.state.value.page?.sections)
+        assertNull(pager.state.value.error)
+        assertFalse(pager.state.value.appendRetry)
+    }
+
+    @Test fun cancelledRetryRestoresErrorAndAStalledCursorStopsPaging() = runBlocking {
+        val pager = PluginCatalogPager()
+        pager.load { page("First", 3) }
+        pager.load(append = true) { error("offline") }
+        val previous = pager.state.value
+        val started = CompletableDeferred<Unit>()
+        val retry = launch {
+            pager.load(append = true) { started.complete(Unit); awaitCancellation() }
+        }
+        started.await()
+        retry.cancelAndJoin()
+        assertEquals(previous, pager.state.value)
+        pager.load(append = true) { offset -> page("", offset) }
+        assertNull(pager.state.value.page?.nextOffset)
+        pager.load(append = true) { throw AssertionError("A stalled page should not trigger another request") }
+    }
+
+    private fun page(title: String, next: Int?) = PluginCatalogPage("Catalog", "", "", listOf(
+        PluginCatalogSection(title, emptyList(), emptyList(), emptyList(), null, "", false),
+    ), next)
+}

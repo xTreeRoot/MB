@@ -225,7 +225,7 @@ func installError(err error) string {
 		return T("There's no such public repository on GitHub")
 	}
 	if needs, ok := errors.AsType[*plugin.NeedsNewerApp](err); ok {
-		return Tf("%s needs a newer MB version compatible with MyGo Music %s or later.", needs.Plugin, needs.Version)
+		return Tf("%s needs a newer Shanhai version compatible with MyGo Music %s or later.", needs.Plugin, needs.Version)
 	}
 	return err.Error()
 }

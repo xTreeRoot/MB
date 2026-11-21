@@ -1,0 +1,190 @@
+package com.xtreeroot.mb.plugin
+
+import com.xtreeroot.mb.music.Track
+import org.json.JSONArray
+import org.json.JSONObject
+
+internal enum class PluginEntityKind(val method: String, val key: String) {
+    Album("album", "albums"), Artist("artist", "artists"), Playlist("playlist", "playlists"),
+    Show("show", "shows"), Station("stationNext", "stations"),
+}
+
+internal enum class PluginCollection(val method: String) {
+    Playlists("playlists"), Liked("liked"), Recent("recent"), SavedAlbums("savedAlbums"), Shows("shows"), Stations("stations"),
+}
+
+internal enum class PluginSearchKind(val key: String, val method: String = "search") {
+    Tracks("tracks"), Albums("albums"), Artists("artists"), Playlists("playlists"), Shows("shows"), Videos("tracks", "searchVideos"),
+}
+
+internal data class PluginImage(val url: String, val headers: Map<String, String>)
+
+internal data class PluginEntity(val kind: PluginEntityKind, val id: String, val title: String,
+                                 val subtitle: String = "", val image: PluginImage? = null,
+                                 val saved: Boolean = false, val owned: Boolean = false, val fixed: Boolean = false) {
+    val editable: Boolean get() = kind == PluginEntityKind.Playlist && owned && !fixed
+    val saveMethod: String? get() = when (kind) {
+        PluginEntityKind.Album -> "saveAlbum"
+        PluginEntityKind.Artist -> "followArtist"
+        PluginEntityKind.Playlist -> if (owned) null else "savePlaylist"
+        PluginEntityKind.Show -> "subscribeShow"
+        PluginEntityKind.Station -> null
+    }
+}
+
+internal sealed interface PluginCatalogRequest {
+    data object Home : PluginCatalogRequest
+    data class Browse(val page: String, val title: String) : PluginCatalogRequest
+    data class Collection(val collection: PluginCollection, val title: String) : PluginCatalogRequest
+    data class Entity(val entity: PluginEntity) : PluginCatalogRequest
+    data class Search(val query: String, val kind: PluginSearchKind) : PluginCatalogRequest
+}
+
+internal data class PluginCatalogLink(val title: String, val subtitle: String, val destination: PluginCatalogRequest,
+                                     val image: PluginImage? = null)
+
+internal data class PluginCatalogSection(val title: String, val tracks: List<Track>, val entities: List<PluginEntity>,
+                                         val links: List<PluginCatalogLink>, val more: PluginCatalogLink?,
+                                         val empty: String, val videos: Boolean) {
+    val hasContent get() = tracks.isNotEmpty() || entities.isNotEmpty() || links.isNotEmpty() || more != null || empty.isNotBlank()
+}
+
+internal data class PluginCatalogPage(val title: String, val subtitle: String, val description: String,
+                                      val sections: List<PluginCatalogSection>, val nextOffset: Int? = null)
+
+internal class PluginCatalog(
+    private val manifest: PluginManifest,
+    private val runtime: PluginRuntime,
+    private val readTracks: suspend (JSONArray) -> List<Track>,
+    private val readImage: suspend (String?) -> PluginImage?,
+    private val cachedInvoke: suspend (String, JSONObject) -> Any,
+) {
+    suspend fun invalidate() = runtime.catalogCache.invalidate()
+    suspend fun supports(method: String) = runtime.supports(method)
+
+    suspend fun navigation(): List<PluginCatalogLink> = manifest.navigation.mapNotNull { item ->
+        val page = item.page?.takeIf(String::isNotBlank)
+        if (page != null) {
+            val title = item.title ?: page
+            PluginCatalogLink(title, "", PluginCatalogRequest.Browse(page, title))
+        } else {
+            val collection = PluginCollection.entries.find { it.method == item.builtin } ?: return@mapNotNull null
+            if (!supports(collection.method)) return@mapNotNull null
+            val title = item.title.orEmpty()
+            PluginCatalogLink(title, "", PluginCatalogRequest.Collection(collection, title))
+        }
+    }
+
+    suspend fun load(request: PluginCatalogRequest, offset: Int = 0): PluginCatalogPage = when (request) {
+        PluginCatalogRequest.Home -> {
+            val home = if (supports("home")) cachedInvoke("home", JSONObject()).objectValue() else JSONObject()
+            page(home, manifest.name)
+        }
+        is PluginCatalogRequest.Browse -> page(cachedInvoke("browse", arguments(offset).put("page", request.page)).objectValue(), request.title, offset)
+        is PluginCatalogRequest.Collection -> collection(request, offset)
+        is PluginCatalogRequest.Entity -> entity(request.entity, offset)
+        is PluginCatalogRequest.Search -> {
+            val args = arguments(offset).put("query", request.query)
+            if (request.kind != PluginSearchKind.Videos) args.put("kind", request.kind.key)
+            val value = runtime.invoke(request.kind.method, args).objectValue()
+            val count = value.list(request.kind.key).length()
+            if (request.kind == PluginSearchKind.Videos) value.put("trackLayout", "videos")
+            single(request.query, value, next = nextOffset(offset, count, value.optBoolean("more")))
+        }
+    }
+
+    suspend fun setSaved(entity: PluginEntity, saved: Boolean) {
+        val method = entity.saveMethod ?: throw PluginException("This item cannot be saved")
+        runtime.invoke(method, JSONObject().put("id", entity.id).put("on", saved))
+        invalidate()
+    }
+
+    suspend fun namePlaylist(entity: PluginEntity?, name: String) {
+        val args = JSONObject().put("name", name)
+        if (entity != null) args.put("id", entity.id)
+        runtime.invoke(if (entity == null) "createPlaylist" else "renamePlaylist", args)
+        invalidate()
+    }
+
+    suspend fun deletePlaylist(entity: PluginEntity) {
+        runtime.invoke("deletePlaylist", JSONObject().put("id", entity.id))
+        invalidate()
+    }
+
+    suspend fun changePlaylistTracks(entity: PluginEntity, ids: List<String>, add: Boolean) {
+        runtime.invoke(if (add) "addToPlaylist" else "removeFromPlaylist",
+            JSONObject().put("id", entity.id).put("trackIds", JSONArray(ids)))
+        invalidate()
+    }
+
+    suspend fun movePlaylistTrack(entity: PluginEntity, from: Int, to: Int) {
+        runtime.invoke("movePlaylistTrack", JSONObject().put("id", entity.id).put("from", from).put("to", to))
+        invalidate()
+    }
+
+    private suspend fun collection(request: PluginCatalogRequest.Collection, offset: Int): PluginCatalogPage {
+        val name = request.collection.method
+        val value = cachedInvoke(name, arguments(offset))
+        val section = when (request.collection) {
+            PluginCollection.Playlists, PluginCollection.Shows, PluginCollection.Stations -> JSONObject().put(name, value.arrayValue())
+            PluginCollection.Recent -> JSONObject().put("tracks", value.arrayValue())
+            PluginCollection.Liked, PluginCollection.SavedAlbums -> value.objectValue()
+        }
+        val count = section.list("tracks").length() + PluginEntityKind.entries.sumOf { section.list(it.key).length() }
+        return single(request.title.ifBlank { manifest.name }, section,
+            next = nextOffset(offset, count, (value as? JSONObject)?.optBoolean("more") == true))
+    }
+
+    private suspend fun entity(entity: PluginEntity, offset: Int): PluginCatalogPage {
+        val args = arguments(offset).put("id", entity.id)
+        val value = if (entity.kind == PluginEntityKind.Station) runtime.invoke(entity.kind.method, args)
+            else cachedInvoke(entity.kind.method, args)
+        val detailsPage = value as? JSONObject ?: JSONObject()
+        val section = when (entity.kind) {
+            PluginEntityKind.Station -> JSONObject().put("tracks", value.arrayValue())
+            PluginEntityKind.Show -> JSONObject().put("tracks", detailsPage.list("episodes"))
+            else -> value.objectValue()
+        }
+        val details = detailsPage.optJSONObject(entity.kind.method)
+        return single(details?.text("name") ?: entity.title, section, entity.subtitle, details?.text("description").orEmpty(),
+            nextOffset(offset, section.list("tracks").length(), entity.kind == PluginEntityKind.Station || detailsPage.optBoolean("more")))
+    }
+
+    private suspend fun page(value: JSONObject, fallbackTitle: String, offset: Int = 0): PluginCatalogPage = PluginCatalogPage(
+        value.text("title") ?: fallbackTitle, value.text("subtitle").orEmpty(), value.text("description").orEmpty(),
+        value.list("sections").objects().map { section(it) },
+        nextOffset(offset, value.list("sections").objects().sumOf { row -> row.list("tracks").length() + PluginEntityKind.entries.sumOf { row.list(it.key).length() } }, value.optBoolean("more")),
+    )
+
+    private suspend fun single(title: String, value: JSONObject, subtitle: String = "", description: String = "",
+                               next: Int? = null): PluginCatalogPage =
+        PluginCatalogPage(title, subtitle, description, listOf(section(value)), next)
+
+    private suspend fun section(value: JSONObject): PluginCatalogSection {
+        val entities = PluginEntityKind.entries.flatMap { kind -> value.list(kind.key).objects().mapNotNull { entity ->
+            val id = entity.text("id") ?: return@mapNotNull null
+            val title = entity.text("name") ?: return@mapNotNull null
+            val subtitle = entity.text("description") ?: entity.text("publisher")
+                ?: entity.list("artists").objects().mapNotNull { it.text("name") }.joinToString(", ")
+            PluginEntity(kind, id, title, subtitle, readImage(entity.text("imageUrl")),
+                entity.optBoolean("saved") || entity.optBoolean("following") || entity.optBoolean("subscribed"),
+                entity.optBoolean("mine"), entity.optBoolean("fixed"))
+        } }
+        val links = value.list("links").objects().mapNotNull { link ->
+            val title = link.text("title") ?: return@mapNotNull null
+            val page = link.text("page") ?: return@mapNotNull null
+            PluginCatalogLink(title, link.text("subtitle").orEmpty(), PluginCatalogRequest.Browse(page, title), readImage(link.text("imageUrl")))
+        }
+        val more = value.text("morePage")?.let { PluginCatalogLink("", "", PluginCatalogRequest.Browse(it, "")) }
+        return PluginCatalogSection(value.text("title").orEmpty(), readTracks(value.list("tracks")), entities,
+            links, more, value.text("empty").orEmpty(), value.text("trackLayout") == "videos")
+    }
+
+    private fun arguments(offset: Int) = JSONObject().put("offset", offset)
+    private fun nextOffset(offset: Int, count: Int, more: Boolean): Int? = (offset + count).takeIf { more && count > 0 }
+    private fun Any.objectValue(): JSONObject = this as? JSONObject ?: throw PluginException("Invalid plugin catalog response")
+    private fun Any.arrayValue(): JSONArray = this as? JSONArray ?: throw PluginException("Invalid plugin catalog response")
+    private fun JSONObject.text(key: String): String? = (opt(key) as? String)?.takeIf(String::isNotBlank)
+    private fun JSONObject.list(key: String): JSONArray = optJSONArray(key) ?: JSONArray()
+    private fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull(::optJSONObject)
+}

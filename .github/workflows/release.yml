@@ -1,4 +1,4 @@
-name: Package MB
+name: Package Shanhai
 
 on:
   workflow_dispatch:
@@ -25,8 +25,8 @@ jobs:
       - name: Package macOS application
         run: go tool mygo build -sign - -skip-notarize -skip-dmg
       - name: Archive application
-        run: ditto -c -k --keepParent build/darwin-arm64/MB.app build/MB-macos-arm64.zip
+        run: ditto -c -k --keepParent build/darwin-arm64/山海.app build/Shanhai-macos-arm64.zip
       - uses: actions/upload-artifact@v6
         with:
-          name: MB-macos-arm64
-          path: build/MB-macos-arm64.zip
+          name: Shanhai-macos-arm64
+          path: build/Shanhai-macos-arm64.zip

@@ -1,6 +1,6 @@
-/** 配置 MB 桌面应用标识、打包目录及 MB 和 MyGo Music 社区插件的安装协议。 */
+/** 配置山海桌面应用品牌、兼容标识、打包目录及社区插件安装协议。 */
 export default ({ command }: { command: string }) => ({
-  name: "MB",
+  name: "山海",
   identifier: "com.xtreeroot.mb",
   slug: "mb",
   version: "0.1.13",
@@ -11,7 +11,7 @@ export default ({ command }: { command: string }) => ({
     minimumSystemVersion: "13.0",
   },
   linux: {
-    comment: "A music player for your files and more",
+    comment: "山海 · 万端归一 — Music, video and information in one place",
     categories: ["AudioVideo", "Audio", "Player"],
     webview: false,
   },
