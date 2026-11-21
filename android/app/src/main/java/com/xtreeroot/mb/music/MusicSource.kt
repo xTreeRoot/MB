@@ -12,12 +12,14 @@ data class Track(
     val artworkHeaders: Map<String, String> = emptyMap(),
     val unavailable: Boolean = false,
     val unavailableReason: TrackUnavailableReason? = null,
+    val resourceType: String? = null,
+    val resourceUrl: String? = null,
 ) {
     val id: String get() = "$sourceId:$sourceTrackId"
     val isUnavailable: Boolean get() = unavailable || unavailableReason != null
 }
 
-data class TrackPage(val tracks: List<Track>, val hasMore: Boolean)
+data class TrackPage(val tracks: List<Track>, val hasMore: Boolean, val warnings: List<String> = emptyList())
 
 enum class DiscoveryCategory {
     Recommended, Chart, Trending, Fresh,

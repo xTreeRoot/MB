@@ -54,13 +54,13 @@ import com.xtreeroot.mb.music.DiscoveryCategory
 
 @Composable
 internal fun SearchField(query: String, edit: (String) -> Unit, focused: Boolean, focusChanged: (Boolean) -> Unit,
-                         dismiss: () -> Unit, submit: (String) -> Unit) {
+                         dismiss: () -> Unit, submit: (String) -> Unit, platform: (@Composable () -> Unit)? = null) {
     val colors = MaterialTheme.colorScheme
     val hint = mb("搜索歌曲或视频", "Search songs or videos")
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         .background(colors.surfaceContainer, RoundedCornerShape(14.dp)).padding(start = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+        if (platform != null) platform() else Icon(Icons.Default.Search, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
         BasicTextField(query, onValueChange = edit, singleLine = true,
             modifier = Modifier.weight(1f).onFocusChanged { focusChanged(it.isFocused) }
                 .semantics { contentDescription = hint },

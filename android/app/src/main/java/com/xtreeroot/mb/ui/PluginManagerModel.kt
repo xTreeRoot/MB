@@ -128,6 +128,9 @@ internal class PluginManagerModel(application: Application) : AndroidViewModel(a
         app.refreshPlugins()
     }
 
+    fun rename(plugin: InstalledPlugin, name: String) = run { app.plugins.rename(plugin, name); app.refreshPlugins() }
+    fun move(plugin: InstalledPlugin, step: Int) = run { app.plugins.move(plugin.id, step); app.refreshPlugins() }
+
     suspend fun settings(plugin: InstalledPlugin) = app.plugins.settings(plugin)
 
     suspend fun save(plugin: InstalledPlugin, values: Map<String, String>, saved: () -> Unit) {

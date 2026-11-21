@@ -170,6 +170,7 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
         editingLyrics = null
     }
     LaunchedEffect(portable.savedAt) { model.refresh() }
+    val resources by saved.resources.collectAsStateWithLifecycle()
     val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
     val index = remember(state.value, offline.downloads, locale) { LocalMusicIndex(state.value, offline.downloads, locale) }
     val imports = remember(state.value) { state.value.mapTo(mutableSetOf()) { it.track.id } }
@@ -241,6 +242,10 @@ internal fun LocalLibraryView(play: (List<Track>, Track) -> Unit, playGroup: (Li
                     }
                 }
             }
+        }
+        if (collectionId == null && !searching && resources.isNotEmpty()) {
+            item(key = "resource-heading") { LibrarySearchHeading(mb("已保存资源", "Saved Resources")) }
+            items(resources, key = { "resource:${it.id}" }) { track -> ResourceRow(track, saved, inLibrary = true) { play(listOf(track), track) } }
         }
         state.error?.let { error -> item { Retry(error, model::refresh) } }
         if (collectionId == null) activeDownloadSection(transfers, saved::cancel)

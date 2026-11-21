@@ -166,18 +166,34 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
         val pluginState by plugins.state.collectAsStateWithLifecycle()
         val sourceNames = buildMap {
             if (preferences.builtInEnabled) put(app.bilibili.id, mb("哔哩哔哩", "Bilibili"))
-            pluginState.installed.filter { it.enabled }.forEach { put(it.id, it.manifest.name) }
+            pluginState.installed.filter { it.enabled }.forEach { put(it.id, it.displayName) }
         }
+        CompositionLocalProvider(LocalSourceNames provides sourceNames) {
         val sourceId = selectedSourceId(preferences.selectedSourceId, sourceNames.keys)
         val activeSource = sourceId?.let(app::musicSource)
         val pluginSource = activeSource as? PluginSource
         val searchUiState = key(activeSource) { rememberSaveableStateHolder() }
         LaunchedEffect(activeSource) {
-            browser.activateSearch(activeSource)
             pluginAccount.activate(pluginSource)
             if (activeSource !== app.bilibili) account.cancelSignIn()
         }
-        val catalog = remember(pluginSource) { PluginCatalogNavigator() }
+        val catalogs = remember { mutableMapOf<PluginSource, PluginCatalogNavigator>() }
+        val navigator: (PluginSource) -> PluginCatalogNavigator = { catalogs.getOrPut(it) { PluginCatalogNavigator() } }
+        val catalog = remember(pluginSource) { pluginSource?.let(navigator) ?: PluginCatalogNavigator() }
+        var searchTarget by rememberSaveable { mutableStateOf<String?>(null) }
+        val target = searchTarget ?: sourceId.orEmpty()
+        val searchIdentity = if (target == "torrent") "knaben" else "search:$target"
+        LaunchedEffect(target, pluginState.installed.map { it.id to it.revision }, preferences.builtInEnabled) {
+            val query = browser.searchPages(SearchScope.Music).state.value.value.query
+            try {
+                val provider = searchSource(app, target, sourceNames)
+                browser.activateSearch(provider)
+                if (query.isNotBlank()) browser.submitSearch(SearchScope.Music, query)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { saved.report(error) }
+        }
+        var modeNotice by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(modeNotice) { if (modeNotice != null) { kotlinx.coroutines.delay(1400); modeNotice = null } }
         val page = catalog.current
         val visibleCatalog = page ?: catalog.home.takeIf { tab == Tab.Discover && pluginSource != null }
         LaunchedEffect(pluginState.requestedRepository) {
@@ -323,7 +339,6 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                 browseCreators = emptyList()
                 playerCreators = emptyList()
                 catalog.reset()
-                browser.activateSearch(app.musicSource(id))
                 settings.update { it.copy(selectedSourceId = id) }
             }
         }
@@ -374,25 +389,26 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         else category?.title() ?: accountRoute?.let { libraryPage.value.title ?: it.title() } ?: mb(tab.chinese, tab.english)
                     TopAppBar(title = {
                         if (!atRoot) Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        else Text(if (discoverRoot) "MB" else title)
+                        else if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource) else Text(title)
                     },
-                        largeTitle = atRoot, expandedHeight = if (atRoot) 48.dp else 64.dp,
+                        largeTitle = atRoot && !discoverRoot, expandedHeight = if (atRoot) 48.dp else 64.dp,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = surface),
                         navigationIcon = {
                         if (!atRoot) IconButton(onClick = back) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, mb("返回", "Back"))
                         }
                     }, actions = {
-                        if (discoverRoot) {
-                            IconButton(onClick = { switchTab(Tab.Search) }) { Icon(Icons.Default.Search, mb("搜索", "Search")) }
-                        } else if (atRoot && tab != Tab.Library && sourceId != null) {
+                        if (atRoot && tab == Tab.Account && sourceId != null) {
                             SourceSwitcher(sourceNames, sourceId, switchSource)
                         }
-                        if (creatorRoute == null && (tab == Tab.Discover || tab == Tab.Search)) {
-                            BrowsingModeSwitcher(preferences.playbackMode, compact = discoverRoot, choose = choosePlaybackMode)
+                        if (creatorRoute == null && tab == Tab.Discover) {
+                            BrowsingModeSwitcher(preferences.playbackMode, compact = discoverRoot, choose = { mode ->
+                                choosePlaybackMode(mode)
+                                modeNotice = if (mode == PlaybackMode.Music) (if (english) "Music Mode" else "听歌模式") else (if (english) "Video Mode" else "视频模式")
+                            })
                         }
                         if (discoverRoot) {
-                            DiscoverMore(refresh.takeIf { sourceId != null }, settings = { showSettings = true })
+                            if (playback.current == null) DiscoverMore(refresh.takeIf { sourceId != null }, settings = { showSettings = true })
                         } else if (creatorRoute == null) {
                             if (page is CatalogDestination.Content) TextButton(onClick = refresh) { Text(mb("刷新", "Refresh")) }
                             IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, mb("设置", "Settings")) }
@@ -425,26 +441,24 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                     }
                     Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                         Column(Modifier.widthIn(max = 900.dp).fillMaxWidth().fillMaxHeight()) {
-                            if (discoverRoot && sourceId != null) MusicTabs(sourceNames, sourceId, switchSource)
                             Box(Modifier.weight(1f).fillMaxWidth()) {
                                 CompositionLocalProvider(LocalTrackActions provides openTrackActions, LocalMarkedTrack provides markedTrack) {
                                     if (creatorRoute != null) key(creatorRoute) {
                                         AccountLibraryView(library.creatorPages, {}, select)
                                     } else tabState.SaveableStateProvider(tab) {
                                         when {
-                                            visibleCatalog != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
-                                                visibleCatalog, catalog, select, player::play)
+                                            page != null && pluginSource != null -> PluginCatalogBrowser(pluginSource,
+                                                page, catalog, select, player::play)
                                             tab != Tab.Library && sourceId == null -> EmptyMessage(mb("没有可用音源", "No available sources"))
                                             category != null -> CategoryView(browser, checkNotNull(category), select)
                                             else -> when (tab) {
-                                                Tab.Discover -> Discover(browser, select, openCategory)
-                                                Tab.Search -> {
-                                                    val id = activeSource?.id
-                                                    if (id != null) searchUiState.SaveableStateProvider(id) {
-                                                        Search(browser, id, pluginSource, pluginSource?.let { catalog::search },
-                                                            openCategory.takeIf { activeSource === app.bilibili }, select)
-                                                    } else EmptyMessage(mb("没有可用音源", "No available sources"))
-                                                }
+                                                Tab.Discover -> DiscoveryPlatforms(sourceNames.keys.toList(), sourceId.orEmpty(), switchSource,
+                                                    { app.musicSource(it) as? PluginSource }, navigator, select, player::play) { Discover(browser, select, openCategory) }
+                                                Tab.Search -> Search(browser, searchIdentity, app.musicSource(target) as? PluginSource, null,
+                                                    openCategory.takeIf { target == app.bilibili.id }, { tracks, track ->
+                                                        choosePlaybackMode(if (track.resourceType == "video") PlaybackMode.Video else PlaybackMode.Music)
+                                                        select(tracks, track)
+                                                    }, sourceNames, target, { searchTarget = it }, saved)
                                                 Tab.Library -> LocalLibraryView(select, selectGroup, saved)
                                                 Tab.Account -> if (pluginSource != null) PluginPersonalContent(pluginSource, catalog, pluginAccount, pluginUser)
                                                 else if (accountRoute == null) AccountView(account) { route ->
@@ -509,7 +523,14 @@ internal fun MBRoot(browser: BrowseModel = viewModel(), player: PlaybackModel = 
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) { exportTrack = null; saved.report(failure) }
                     }
-                }, creator = showArtist.takeIf { app.playbackSource(track.sourceId) is LibrarySource })
+                }, creator = showArtist.takeIf { track.sourceId == sourceId && app.playbackSource(track.sourceId) is LibrarySource })
+        }
+        modeNotice?.let { message -> androidx.compose.ui.window.Popup(alignment = Alignment.Center) {
+            androidx.compose.material3.Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), shadowElevation = 4.dp,
+                color = MaterialTheme.colorScheme.inverseSurface) {
+                Text(message, Modifier.padding(horizontal = 22.dp, vertical = 14.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.inverseOnSurface)
+            }
+        } }
         }
     }
     }
@@ -545,19 +566,11 @@ private fun PlaybackConnectionNotice(issue: PlaybackConnectionIssue, reconnect: 
 
 @Composable
 private fun BrowsingModeSwitcher(mode: PlaybackMode, compact: Boolean, choose: (PlaybackMode) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
     val current = if (mode == PlaybackMode.Video) mb("视频模式", "Video Mode") else mb("听歌模式", "Music Mode")
-    Box {
-        if (compact) IconButton(onClick = { expanded = true }) {
-            Icon(if (mode == PlaybackMode.Video) Icons.Default.PlayArrow else Icons.AutoMirrored.Filled.List, current)
-        } else TextButton(onClick = { expanded = true }) { Text(current) }
-        DropdownMenu(expanded, { expanded = false }) {
-            PlaybackMode.entries.forEach { option ->
-                DropdownMenuItem(text = { Text(if (option == PlaybackMode.Video) mb("视频模式", "Video Mode") else mb("听歌模式", "Music Mode")) },
-                    onClick = { expanded = false; choose(option) })
-            }
-        }
-    }
+    val toggle = { choose(if (mode == PlaybackMode.Music) PlaybackMode.Video else PlaybackMode.Music) }
+    if (compact) IconButton(onClick = toggle) {
+        Icon(if (mode == PlaybackMode.Video) Icons.Default.PlayArrow else Icons.AutoMirrored.Filled.List, current)
+    } else TextButton(onClick = toggle) { Text(current) }
 }
 
 @Composable

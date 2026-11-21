@@ -86,7 +86,7 @@ internal fun catalogTitle(destination: CatalogDestination, source: PluginSource)
     is CatalogDestination.Content -> {
         val status by destination.pager.state.collectAsStateWithLifecycle()
         when (val request = destination.request) {
-            PluginCatalogRequest.Home -> source.manifest.name
+            PluginCatalogRequest.Home -> LocalSourceNames.current[source.id] ?: source.manifest.name
             is PluginCatalogRequest.Browse -> status.page?.title?.takeIf(String::isNotBlank)
                 ?: request.title.ifBlank { mb("更多", "More") }
             is PluginCatalogRequest.Collection -> request.title.ifBlank { request.collection.label() }
@@ -154,14 +154,8 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
     val videoMode = LocalVideoBrowse.current
     val saveMethod = entity?.saveMethod
     val content: LazyGridScope.() -> Unit = {
-        if (request == PluginCatalogRequest.Home) {
-            links.forEach { link -> item(span = { GridItemSpan(maxLineSpan) }) { CatalogLinkRow(link, navigator::open) } }
-            if ("search" in capabilities || "searchVideos" in capabilities) item(span = { GridItemSpan(maxLineSpan) }) {
-                TextButton(onClick = navigator::search) { Text(mb("搜索音源", "Search Source")) }
-            }
-        }
         if (page != null) {
-            if (page.subtitle.isNotBlank() || page.description.isNotBlank()) item(span = { GridItemSpan(maxLineSpan) }) {
+            if (request != PluginCatalogRequest.Home && (page.subtitle.isNotBlank() || page.description.isNotBlank())) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     if (page.subtitle.isNotBlank()) Text(page.subtitle, style = MaterialTheme.typography.titleMedium)
                     if (page.description.isNotBlank()) Text(page.description, style = MaterialTheme.typography.bodyMedium)
@@ -174,7 +168,10 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
             var trackIndex = 0
             page.sections.forEach { section ->
                 if (request == PluginCatalogRequest.Home) {
-                    item(span = { GridItemSpan(maxLineSpan) }) { PluginDiscoverySection(section, navigator::open, select) }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        val more = section.more ?: links.firstOrNull { it.title.isNotBlank() && it.title == section.title }
+                        PluginDiscoverySection(section.copy(more = more), navigator::open, select)
+                    }
                     return@forEach
                 }
                 if (section.title.isNotBlank()) item(span = { GridItemSpan(maxLineSpan) }) {
@@ -234,13 +231,17 @@ private fun PluginCatalogContent(source: PluginSource, destination: CatalogDesti
                 }
             }
         }
+        if (request == PluginCatalogRequest.Home && page != null) links.filter { link ->
+            page.sections.none { section -> section.more?.destination == link.destination || link.title.isNotBlank() && section.title == link.title }
+        }.forEach { link -> item(span = { GridItemSpan(maxLineSpan) }) { PluginNavigationShelf(source, link, navigator::open, select) } }
         if (status.busy && (page == null || status.appending)) item(span = { GridItemSpan(maxLineSpan) }) { Loading() }
         status.error?.let { error -> item(span = { GridItemSpan(maxLineSpan) }) { Retry(error) { scope.launch { load(status.appendRetry) } } } }
         actionError?.let { error -> item(span = { GridItemSpan(maxLineSpan) }) {
             Text(error, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
         } }
         if (!status.busy && status.error == null && page?.nextOffset != null) item(span = { GridItemSpan(maxLineSpan) }) {
-            TextButton(onClick = { scope.launch { load(append = true) } }, enabled = !changing) { Text(mb("加载更多", "Load More")) }
+            LaunchedEffect(page.nextOffset, page.sections.size) { if (!changing) load(append = true) }
+            Loading()
         }
         if (!status.busy && status.error == null && page != null && page.sections.none { it.hasContent } && links.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) { EmptyMessage(mb("暂无内容", "No content")) }
@@ -292,7 +293,7 @@ internal fun PluginPersonalContent(source: PluginSource, navigator: PluginCatalo
         }
     }) {
         if (account != null || state.canSignIn) item {
-            AccountHeader(source.manifest.name, account, state.loading,
+            AccountHeader(LocalSourceNames.current[source.id] ?: source.manifest.name, account, state.loading,
                 mb("登录音源", "Sign In to Source").takeIf { state.canSignIn }, model::signIn)
         }
         val profile = account?.page?.takeIf(String::isNotBlank)

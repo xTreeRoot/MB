@@ -107,6 +107,7 @@ internal class MBApplication : Application(), ImageLoaderFactory {
     }
 
     val local by lazy { LocalAudioSource(this, LocalCatalog(this)) }
+    val resourceBookmarks by lazy { com.xtreeroot.mb.local.ResourceBookmarks(File(filesDir, "resource-bookmarks.json")) }
     val playlists by lazy { LocalPlaylistStore(File(filesDir, "local-playlists.json")) }
     val offline by lazy {
         OfflineTransfers(OfflineMediaStore(File(filesDir, "offline-media")), network::open) { track ->

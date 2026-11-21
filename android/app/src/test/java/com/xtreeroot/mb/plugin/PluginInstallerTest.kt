@@ -16,6 +16,25 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class PluginInstallerTest {
+    @Test fun localNamesAndOrderSurviveCodeUpdateWithoutChangingRuntimeRevision() = fixture { root ->
+        val installer = PluginInstaller(root)
+        val first = installer.install(installer.prepareArchive("fixture/one") { zip(it, files("one")) })
+        val second = installer.install(installer.prepareArchive("fixture/two") { zip(it, files("two")) })
+        installer.rename(first, "我的音乐")
+        installer.move(second.id, -1)
+        val sorted = installer.installed()
+        assertEquals(listOf("two", "one"), sorted.map { it.id })
+        assertEquals(first.revision, sorted.last().revision)
+        assertEquals("我的音乐", sorted.last().displayName)
+        installer.install(installer.prepareArchive("fixture/one", first) { zip(it, files("one", "2.0.0")) })
+        val restored = PluginInstaller(root).installed()
+        assertEquals(listOf("two", "one"), restored.map { it.id })
+        assertEquals("我的音乐", restored.last().displayName)
+        assertEquals("2.0.0", restored.last().manifest.version)
+        installer.rename(restored.last(), " ")
+        assertEquals("Fixture", installer.installed().last().displayName)
+    }
+
     @Test fun starsImportSkipsOnlyTheExactTemplateAndLeavesAnExistingInstallationAlone() = fixture { root ->
         val installer = PluginInstaller(root)
         val template = "xTreeRoot/mb-plugin-template"

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -175,77 +176,72 @@ internal fun CategoryView(model: BrowseModel, category: DiscoveryCategory,
 
 @Composable
 internal fun Search(model: BrowseModel, activeSource: String, plugin: PluginSource?,
-                    openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
-    var supportsVideos by remember(plugin) { mutableStateOf(false) }
-    LaunchedEffect(plugin) {
-        supportsVideos = try { plugin?.catalog?.supports("searchVideos") == true }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { false }
-    }
-    var selected by rememberSaveable { mutableStateOf(SearchScope.Music) }
-    val videoBrowsing = LocalVideoBrowse.current
-    val showScopes = supportsVideos && videoBrowsing
-    val mode = selected.takeIf { showScopes } ?: SearchScope.Music
-    val focus = LocalFocusManager.current
-    LaunchedEffect(videoBrowsing) { if (!videoBrowsing) selected = SearchScope.Music }
-    LaunchedEffect(mode) {
-        val inactive = if (mode == SearchScope.Music) SearchScope.Video else SearchScope.Music
-        model.searchPages(inactive).cancel()
-    }
-    val changeScope: ((SearchScope) -> Unit)? = if (showScopes) ({ option ->
-        focus.clearFocus()
-        selected = option
-    }) else null
-    val state = rememberSaveableStateHolder()
-    state.SaveableStateProvider(mode.name) {
-        SearchResults(model, mode, activeSource, plugin, changeScope, openCatalog, openCategory, play)
-    }
-}
-
-@Composable
-private fun SearchResults(model: BrowseModel, mode: SearchScope, activeSource: String,
-                          suggestionSource: SuggestionSource?, changeScope: ((SearchScope) -> Unit)?,
-                          openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit) {
-    val pages = model.searchPages(mode)
+                    openCatalog: (() -> Unit)?, openCategory: ((DiscoveryCategory) -> Unit)?, play: (List<Track>, Track) -> Unit,
+                    platforms: Map<String, String> = emptyMap(), target: String = activeSource,
+                    chooseTarget: (String) -> Unit = {}, saved: SavedLibraryModel? = null) {
+    val pages = model.searchPages(SearchScope.Music)
     val result by pages.state.collectAsStateWithLifecycle()
     val history by model.history.collectAsStateWithLifecycle()
-    var query by rememberSaveable { mutableStateOf(result.value.query.takeIf { result.value.sourceId == activeSource }.orEmpty()) }
+    var query by rememberSaveable { mutableStateOf(result.value.query) }
     var focused by remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
-    val submit = { term: String ->
-        query = term
-        model.submitSearch(mode, term)
-        focus.clearFocus()
+    val submit = { term: String -> query = term; expanded = false; model.submitSearch(SearchScope.Music, term); focus.clearFocus() }
+    val allLabel = mb("全平台搜索", "All Platforms")
+    val torrentLabel = mb("种子资源搜索", "Torrent Resources")
+    val targetName = when (target) {
+        "all" -> mb("全平台搜索", "All Platforms")
+        "torrent" -> mb("种子资源搜索", "Torrent Resources")
+        else -> platforms[target] ?: target
     }
     Column(Modifier.fillMaxSize()) {
-        SearchField(query, { query = it }, focused, { focused = it }, { focus.clearFocus() }, submit)
-        if (changeScope != null) SearchScopePicker(mode, changeScope)
-        SearchSuggestions(suggestionSource, query, focused, submit)
-        LazyColumn(Modifier.fillMaxSize().pointerInput(focus) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false)
-                waitForUpOrCancellation(PointerEventPass.Final)
-                focus.clearFocus()
+        SearchField(query, { query = it }, focused, { focused = it }, { focus.clearFocus() }, submit, platform = {
+            TextButton(onClick = { focus.clearFocus(); expanded = !expanded }, modifier = Modifier.widthIn(max = 130.dp)) {
+                Text("$targetName ▾", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        }) {
-            if (result.value.query.isEmpty()) {
-                if (history.isNotEmpty()) item("recent-searches") { RecentSearches(history, model::clearHistory, submit) }
-                if (openCategory != null) item("browse-music") { BrowseMusicCategories(openCategory) }
-                if (openCatalog != null) item("search-source") {
-                    TextButton(modifier = Modifier.padding(start = 12.dp), onClick = openCatalog) {
-                        Text(mb("搜索音源", "Search Source"))
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(18.dp))
+        })
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Column {
+                SearchSuggestions(plugin, query, focused, submit)
+                LazyColumn(Modifier.fillMaxSize().pointerInput(focus) {
+                    awaitEachGesture { awaitFirstDown(requireUnconsumed = false); waitForUpOrCancellation(PointerEventPass.Final); focus.clearFocus() }
+                }) {
+                    if (result.value.query.isEmpty()) {
+                        if (history.isNotEmpty()) item("recent-searches") { RecentSearches(history, model::clearHistory, submit) }
+                        if (openCategory != null) item("browse-music") { BrowseMusicCategories(openCategory) }
+                    }
+                    items(result.value.warnings) { Text(it, Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall) }
+                    items(result.value.tracks, key = Track::id) { track ->
+                        ResourceRow(track, saved) { play(result.value.tracks.filter { it.resourceUrl == null }, track) }
+                    }
+                    when {
+                        result.loading -> item { Loading() }
+                        result.error != null -> item { Retry(checkNotNull(result.error), pages::loadNext) }
+                        result.value.hasMore -> item(key = "search-next-${result.value.cursor}") {
+                            LaunchedEffect(result.value.query, result.value.cursor) { pages.loadNext() }
+                            Loading()
+                        }
+                        result.value.query.isNotEmpty() && result.value.tracks.isEmpty() -> item { EmptyMessage(mb("未找到结果", "No results")) }
                     }
                 }
             }
-            items(result.value.tracks, key = Track::id) { track ->
-                BrowsingTrackRow(track, enabled = track.sourceId == activeSource) { play(result.value.tracks, track) }
-            }
-            when {
-                result.loading -> item { Loading() }
-                result.error != null -> item { Retry(checkNotNull(result.error), pages::loadNext) }
-                result.value.hasMore -> item { TextButton(onClick = pages::loadNext) { Text(mb("加载更多", "Load More")) } }
-                result.value.query.isNotEmpty() && result.value.tracks.isEmpty() -> item { EmptyMessage(mb("未找到结果", "No results")) }
+            if (expanded) {
+                Box(Modifier.fillMaxSize().clickable { expanded = false })
+                androidx.compose.material3.Surface(Modifier.padding(start = 16.dp).width(250.dp), shape = RoundedCornerShape(12.dp),
+                    tonalElevation = 2.dp, shadowElevation = 6.dp) {
+                    LazyColumn(Modifier.heightIn(max = 340.dp).padding(vertical = 4.dp)) {
+                        val choices = listOf("all" to allLabel) + platforms.toList() + ("torrent" to torrentLabel)
+                        items(choices, key = { it.first }) { (id, name) ->
+                            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                                .background(if (id == target) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                                .clickable { expanded = false; chooseTarget(id) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                                    color = if (id == target) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                if (id == target) Text("✓", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
             }
         }
     }

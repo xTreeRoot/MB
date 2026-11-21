@@ -52,6 +52,9 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
     var repository by rememberSaveable { mutableStateOf("") }
     var showGitHub by rememberSaveable { mutableStateOf(false) }
     var batchImport by rememberSaveable { mutableStateOf(false) }
+    var reordering by rememberSaveable { mutableStateOf(false) }
+    var rename by remember { mutableStateOf<InstalledPlugin?>(null) }
+    var localName by remember { mutableStateOf("") }
     var remove by remember { mutableStateOf<InstalledPlugin?>(null) }
     val zipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.prepareZip(uri)
@@ -82,10 +85,13 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
                 val canUpdate = !state.busy && state.installed.any { it.repository != null }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = model::updateAll, enabled = canUpdate) { Text(mb("一键全部更新", "Update All")) }
+                    TextButton(onClick = { reordering = !reordering }, enabled = !state.busy) {
+                        Text(if (reordering) mb("完成排序", "Done Sorting") else mb("排序", "Sort"))
+                    }
                 }
             }
             items(state.installed, key = InstalledPlugin::id) { plugin ->
-                ListItem(headlineContent = { Text(plugin.manifest.name) },
+                ListItem(headlineContent = { Text(plugin.displayName) },
                     supportingContent = {
                         val status = if (plugin.enabled) mb("已启用", "Enabled") else mb("已停用", "Disabled")
                         Column {
@@ -94,7 +100,13 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
                         }
                     },
                     trailingContent = {
-                        TextButton(onClick = { remove = plugin }, enabled = !state.busy) { Text(mb("删除", "Delete")) }
+                        Row {
+                            if (reordering) {
+                                val index = state.installed.indexOfFirst { it.id == plugin.id }
+                                TextButton(onClick = { model.move(plugin, -1) }, enabled = !state.busy && index > 0) { Text(mb("上移", "Up")) }
+                                TextButton(onClick = { model.move(plugin, 1) }, enabled = !state.busy && index < state.installed.lastIndex) { Text(mb("下移", "Down")) }
+                            } else TextButton(onClick = { localName = plugin.localName.orEmpty(); rename = plugin }, enabled = !state.busy) { Text(mb("重命名", "Rename")) }
+                        }
                     },
                     modifier = Modifier.clickable { selected = plugin.id })
             }
@@ -114,6 +126,10 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
             state.error?.let { item { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) } }
         }
     }
+    rename?.let { plugin -> AlertDialog(onDismissRequest = { rename = null }, title = { Text(mb("本地名称", "Local Name")) },
+        text = { OutlinedTextField(localName, { localName = it }, singleLine = true, placeholder = { Text(plugin.manifest.name) }) },
+        confirmButton = { TextButton(onClick = { model.rename(plugin, localName); rename = null }) { Text(mb("保存", "Save")) } },
+        dismissButton = { TextButton(onClick = { rename = null }) { Text(mb("取消", "Cancel")) } }) }
     val check = state.check
     if (check != null) PluginCheckDialog(check, model)
     else state.pending?.let { candidate -> PluginReviewDialog(candidate, state.busy && !state.batchReview, state.batchReview, model, state.error) }
@@ -135,8 +151,8 @@ internal fun PluginsView(model: PluginManagerModel, state: PluginManagerState, r
     )
     remove?.let { plugin -> AlertDialog(
         onDismissRequest = { remove = null }, title = { Text(mb("删除插件？", "Delete plugin?")) },
-        text = { Text(mb("删除 ${plugin.manifest.name} 的安装文件，保留本机插件设置及私有数据。",
-            "Remove ${plugin.manifest.name} while keeping its local settings and private data.")) },
+        text = { Text(mb("删除 ${plugin.displayName} 的安装文件，保留本机插件设置及私有数据。",
+            "Remove ${plugin.displayName} while keeping its local settings and private data.")) },
         confirmButton = { TextButton(onClick = { remove = null; selected = null; model.remove(plugin, removed) }, enabled = !state.busy) {
             Text(mb("删除", "Delete"))
         } },
@@ -154,7 +170,7 @@ private fun PluginUpdateResultDialog(report: PluginUpdateReport, imported: Boole
                 if (report.available.isEmpty() && report.installed.isEmpty() && report.skipped.isEmpty() && report.failures.isEmpty() && report.unchanged.isEmpty()) {
                     item { Text(mb("没有可用更新", "No updates available")) }
                 }
-                items(report.available) { update -> Text("${update.plugin.manifest.name} → ${update.release.revision.take(12)}") }
+                items(report.available) { update -> Text("${update.plugin.displayName} → ${update.release.revision.take(12)}") }
                 items(report.installed) { name ->
                     Text(if (imported) mb("已导入：$name", "Imported: $name") else mb("已更新：$name", "Updated: $name"))
                 }
@@ -253,7 +269,7 @@ private fun PluginSettingsView(plugin: InstalledPlugin, model: PluginManagerMode
         catch (_: Exception) { loadingError = loadError }
     }
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Text(plugin.manifest.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 16.dp)) }
+        item { Text(plugin.displayName, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 16.dp)) }
         item { Text(mb("安装位置", "Install location")); Text(plugin.directory.absolutePath, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
         item {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {

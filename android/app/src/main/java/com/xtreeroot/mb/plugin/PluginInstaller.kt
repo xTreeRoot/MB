@@ -29,8 +29,10 @@ internal data class InstalledPlugin(
     val repository: String?,
     val enabled: Boolean,
     val remoteRevision: String? = null,
+    val localName: String? = null,
 ) {
     val id: String get() = manifest.id
+    val displayName: String get() = localName ?: manifest.name
 }
 
 internal data class PendingPlugin(
@@ -52,9 +54,35 @@ internal class PluginInstaller(private val root: File) {
     private val mutations = MutableStateFlow(0L)
     val changes = mutations.asStateFlow()
 
+    private val presentationFile = File(root, "presentation.json")
+    private fun presentation() = if (presentationFile.isFile) PluginPresentation.read(presentationFile.readText()) else PluginPresentation()
+
     suspend fun installed(): List<InstalledPlugin> = locked {
         val index = index()
-        index.keys().asSequence().map { plugin(index, it) }.sortedBy { it.manifest.name.lowercase() }.toList()
+        val order = presentation().order.withIndex().associate { it.value to it.index }
+        index.keys().asSequence().map { plugin(index, it) }.sortedWith(
+            compareBy<InstalledPlugin> { order[it.id] ?: Int.MAX_VALUE }.thenBy { it.manifest.name.lowercase() }).toList()
+    }
+
+    suspend fun rename(current: InstalledPlugin, name: String) = locked {
+        checkRevision(index(), current)
+        writeAtomic(presentationFile, presentation().renamed(current.id, name).toJson())
+        changed()
+    }
+
+    suspend fun move(id: String, step: Int) = locked {
+        val index = index()
+        val preferences = presentation()
+        val positions = preferences.order.withIndex().associate { it.value to it.index }
+        val ids = index.keys().asSequence().map { plugin(index, it) }.sortedWith(
+            compareBy<InstalledPlugin> { positions[it.id] ?: Int.MAX_VALUE }.thenBy { it.manifest.name.lowercase() }).map { it.id }.toMutableList()
+        val from = ids.indexOf(id)
+        val to = from + step
+        if (from >= 0 && to in ids.indices) {
+            ids.add(to, ids.removeAt(from))
+            writeAtomic(presentationFile, preferences.copy(order = ids).toJson())
+            changed()
+        }
     }
 
     suspend fun prepareZip(open: () -> InputStream): PendingPlugin = prepareArchive(download = { archive ->
@@ -198,7 +226,7 @@ internal class PluginInstaller(private val root: File) {
         val manifest = PluginPackage.readManifest(directory)
         if (id != manifest.id) throw PluginException("Installed plugin ID does not match")
         val source = (record.opt("repository") as? String)?.let { runCatching { PluginRepository.parse(it) }.getOrNull() }
-        return InstalledPlugin(manifest, revision, directory, File(data, id), source, record.getBoolean("enabled"), record.opt("remoteRevision") as? String)
+        return InstalledPlugin(manifest, revision, directory, File(data, id), source, record.getBoolean("enabled"), record.opt("remoteRevision") as? String, presentation().names[id])
     }
 
     private fun checkRevision(index: JSONObject, current: InstalledPlugin) {
