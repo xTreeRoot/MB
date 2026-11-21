@@ -11,6 +11,6 @@ bun run build
 bun run deploy
 ```
 
-构建产物位于 `website/dist/client`。下载页在构建时读取 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的最新 GitHub Release；发布新版后需重新构建网站。可通过 `GH_TOKEN` 或 `GITHUB_TOKEN` 为构建提供 API 访问凭据，不应将凭据写入源码。
+构建产物位于 `website/dist/client`。下载页在构建时读取 [xTreeRoot/ShanhaiMusic](https://github.com/xTreeRoot/ShanhaiMusic) 的最新 GitHub Release；发布新版后需重新构建网站。可通过 `GH_TOKEN` 或 `GITHUB_TOKEN` 为构建提供 API 访问凭据，不应将凭据写入源码。
 
 网站品牌、标题、介绍与源码地址在 `src/site.ts` 维护。本次仅同步网站源码，未执行部署。

@@ -32,7 +32,7 @@ internal data class AppRelease(val tag: String, val version: String, val page: U
 
 internal const val maxUpdateBytes = 256L * 1024 * 1024
 internal fun URI.isGitHubRelease() = scheme == "https" && host == "github.com" && rawUserInfo == null && port == -1 &&
-    path.startsWith("/xTreeRoot/MB/releases/")
+    (path.startsWith("/xTreeRoot/ShanhaiMusic/releases/") || path.startsWith("/xTreeRoot/MB/releases/"))
 internal fun compareVersions(a: String, b: String): Int {
     val left = a.split('.').map { it.toLongOrNull() ?: return 0 }
     val right = b.split('.').map { it.toLongOrNull() ?: return 0 }

@@ -16,7 +16,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 internal class AppUpdates(private val context: Context, private val transport: PluginHttpTransport) {
-    suspend fun latest(): AppRelease? = transport.receive(request(URI("https://api.github.com/repos/xTreeRoot/MB/releases?per_page=100")),
+    suspend fun latest(): AppRelease? = transport.receive(request(URI("https://api.github.com/repos/xTreeRoot/ShanhaiMusic/releases?per_page=100")),
         { it.scheme == "https" && it.host == "api.github.com" }) { response, _ ->
         check(response.code == 200) { "检查版本失败（HTTP ${response.code}）" }
         val output = ByteArrayOutputStream()

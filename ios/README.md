@@ -2,14 +2,14 @@
 
 山海（原 MB）是跨平台内容入口，标语为「万端归一」。本次更名保留原应用标识、已有数据目录和登录回调，兼容覆盖更新。
 
-SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。三端源码统一在 [xTreeRoot/MB](https://github.com/xTreeRoot/MB) 的 `main` 分支维护，工程入口为 `ios/MBiOS.xcodeproj`，版本与 build 以工程配置为准。功能与验收状态见 [PARITY.md](PARITY.md)。
+SwiftUI 原生客户端，最低 iOS / iPadOS 17，Swift 6。三端源码统一在 [xTreeRoot/ShanhaiMusic](https://github.com/xTreeRoot/ShanhaiMusic) 的 `main` 分支维护，工程入口为 `ios/MBiOS.xcodeproj`，版本与 build 以工程配置为准。功能与验收状态见 [PARITY.md](PARITY.md)。
 
 ## 在另一台 Mac 编译
 
 安装完整 Xcode，首次打开并完成组件安装。终端执行：
 
 ```bash
-git clone --branch main --single-branch https://github.com/xTreeRoot/MB.git
+git clone --branch main --single-branch https://github.com/xTreeRoot/ShanhaiMusic.git
 cd MB/ios
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift package resolve

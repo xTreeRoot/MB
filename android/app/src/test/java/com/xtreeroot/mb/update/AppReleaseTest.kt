@@ -9,11 +9,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppReleaseTest {
-    private fun release(version: String) = JSONObject().put("tag_name", "mb-android-v$version")
-        .put("html_url", "https://github.com/xTreeRoot/MB/releases/tag/mb-android-v$version")
+    private fun release(version: String, repository: String = "ShanhaiMusic") = JSONObject().put("tag_name", "mb-android-v$version")
+        .put("html_url", "https://github.com/xTreeRoot/$repository/releases/tag/mb-android-v$version")
         .put("assets", JSONArray().put(JSONObject().put("name", "MB-android-v$version.apk").put("size", 3)
             .put("digest", "sha256:" + "a".repeat(64))
-            .put("browser_download_url", "https://github.com/xTreeRoot/MB/releases/download/mb-android-v$version/MB-android-v$version.apk")))
+            .put("browser_download_url", "https://github.com/xTreeRoot/$repository/releases/download/mb-android-v$version/MB-android-v$version.apk")))
+
+    @Test fun acceptsRenamedAndLegacyRepositoryReleases() {
+        for (repository in listOf("ShanhaiMusic", "MB")) {
+            val update = AppRelease.latest(JSONArray().put(release("0.1.27", repository)).toString())
+            assertNotNull(update)
+            assertEquals("/xTreeRoot/$repository/releases/tag/mb-android-v0.1.27", update?.page?.path)
+        }
+        for (repository in listOf("ShanhaiMusic-extra", "MB-extra", "another")) {
+            assertNull(AppRelease.latest(JSONArray().put(release("0.1.27", repository)).toString()))
+        }
+    }
 
     @Test fun selectsNumericNewestAndroidReleaseRegardlessOfPublishOrder() {
         val ios = release("9.0.0").put("tag_name", "mb-ios-v9.0.0-build500")

@@ -82,7 +82,7 @@ class PluginInstallerTest {
                 else -> zip(archive, files("new"))
             }
         }, "bilibili")
-        val repositories = listOf("xtreeroot/mb", "example/overwrite", "example/bad", "example/reserved", "example/duplicate", "example/last")
+        val repositories = listOf("xtreeroot/mb", "xtreeroot/shanhaimusic", "example/overwrite", "example/bad", "example/reserved", "example/duplicate", "example/last")
         var reviews = 0
         val report = batch.run(repositories) { candidates ->
             reviews++
@@ -91,8 +91,8 @@ class PluginInstallerTest {
             true
         }
         assertEquals(1, reviews)
-        assertEquals(repositories.drop(1), downloaded)
-        assertEquals(listOf("xtreeroot/mb"), report.skipped)
+        assertEquals(repositories.drop(2), downloaded)
+        assertEquals(listOf("xtreeroot/mb", "xtreeroot/shanhaimusic"), report.skipped)
         assertEquals(listOf("example/bad", "example/reserved", "example/duplicate"), report.failures.map { it.pluginName })
         assertEquals(2, report.installed.size)
         val installed = installer.installed().associateBy { it.id }

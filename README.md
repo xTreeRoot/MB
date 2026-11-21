@@ -4,7 +4,7 @@
 
 提供桌面、iOS / iPadOS 和 Android 原生客户端。桌面使用 Go + [MyGo](https://github.com/egoist/mygo)，iOS 使用 SwiftUI，Android 使用 Kotlin + Jetpack Compose。
 
-[下载发布版本](https://github.com/xTreeRoot/MB/releases) · [插件开发](plugins/README.md) · [桌面打包](RELEASING.md)
+[下载发布版本](https://github.com/xTreeRoot/ShanhaiMusic/releases) · [插件开发](plugins/README.md) · [桌面打包](RELEASING.md)
 
 ## 三端源码
 
@@ -36,7 +36,7 @@
 - 桌面继续使用 `MB` / `MB Dev` 数据和缓存目录，应用包名称为 `山海.app`。
 - Android 包名继续为 `com.xtreeroot.mb`；iOS Bundle ID 保持现有工程配置。
 - `mb://install-plugin?repo=owner/repo` 与 `mygo-music://install-plugin?repo=owner/repo` 等已有安装协议继续有效。
-- GitHub 仓库地址仍为 [xTreeRoot/MB](https://github.com/xTreeRoot/MB)，现有发布标签和下载链接继续可用。
+- GitHub 仓库已更名为 [xTreeRoot/ShanhaiMusic](https://github.com/xTreeRoot/ShanhaiMusic)。原 `xTreeRoot/MB` 地址由 GitHub 重定向，现有发布标签和安装包文件名继续沿用。
 
 请保留旧版数据，使用相同应用标识及兼容签名覆盖更新。
 
@@ -71,7 +71,7 @@ go tool mygo build -sign - -skip-notarize
 
 ## 自托管节点
 
-支持的客户端可在设置中接入自托管节点，应用没有默认服务器。节点管理员能够解密同步会话，因此只接入信任的节点。已有协议文档位于历史 [server 分支](https://github.com/xTreeRoot/MB/blob/server/server/EDGE.md)；账号资料与登录会话使用不同同步路径，真实跨端同步的验证状态见各端文档。
+支持的客户端可在设置中接入自托管节点，应用没有默认服务器。节点管理员能够解密同步会话，因此只接入信任的节点。已有协议文档位于历史 [server 分支](https://github.com/xTreeRoot/ShanhaiMusic/blob/server/server/EDGE.md)；账号资料与登录会话使用不同同步路径，真实跨端同步的验证状态见各端文档。
 
 ## 来源与许可证
 

@@ -57,6 +57,6 @@ internal class GitHubPluginImport(private val installer: PluginInstaller,
     }
 
     private companion object {
-        val nonPluginRepositories = setOf("xTreeRoot/MB", "xTreeRoot/mb-plugin-template")
+        val nonPluginRepositories = setOf("xTreeRoot/ShanhaiMusic", "xTreeRoot/MB", "xTreeRoot/mb-plugin-template")
     }
 }

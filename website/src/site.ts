@@ -2,7 +2,7 @@
 import type { Lang } from './i18n'
 import type { Plugin } from './plugins'
 
-export const repo = 'https://github.com/xTreeRoot/MB'
+export const repo = 'https://github.com/xTreeRoot/ShanhaiMusic'
 
 export type Asset = { name: string; size: number; browser_download_url: string }
 export type Release = { tag_name: string; published_at: string; assets: Asset[] }
