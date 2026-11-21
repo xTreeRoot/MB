@@ -347,7 +347,7 @@ public struct MBRootView: View {
                         Button("网络设置", systemImage: "gearshape") { showingSettings = true }
                     }
                 }
-                .navigationTitle("MB")
+                .navigationTitle("山海")
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
             } detail: { navigation }
         } else { navigation }
